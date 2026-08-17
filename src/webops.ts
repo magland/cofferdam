@@ -1,0 +1,726 @@
+import express, { Express, Request, Response } from 'express';
+import { isValidRefName, isValidRepoPath, isValidSha } from './git';
+import * as forms from './forms';
+import * as ops from './ops';
+import { OpError } from './ops';
+import { findRepo, isValidName, listOrgs, repoDescription } from './scan';
+import {
+  Viewer,
+  checkCsrf,
+  clearSessionCookie,
+  getViewer,
+  setSessionCookie,
+  viewerIsAdmin,
+} from './session';
+import { authenticate, canAdmin, canPush, loadVault, addUserToken, grantScope } from './vault';
+import { encPath, repoUrl } from './views';
+import { LoadedRepo, ah, loadRepo, makeCtx, send404, wildcard } from './web';
+import { isBinary } from './render';
+
+const MAX_EDIT_SIZE = 1024 * 1024;
+
+function urlOf(repo: { org: string; name: string }): string {
+  return repoUrl({ org: repo.org, repo: repo.name });
+}
+
+// UI operations: every handler here re-derives the actor's abilities from
+// live vault.json (via the session cookie) and checks the CSRF field before
+// calling into the ops layer. All POSTs follow POST-redirect-GET.
+
+const form = express.urlencoded({ extended: false, limit: '3mb' });
+
+function field(req: Request, name: string): string {
+  const v = (req.body as Record<string, unknown> | undefined)?.[name];
+  return typeof v === 'string' ? v : '';
+}
+
+function safeNext(v: string): string {
+  return v.startsWith('/') && !v.startsWith('//') ? v : '/';
+}
+
+function normalizeContent(text: string): string {
+  return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+function globsField(req: Request, name: string): string[] | null {
+  const parts = field(req, name)
+    .split(/[\s,]+/)
+    .filter((s) => s.length > 0);
+  if (parts.some((s) => s.length >= 200)) return null;
+  return parts;
+}
+
+export function registerWebOps(app: Express, root: string): void {
+  function fail(
+    res: Response,
+    status: number,
+    message: string,
+    viewer: Viewer | null,
+    backUrl?: string
+  ): void {
+    res.status(status).type('html').send(forms.opErrorPage(status, message, { viewer, backUrl }));
+  }
+
+  // For GET form pages: an anonymous visitor is sent to sign in and come back.
+  function requireViewerPage(req: Request, res: Response): Viewer | null {
+    const viewer = getViewer(req, root);
+    if (!viewer) {
+      res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
+      return null;
+    }
+    return viewer;
+  }
+
+  // For POSTs: a missing session or a bad CSRF value is a hard 403.
+  function requireViewerPost(req: Request, res: Response): Viewer | null {
+    const viewer = getViewer(req, root);
+    if (!viewer) {
+      fail(res, 403, 'You must be signed in to do that.', null, '/login');
+      return null;
+    }
+    if (!checkCsrf(req, viewer)) {
+      fail(res, 403, 'The form has expired; go back, reload the page, and try again.', viewer);
+      return null;
+    }
+    return viewer;
+  }
+
+  function authorFor(viewer: Viewer, req: Request): ops.CommitAuthor {
+    const host = (req.get('host') ?? 'localhost').replace(/:\d+$/, '');
+    return { name: viewer.auth.username, email: `${viewer.auth.username}@noreply.${host}` };
+  }
+
+  // ---- sign in / sign out ----
+
+  app.get('/login', (req, res) => {
+    const next = safeNext(String(req.query.next ?? '/'));
+    if (getViewer(req, root)) {
+      res.redirect(next);
+      return;
+    }
+    res.type('html').send(forms.loginPage(next));
+  });
+
+  app.post('/login', form, (req, res) => {
+    const next = safeNext(field(req, 'next'));
+    const state = loadVault(root);
+    if (state.status !== 'ok') {
+      res.status(500).type('html').send(forms.loginPage(next, 'The vault is not available; try again later.'));
+      return;
+    }
+    const auth = authenticate(state.vault, field(req, 'username'), field(req, 'token'));
+    if (!auth) {
+      // One generic message: no username/token distinction.
+      res.status(401).type('html').send(forms.loginPage(next, 'Invalid username or token.'));
+      return;
+    }
+    setSessionCookie(req, res, root, auth.username, auth.token.scope);
+    res.redirect(next);
+  });
+
+  app.post('/logout', form, (req, res) => {
+    const viewer = getViewer(req, root);
+    if (viewer && checkCsrf(req, viewer)) clearSessionCookie(res);
+    res.redirect('/');
+  });
+
+  // ---- new repository ----
+
+  app.get('/new', (req, res) => {
+    const viewer = requireViewerPage(req, res);
+    if (!viewer) return;
+    const orgs = listOrgs(root).map((o) => o.name);
+    const org = typeof req.query.org === 'string' ? req.query.org : '';
+    res.type('html').send(forms.newRepoPage(viewer, orgs, { org }));
+  });
+
+  app.post(
+    '/new',
+    form,
+    ah(async (req, res) => {
+      const viewer = requireViewerPost(req, res);
+      if (!viewer) return;
+      const org = field(req, 'org').trim();
+      const name = field(req, 'name').trim();
+      const description = field(req, 'description').trim();
+      const orgs = listOrgs(root).map((o) => o.name);
+      const rerender = (status: number, error: string) => {
+        res
+          .status(status)
+          .type('html')
+          .send(forms.newRepoPage(viewer, orgs, { org, name, description }, error));
+      };
+      if (!isValidName(org) || !isValidName(name)) {
+        rerender(400, 'Organization and repository names may use letters, digits, dot, underscore, and dash, and must not be reserved words.');
+        return;
+      }
+      if (!canPush(viewer.auth, org, name)) {
+        rerender(403, `Your push scope does not cover ${org}/${name}.`);
+        return;
+      }
+      if (findRepo(root, org, name)) {
+        rerender(409, `Repository ${org}/${name} already exists.`);
+        return;
+      }
+      const repo = await ops.createRepo(root, org, name);
+      if (description) ops.setDescription(repo.dir, description);
+      if (field(req, 'init') === '1') {
+        await ops.commitFileChange(repo.dir, {
+          branch: 'main',
+          filePath: 'README.md',
+          message: 'Initial commit',
+          author: authorFor(viewer, req),
+          expectedHead: null,
+          action: { kind: 'create', content: Buffer.from(`# ${name}\n${description ? `\n${description}\n` : ''}`) },
+        });
+      }
+      res.redirect(`/${encodeURIComponent(org)}/${encodeURIComponent(name)}`);
+    })
+  );
+
+  // ---- file operations ----
+
+  interface FileOpTarget {
+    loaded: LoadedRepo;
+    branch: string;
+    filePath: string;
+    // Branch tip at load time (null only while the repository has no branches).
+    tip: string | null;
+  }
+
+  // Resolves an /:org/:repo/<verb>/<branch>/<path> URL and enforces what all
+  // file operations share: the ref must be a branch (or the repository must
+  // be empty) and the viewer needs push scope over the repository.
+  async function loadFileTarget(
+    req: Request,
+    res: Response,
+    viewer: Viewer,
+    opts: { allowEmptyRepo: boolean }
+  ): Promise<FileOpTarget | null> {
+    const loaded = await loadRepo(root, req, res, viewer);
+    if (!loaded) return null;
+    const { ref, path: filePath } = loaded.repo.resolveRefAndPath(wildcard(req), loaded.refNames);
+    if (!isValidRepoPath(filePath)) {
+      send404(res, 'Not found', viewer);
+      return null;
+    }
+    if (!canPush(viewer.auth, loaded.repo.org, loaded.repo.name)) {
+      fail(res, 403, `Your push scope does not cover ${loaded.repo.org}/${loaded.repo.name}.`, viewer, urlOf(loaded.repo));
+      return null;
+    }
+    const branchInfo = loaded.branches.find((b) => b.name === ref);
+    if (!branchInfo) {
+      if (opts.allowEmptyRepo && loaded.branches.length === 0 && isValidRefName(ref) && !ref.startsWith('-')) {
+        return { loaded, branch: ref, filePath, tip: null };
+      }
+      fail(
+        res,
+        400,
+        'Files can only be changed on a branch. Switch to a branch and try again.',
+        viewer,
+        urlOf(loaded.repo)
+      );
+      return null;
+    }
+    return { loaded, branch: ref, filePath, tip: branchInfo.sha };
+  }
+
+  function handleOpError(
+    e: unknown,
+    req: Request,
+    res: Response,
+    viewer: Viewer,
+    target: FileOpTarget,
+    retryUrl: string
+  ): void {
+    if (e instanceof OpError && e.kind === 'conflict') {
+      const ctx = makeCtx(root, req, target.loaded, target.branch, viewer);
+      res.status(409).type('html').send(forms.conflictPage(ctx, target.branch, retryUrl));
+      return;
+    }
+    if (e instanceof OpError) {
+      fail(res, e.kind === 'notfound' ? 404 : 400, e.message, viewer, retryUrl);
+      return;
+    }
+    throw e;
+  }
+
+  app.get(
+    '/:org/:repo/edit/*',
+    ah(async (req, res) => {
+      const viewer = requireViewerPage(req, res);
+      if (!viewer) return;
+      const target = await loadFileTarget(req, res, viewer, { allowEmptyRepo: false });
+      if (!target) return;
+      const { loaded, branch, filePath } = target;
+      const type = await loaded.repo.entryType(branch, filePath);
+      if (type !== 'blob') {
+        send404(res, `File ${filePath} not found at ${branch}`, viewer);
+        return;
+      }
+      const buf = await loaded.repo.catBlob(branch, filePath);
+      if (isBinary(buf) || buf.length > MAX_EDIT_SIZE) {
+        fail(res, 400, 'Only text files up to 1 MB can be edited in the browser.', viewer, urlOf(loaded.repo));
+        return;
+      }
+      const ctx = makeCtx(root, req, loaded, branch, viewer);
+      res.type('html').send(forms.editFilePage(ctx, filePath, buf.toString('utf8'), target.tip!));
+    })
+  );
+
+  app.post(
+    '/:org/:repo/edit/*',
+    form,
+    ah(async (req, res) => {
+      const viewer = requireViewerPost(req, res);
+      if (!viewer) return;
+      const target = await loadFileTarget(req, res, viewer, { allowEmptyRepo: false });
+      if (!target) return;
+      const { loaded, branch, filePath } = target;
+      const expected = field(req, 'expected');
+      if (!isValidSha(expected)) {
+        fail(res, 400, 'The form is missing its base commit; reload and try again.', viewer);
+        return;
+      }
+      const content = normalizeContent(field(req, 'content'));
+      const message = field(req, 'message').trim() || `Update ${filePath.split('/').pop()}`;
+      const retryUrl = `${urlOf(loaded.repo)}/edit/${encPath(branch)}/${encPath(filePath)}`;
+      try {
+        await ops.commitFileChange(loaded.repo.dir, {
+          branch,
+          filePath,
+          message,
+          author: authorFor(viewer, req),
+          expectedHead: expected,
+          action: { kind: 'edit', content: Buffer.from(content, 'utf8') },
+        });
+      } catch (e) {
+        handleOpError(e, req, res, viewer, target, retryUrl);
+        return;
+      }
+      res.redirect(`${urlOf(loaded.repo)}/blob/${encPath(branch)}/${encPath(filePath)}`);
+    })
+  );
+
+  app.get(
+    '/:org/:repo/new/*',
+    ah(async (req, res) => {
+      const viewer = requireViewerPage(req, res);
+      if (!viewer) return;
+      const target = await loadFileTarget(req, res, viewer, { allowEmptyRepo: true });
+      if (!target) return;
+      const ctx = makeCtx(root, req, target.loaded, target.branch, viewer);
+      const preset = target.tip === null ? { filename: 'README.md', content: `# ${target.loaded.repo.name}\n` } : {};
+      res.type('html').send(forms.newFilePage(ctx, target.branch, target.filePath, target.tip, preset));
+    })
+  );
+
+  app.post(
+    '/:org/:repo/new/*',
+    form,
+    ah(async (req, res) => {
+      const viewer = requireViewerPost(req, res);
+      if (!viewer) return;
+      const target = await loadFileTarget(req, res, viewer, { allowEmptyRepo: true });
+      if (!target) return;
+      const { loaded, branch, filePath: dir } = target;
+      const expectedField = field(req, 'expected');
+      const expected = expectedField === '' ? null : expectedField;
+      if (expected !== null && !isValidSha(expected)) {
+        fail(res, 400, 'The form is missing its base commit; reload and try again.', viewer);
+        return;
+      }
+      if (expected === null && target.tip !== null) {
+        // The form was rendered against an empty repository, but a branch has
+        // appeared since; treat it as the branch having moved.
+        handleOpError(new OpError('branch created meanwhile', 'conflict'), req, res, viewer, target, req.originalUrl);
+        return;
+      }
+      const filename = field(req, 'filename').trim().replace(/^\/+|\/+$/g, '');
+      const fullPath = dir === '' ? filename : `${dir}/${filename}`;
+      const retryUrl = req.originalUrl;
+      if (filename === '' || !isValidRepoPath(fullPath)) {
+        fail(res, 400, 'Invalid file name.', viewer, retryUrl);
+        return;
+      }
+      const content = normalizeContent(field(req, 'content'));
+      const message = field(req, 'message').trim() || `Create ${filename.split('/').pop()}`;
+      try {
+        await ops.commitFileChange(loaded.repo.dir, {
+          branch,
+          filePath: fullPath,
+          message,
+          author: authorFor(viewer, req),
+          expectedHead: expected,
+          action: { kind: 'create', content: Buffer.from(content, 'utf8') },
+        });
+      } catch (e) {
+        handleOpError(e, req, res, viewer, target, retryUrl);
+        return;
+      }
+      res.redirect(`${urlOf(loaded.repo)}/blob/${encPath(branch)}/${encPath(fullPath)}`);
+    })
+  );
+
+  app.get(
+    '/:org/:repo/delete/*',
+    ah(async (req, res) => {
+      const viewer = requireViewerPage(req, res);
+      if (!viewer) return;
+      const target = await loadFileTarget(req, res, viewer, { allowEmptyRepo: false });
+      if (!target) return;
+      const { loaded, branch, filePath } = target;
+      const type = await loaded.repo.entryType(branch, filePath);
+      if (type !== 'blob') {
+        send404(res, `File ${filePath} not found at ${branch}`, viewer);
+        return;
+      }
+      const ctx = makeCtx(root, req, loaded, branch, viewer);
+      res.type('html').send(forms.deleteFilePage(ctx, filePath, target.tip!));
+    })
+  );
+
+  app.post(
+    '/:org/:repo/delete/*',
+    form,
+    ah(async (req, res) => {
+      const viewer = requireViewerPost(req, res);
+      if (!viewer) return;
+      const target = await loadFileTarget(req, res, viewer, { allowEmptyRepo: false });
+      if (!target) return;
+      const { loaded, branch, filePath } = target;
+      const expected = field(req, 'expected');
+      if (!isValidSha(expected)) {
+        fail(res, 400, 'The form is missing its base commit; reload and try again.', viewer);
+        return;
+      }
+      const message = field(req, 'message').trim() || `Delete ${filePath.split('/').pop()}`;
+      const retryUrl = `${urlOf(loaded.repo)}/delete/${encPath(branch)}/${encPath(filePath)}`;
+      try {
+        await ops.commitFileChange(loaded.repo.dir, {
+          branch,
+          filePath,
+          message,
+          author: authorFor(viewer, req),
+          expectedHead: expected,
+          action: { kind: 'delete' },
+        });
+      } catch (e) {
+        handleOpError(e, req, res, viewer, target, retryUrl);
+        return;
+      }
+      const parent = filePath.split('/').slice(0, -1).join('/');
+      res.redirect(`${urlOf(loaded.repo)}/tree/${encPath(branch)}${parent ? `/${encPath(parent)}` : ''}`);
+    })
+  );
+
+  // ---- branches and tags ----
+
+  async function loadForRefOp(req: Request, res: Response, viewer: Viewer): Promise<LoadedRepo | null> {
+    const loaded = await loadRepo(root, req, res, viewer);
+    if (!loaded) return null;
+    if (!canPush(viewer.auth, loaded.repo.org, loaded.repo.name)) {
+      fail(res, 403, `Your push scope does not cover ${loaded.repo.org}/${loaded.repo.name}.`, viewer, urlOf(loaded.repo));
+      return null;
+    }
+    return loaded;
+  }
+
+  app.post(
+    '/:org/:repo/branches/create',
+    form,
+    ah(async (req, res) => {
+      const viewer = requireViewerPost(req, res);
+      if (!viewer) return;
+      const loaded = await loadForRefOp(req, res, viewer);
+      if (!loaded) return;
+      const backUrl = `${urlOf(loaded.repo)}/branches`;
+      const name = field(req, 'name').trim();
+      const from = field(req, 'from').trim() || loaded.defaultBranch || '';
+      try {
+        await ops.createBranch(loaded.repo.dir, name, from);
+      } catch (e) {
+        if (e instanceof OpError) {
+          fail(res, e.kind === 'notfound' ? 404 : 400, e.message, viewer, backUrl);
+          return;
+        }
+        throw e;
+      }
+      res.redirect(backUrl);
+    })
+  );
+
+  app.post(
+    '/:org/:repo/branches/delete',
+    form,
+    ah(async (req, res) => {
+      const viewer = requireViewerPost(req, res);
+      if (!viewer) return;
+      const loaded = await loadForRefOp(req, res, viewer);
+      if (!loaded) return;
+      const backUrl = `${urlOf(loaded.repo)}/branches`;
+      const name = field(req, 'name');
+      if (!loaded.branches.some((b) => b.name === name)) {
+        fail(res, 404, `Branch ${name} not found.`, viewer, backUrl);
+        return;
+      }
+      if (name === loaded.defaultBranch) {
+        fail(res, 400, 'The default branch cannot be deleted. Change the default branch in Settings first.', viewer, backUrl);
+        return;
+      }
+      await ops.deleteBranch(loaded.repo.dir, name);
+      res.redirect(backUrl);
+    })
+  );
+
+  app.post(
+    '/:org/:repo/tags/create',
+    form,
+    ah(async (req, res) => {
+      const viewer = requireViewerPost(req, res);
+      if (!viewer) return;
+      const loaded = await loadForRefOp(req, res, viewer);
+      if (!loaded) return;
+      const backUrl = `${urlOf(loaded.repo)}/tags`;
+      const name = field(req, 'name').trim();
+      const at = field(req, 'at').trim() || loaded.defaultBranch || '';
+      try {
+        await ops.createTag(loaded.repo.dir, name, at);
+      } catch (e) {
+        if (e instanceof OpError) {
+          fail(res, e.kind === 'notfound' ? 404 : 400, e.message, viewer, backUrl);
+          return;
+        }
+        throw e;
+      }
+      res.redirect(backUrl);
+    })
+  );
+
+  app.post(
+    '/:org/:repo/tags/delete',
+    form,
+    ah(async (req, res) => {
+      const viewer = requireViewerPost(req, res);
+      if (!viewer) return;
+      const loaded = await loadForRefOp(req, res, viewer);
+      if (!loaded) return;
+      const backUrl = `${urlOf(loaded.repo)}/tags`;
+      const name = field(req, 'name');
+      if (!loaded.tags.some((t) => t.name === name)) {
+        fail(res, 404, `Tag ${name} not found.`, viewer, backUrl);
+        return;
+      }
+      await ops.deleteTag(loaded.repo.dir, name);
+      res.redirect(backUrl);
+    })
+  );
+
+  // ---- repository settings ----
+
+  app.get(
+    '/:org/:repo/settings',
+    ah(async (req, res) => {
+      const viewer = requireViewerPage(req, res);
+      if (!viewer) return;
+      const loaded = await loadRepo(root, req, res, viewer);
+      if (!loaded) return;
+      const ctx = makeCtx(root, req, loaded, loaded.defaultBranch ?? '', viewer);
+      if (!ctx.canPush && !ctx.canAdmin) {
+        fail(res, 403, 'You do not have access to this repository’s settings.', viewer, urlOf(loaded.repo));
+        return;
+      }
+      const msg = typeof req.query.msg === 'string' ? req.query.msg : undefined;
+      res.type('html').send(forms.settingsPage(ctx, repoDescription(loaded.repo.dir) ?? '', msg));
+    })
+  );
+
+  app.post(
+    '/:org/:repo/settings',
+    form,
+    ah(async (req, res) => {
+      const viewer = requireViewerPost(req, res);
+      if (!viewer) return;
+      const loaded = await loadRepo(root, req, res, viewer);
+      if (!loaded) return;
+      const backUrl = `${urlOf(loaded.repo)}/settings`;
+      if (!canPush(viewer.auth, loaded.repo.org, loaded.repo.name)) {
+        fail(res, 403, `Your push scope does not cover ${loaded.repo.org}/${loaded.repo.name}.`, viewer, backUrl);
+        return;
+      }
+      ops.setDescription(loaded.repo.dir, field(req, 'description'));
+      const defaultBranch = field(req, 'defaultBranch');
+      if (defaultBranch !== '' && defaultBranch !== loaded.defaultBranch) {
+        if (!loaded.branches.some((b) => b.name === defaultBranch)) {
+          fail(res, 400, `Branch ${defaultBranch} not found.`, viewer, backUrl);
+          return;
+        }
+        await ops.setDefaultBranch(loaded.repo.dir, defaultBranch);
+      }
+      res.redirect(`${backUrl}?msg=${encodeURIComponent('Settings saved.')}`);
+    })
+  );
+
+  app.post(
+    '/:org/:repo/settings/delete',
+    form,
+    ah(async (req, res) => {
+      const viewer = requireViewerPost(req, res);
+      if (!viewer) return;
+      const loaded = await loadRepo(root, req, res, viewer);
+      if (!loaded) return;
+      const backUrl = `${urlOf(loaded.repo)}/settings`;
+      const target = `${loaded.repo.org}/${loaded.repo.name}`;
+      if (!canAdmin(viewer.auth, [target])) {
+        fail(res, 403, `Repository deletion requires admin scope over ${target}.`, viewer, backUrl);
+        return;
+      }
+      if (field(req, 'confirm').trim() !== target) {
+        fail(res, 400, `Type ${target} exactly to confirm deletion.`, viewer, backUrl);
+        return;
+      }
+      ops.deleteRepo(root, loaded.repo.org, loaded.repo.name);
+      res.redirect(`/${encodeURIComponent(loaded.repo.org)}`);
+    })
+  );
+
+  // ---- user administration ----
+  // Authorization mirrors the JSON API exactly: any admin may list; creating
+  // and granting require the actor's admin globs to cover every requested
+  // glob; minting for an existing user requires covering that user's scopes.
+
+  function requireAdminPage(req: Request, res: Response): Viewer | null {
+    const viewer = requireViewerPage(req, res);
+    if (!viewer) return null;
+    if (!viewerIsAdmin(viewer)) {
+      fail(res, 403, 'Admin access required (sessions from restricted tokens carry no admin rights).', viewer, '/');
+      return null;
+    }
+    return viewer;
+  }
+
+  function requireAdminPost(req: Request, res: Response): Viewer | null {
+    const viewer = requireViewerPost(req, res);
+    if (!viewer) return null;
+    if (!viewerIsAdmin(viewer)) {
+      fail(res, 403, 'Admin access required (sessions from restricted tokens carry no admin rights).', viewer, '/');
+      return null;
+    }
+    return viewer;
+  }
+
+  app.get('/admin/users', (req, res) => {
+    const viewer = requireAdminPage(req, res);
+    if (!viewer) return;
+    const state = loadVault(root);
+    if (state.status !== 'ok') {
+      fail(res, 500, 'The vault is not available.', viewer);
+      return;
+    }
+    const users = Object.entries(state.vault.users).map(([name, user]) => ({ name, user }));
+    const msg = typeof req.query.msg === 'string' ? req.query.msg : undefined;
+    res.type('html').send(forms.adminUsersPage(viewer, users, msg));
+  });
+
+  app.post('/admin/users', form, (req, res) => {
+    const viewer = requireAdminPost(req, res);
+    if (!viewer) return;
+    const username = field(req, 'username').trim();
+    const backUrl = '/admin/users';
+    if (!isValidName(username)) {
+      fail(res, 400, 'A valid username is required (letters, digits, dot, underscore, dash).', viewer, backUrl);
+      return;
+    }
+    const state = loadVault(root);
+    if (state.status !== 'ok') {
+      fail(res, 500, 'The vault is not available.', viewer, backUrl);
+      return;
+    }
+    if (state.vault.users[username]) {
+      fail(res, 409, `User ${username} already exists; use Grant or Mint token on the users page instead.`, viewer, backUrl);
+      return;
+    }
+    const scopeIn = globsField(req, 'scope');
+    const adminIn = globsField(req, 'admin');
+    if (scopeIn === null || adminIn === null) {
+      fail(res, 400, 'Scope globs are too long.', viewer, backUrl);
+      return;
+    }
+    const scope = scopeIn.length ? scopeIn : ['*'];
+    const admin = adminIn;
+    const need = [...scope, ...admin];
+    if (!canAdmin(viewer.auth, need)) {
+      fail(res, 403, `Your admin scope does not cover: ${need.join(', ')}.`, viewer, backUrl);
+      return;
+    }
+    const result = addUserToken(root, username, { scope, admin });
+    res.type('html').send(forms.tokenPage(viewer, username, result.token, true));
+  });
+
+  app.post('/admin/users/:name/grant', form, (req, res) => {
+    const viewer = requireAdminPost(req, res);
+    if (!viewer) return;
+    const username = req.params.name;
+    const backUrl = '/admin/users';
+    if (!isValidName(username)) {
+      fail(res, 400, 'Invalid username.', viewer, backUrl);
+      return;
+    }
+    const scope = globsField(req, 'scope');
+    const admin = globsField(req, 'admin');
+    if (scope === null || admin === null) {
+      fail(res, 400, 'Scope globs are too long.', viewer, backUrl);
+      return;
+    }
+    const globs = [...scope, ...admin];
+    if (globs.length === 0) {
+      fail(res, 400, 'Nothing to grant; provide push and/or admin globs.', viewer, backUrl);
+      return;
+    }
+    if (!canAdmin(viewer.auth, globs)) {
+      fail(res, 403, `Your admin scope does not cover: ${globs.join(', ')}.`, viewer, backUrl);
+      return;
+    }
+    try {
+      grantScope(root, username, { scope, admin });
+    } catch (e) {
+      fail(res, 404, e instanceof Error ? e.message : String(e), viewer, backUrl);
+      return;
+    }
+    res.redirect(`${backUrl}?msg=${encodeURIComponent(`Granted to ${username}.`)}`);
+  });
+
+  app.post('/admin/users/:name/token', form, (req, res) => {
+    const viewer = requireAdminPost(req, res);
+    if (!viewer) return;
+    const username = req.params.name;
+    const backUrl = '/admin/users';
+    if (!isValidName(username)) {
+      fail(res, 400, 'Invalid username.', viewer, backUrl);
+      return;
+    }
+    const state = loadVault(root);
+    if (state.status !== 'ok') {
+      fail(res, 500, 'The vault is not available.', viewer, backUrl);
+      return;
+    }
+    const existing = state.vault.users[username];
+    if (!existing) {
+      fail(res, 404, `User ${username} does not exist.`, viewer, backUrl);
+      return;
+    }
+    if (!canAdmin(viewer.auth, [...existing.scope, ...existing.admin])) {
+      fail(res, 403, `Your admin scope does not cover user ${username}.`, viewer, backUrl);
+      return;
+    }
+    const tokenScope = globsField(req, 'tokenScope');
+    if (tokenScope === null) {
+      fail(res, 400, 'Token scope globs are too long.', viewer, backUrl);
+      return;
+    }
+    const result = addUserToken(root, username, {
+      tokenScope: tokenScope.length ? tokenScope : undefined,
+    });
+    res.type('html').send(forms.tokenPage(viewer, username, result.token, false));
+  });
+}

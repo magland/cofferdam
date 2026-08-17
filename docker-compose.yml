@@ -1,0 +1,25 @@
+# A remote vault with automatic HTTPS.
+# Point a DNS record at this machine, then:
+#   DOMAIN=repos.example.org docker compose up -d
+#   docker compose logs repos   (copy the one-time owner token on first start)
+services:
+  repos:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - ./vault:/vault
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN to your hostname, e.g. repos.example.org}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+volumes:
+  caddy_data:
+  caddy_config:

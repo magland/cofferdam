@@ -1,0 +1,28 @@
+{
+  "name": "repos",
+  "version": "0.2.0",
+  "description": "A filesystem-backed alternative to GitHub/GitLab: point a web server at a directory of orgs and bare git repos.",
+  "bin": {
+    "repos": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts serve example-root",
+    "start": "node dist/index.js serve",
+    "example": "bash scripts/create-example.sh example-root",
+    "smoke": "bash scripts/smoke.sh"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "highlight.js": "^11.11.1",
+    "markdown-it": "^14.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.23",
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,3 @@
+{$DOMAIN} {
+	reverse_proxy repos:3000
+}

@@ -1,0 +1,50 @@
+# Deploy a remote vault to Fly.io:
+#
+#   ./scripts/deploy-fly.sh my-vault-name
+#
+# That script creates the app and volume, deploys, and prints the one-time
+# owner token. It is safe to re-run, so it is also how you deploy updates.
+#
+# To do it by hand instead, from this directory (the one with the Dockerfile),
+# passing --app everywhere so the name below does not matter:
+#
+#   fly apps create my-vault-name
+#   fly volumes create vault --app my-vault-name --region ewr --size 10 --yes
+#   fly deploy --app my-vault-name --ha=false
+#   fly logs --app my-vault-name           # one-time owner token on first start
+#
+# Then, from anywhere:
+#   export REPOS_HOST=https://my-vault-name.fly.dev
+#   export REPOS_TOKEN=<owner token>
+#
+# Use --ha=false: a vault is a directory on one disk, so this app must run as a
+# single machine. Two machines would mean two volumes and two divergent vaults.
+#
+# App names are globally unique on Fly, so the placeholder below is taken; the
+# --app flag overrides it, or 'fly apps create <name> --save' rewrites it here.
+
+app = "my-repos-vault"
+primary_region = "ewr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[mounts]
+  source = "vault"
+  destination = "/vault"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  # Single node: the vault is a directory on one attached volume.
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 250
+    soft_limit = 200
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
