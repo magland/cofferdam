@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createApp } from './server';
 import { isValidName } from './scan';
+import { DEFAULT_THEME, themeNames } from './themes';
 import { bootstrapVault } from './vault';
 
 function usage(code = 0): never {
@@ -38,7 +39,11 @@ Vault layout:
   <vault>/<org>/<repo>.git    bare repositories (the .git suffix is optional)
   <vault>/<org>/<repo>.pages  optional static pages site for a repo
   <vault>/vault.json          users and hashed tokens (server-managed)
+  <vault>/config.json         vault settings, currently {"theme": "<name>"}
   <vault>/.secret             session-cookie signing key (server-managed)
+
+Themes: ${themeNames().join(', ')} (default ${DEFAULT_THEME}). Pick one under
+Admin > Appearance in the web interface, or write config.json by hand.
 `);
   process.exit(code);
 }

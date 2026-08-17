@@ -4,7 +4,17 @@ import { GitRepo } from './git';
 
 // Names the UI owns as top-level path segments, plus vault fixtures. None of
 // these may ever be an org or repo name.
-const RESERVED_NAMES = new Set(['vault.json', 'api', 'assets', 'login', 'logout', 'new', 'admin', 'settings']);
+const RESERVED_NAMES = new Set([
+  'vault.json',
+  'config.json',
+  'api',
+  'assets',
+  'login',
+  'logout',
+  'new',
+  'admin',
+  'settings',
+]);
 
 export function isValidName(name: string): boolean {
   if (RESERVED_NAMES.has(name)) return false;

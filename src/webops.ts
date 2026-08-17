@@ -1,5 +1,7 @@
 import express, { Express, Request, Response } from 'express';
+import { loadConfig, saveConfig } from './config';
 import { isValidRefName, isValidRepoPath, isValidSha } from './git';
+import { THEMES, findTheme, setActiveTheme } from './themes';
 import * as forms from './forms';
 import * as ops from './ops';
 import { OpError } from './ops';
@@ -608,6 +610,46 @@ export function registerWebOps(app: Express, root: string): void {
     }
     return viewer;
   }
+
+  // The theme is vault-wide, so changing it takes admin scope over everything:
+  // a delegated org administrator should not restyle the whole site.
+  function canSetTheme(viewer: Viewer): boolean {
+    return canAdmin(viewer.auth, ['*']);
+  }
+
+  app.get('/admin', (req, res) => {
+    const viewer = requireAdminPage(req, res);
+    if (!viewer) return;
+    res.type('html').send(forms.adminIndexPage(viewer, canSetTheme(viewer)));
+  });
+
+  app.get('/admin/appearance', (req, res) => {
+    const viewer = requireAdminPage(req, res);
+    if (!viewer) return;
+    if (!canSetTheme(viewer)) {
+      fail(res, 403, 'Changing the theme requires admin scope over the whole vault.', viewer, '/admin');
+      return;
+    }
+    const msg = typeof req.query.msg === 'string' ? req.query.msg : undefined;
+    res.type('html').send(forms.appearancePage(viewer, THEMES, loadConfig(root).theme, msg));
+  });
+
+  app.post('/admin/appearance', form, (req, res) => {
+    const viewer = requireAdminPost(req, res);
+    if (!viewer) return;
+    if (!canSetTheme(viewer)) {
+      fail(res, 403, 'Changing the theme requires admin scope over the whole vault.', viewer, '/admin');
+      return;
+    }
+    const name = field(req, 'theme');
+    if (!findTheme(name)) {
+      fail(res, 400, `Unknown theme: ${name || '(none selected)'}.`, viewer, '/admin/appearance');
+      return;
+    }
+    saveConfig(root, { theme: name });
+    setActiveTheme(name);
+    res.redirect(`/admin/appearance?msg=${encodeURIComponent(`Theme set to ${name}.`)}`);
+  });
 
   app.get('/admin/users', (req, res) => {
     const viewer = requireAdminPage(req, res);

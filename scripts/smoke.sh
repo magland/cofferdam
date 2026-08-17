@@ -55,12 +55,12 @@ check() {
 }
 body_has() {
   local desc="$1" pattern="$2"
-  grep -q "$pattern" "$BODY" || { echo "FAIL: $desc (pattern not found: $pattern)"; head -c 2000 "$BODY"; echo; exit 1; }
+  grep -q -e "$pattern" "$BODY" || { echo "FAIL: $desc (pattern not found: $pattern)"; head -c 2000 "$BODY"; echo; exit 1; }
   PASS=$((PASS+1)); echo "ok: $desc"
 }
 body_lacks() {
   local desc="$1" pattern="$2"
-  if grep -q "$pattern" "$BODY"; then echo "FAIL: $desc (pattern unexpectedly found: $pattern)"; exit 1; fi
+  if grep -q -e "$pattern" "$BODY"; then echo "FAIL: $desc (pattern unexpectedly found: $pattern)"; exit 1; fi
   PASS=$((PASS+1)); echo "ok: $desc"
 }
 csrf_of() { { grep -o 'name="csrf" value="[^"]*"' "$BODY" || true; } | head -1 | sed 's/.*value="//;s/"$//'; }
@@ -208,6 +208,40 @@ check "mint token for alice" 200 -b "$JAR" "$BASE/admin/users/alice/token" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "tokenScope="
 body_has "minted token shown" 'repos_'
 
+# ---- themes ----
+
+check "default theme is not github" 200 "$BASE/"
+body_has "default theme linked" 'style.css?t=paper'
+check "themed stylesheet" 200 "$BASE/assets/style.css?t=paper"
+body_has "theme variables emitted" '--accent:'
+body_lacks "no hardcoded github blue in structure" '#0969da'
+check "highlight stylesheet follows the theme" 200 "$BASE/assets/hl.css?t=paper"
+
+check "admin index" 200 -b "$JAR" "$BASE/admin"
+body_has "appearance card" 'Appearance'
+check "appearance page" 200 -b "$JAR" "$BASE/admin/appearance"
+CSRF="$(csrf_of)"
+body_has "github theme offered" 'value="github"'
+check "unknown theme refused" 400 -b "$JAR" "$BASE/admin/appearance" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode theme=nonesuch
+check "switch to github theme" 302 -b "$JAR" "$BASE/admin/appearance" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode theme=github
+check "pages now use github theme" 200 "$BASE/"
+body_has "github theme linked" 'style.css?t=github'
+check "github stylesheet has github blue" 200 "$BASE/assets/style.css"
+body_has "github accent value" '#0969da'
+grep -q '"theme": "github"' "$VAULT/config.json" || { echo "FAIL: theme not persisted to config.json"; exit 1; }
+PASS=$((PASS+1)); echo "ok: theme persisted to config.json"
+
+# A hand-edited config.json is picked up without a restart.
+printf '{\n  "theme": "midnight"\n}\n' > "$VAULT/config.json"
+check "hand-edited theme applies" 200 "$BASE/"
+body_has "midnight theme linked" 'style.css?t=midnight'
+printf '{\n  "theme": "bogus-theme"\n}\n' > "$VAULT/config.json"
+check "invalid theme falls back" 200 "$BASE/"
+body_has "fallback to default" 'style.css?t=paper'
+printf '{\n  "theme": "paper"\n}\n' > "$VAULT/config.json"
+
 # ---- alice's limited abilities ----
 
 check "alice login" 302 -c "$ALICE_JAR" "$BASE/login" \
@@ -219,6 +253,23 @@ check "alice cannot create out of scope" 403 -b "$ALICE_JAR" "$BASE/new" \
   --data-urlencode "csrf=$ALICE_CSRF" --data-urlencode org=other --data-urlencode name=x
 check "alice cannot delete repo" 403 -b "$ALICE_JAR" "$BASE/demo/proj/settings/delete" \
   --data-urlencode "csrf=$ALICE_CSRF" --data-urlencode confirm=demo/proj
+
+# ---- a delegated org admin is an admin, but not for vault-wide settings ----
+
+check "admin users page for delegation" 200 -b "$JAR" "$BASE/admin/users"
+CSRF="$(csrf_of)"
+check "create delegated admin" 200 -b "$JAR" "$BASE/admin/users" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode username=orgadmin \
+  --data-urlencode "scope=demo/*" --data-urlencode "admin=demo/*"
+ORG_TOKEN="$(grep -o 'repos_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+[ -n "$ORG_TOKEN" ] || { echo "FAIL: no token for orgadmin"; exit 1; }
+check "orgadmin login" 302 -c "$TMP/orgadmin.jar" "$BASE/login" \
+  --data-urlencode username=orgadmin --data-urlencode "token=$ORG_TOKEN" --data-urlencode next=/
+check "orgadmin reaches admin index" 200 -b "$TMP/orgadmin.jar" "$BASE/admin"
+body_lacks "no appearance card for delegated admin" '/admin/appearance'
+check "orgadmin cannot open appearance" 403 -b "$TMP/orgadmin.jar" "$BASE/admin/appearance"
+check "orgadmin cannot set the theme" 403 -b "$TMP/orgadmin.jar" "$BASE/admin/appearance" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode theme=terminal
 
 # ---- anonymous sees no controls ----
 

@@ -8,16 +8,16 @@ Hosting git repositories usually means one big centralized service (GitHub, GitL
 
 ## 2. Principles (do not break these)
 
-- **The filesystem is the database.** All state lives in the vault directory: repositories are bare git repos, users and token hashes live in `vault.json`, the session signing key is `.secret`, pages sites are sibling directories. Backing up a vault is copying a directory; moving it between machines is the same. No SQLite, no Postgres, no hidden state elsewhere. Future features (issues, pull requests) must also store their state in the vault, either as files or inside git itself.
+- **The filesystem is the database.** All state lives in the vault directory: repositories are bare git repos, users and token hashes live in `vault.json`, vault settings in `config.json`, the session signing key is `.secret`, pages sites are sibling directories. Backing up a vault is copying a directory; moving it between machines is the same. No SQLite, no Postgres, no hidden state elsewhere. Future features (issues, pull requests) must also store their state in the vault, either as files or inside git itself.
 - **One vault, one machine, one process.** Concurrent writes are mediated by the filesystem and by git's own locking. This is a deliberate trade-off: scaling a vault means a bigger machine, never more of them (the Fly config enforces `--ha=false` for this reason).
 - **Anonymous read, token write.** Browsing and cloning require nothing. Every write (git push, API call, UI operation) is authorized by a token whose SHA-256 hash is stored in `vault.json`. Tokens are shown once at minting and never stored in the clear. Web sessions are a convenience layer on top of tokens, not a second credential system.
 - **Scopes are globs over `org/repo`.** A user has push scope (where they may write) and admin scope (where they may manage users and perform destructive administration such as repository deletion). `*` matches everything including `/`. Per-token scopes further restrict a token, and restricted tokens carry no admin rights.
-- **The server renders HTML.** No SPA, no client framework, no build step for the frontend. Views are TypeScript template-literal functions with explicit escaping. Small amounts of vanilla JS are acceptable where a control needs it (copy buttons, confirm dialogs, the ref selector).
+- **The server renders HTML.** No SPA, no client framework, no build step for the frontend. Views are TypeScript template-literal functions with explicit escaping. Small amounts of vanilla JS are acceptable where a control needs it (copy buttons, confirm dialogs, the ref selector). The stylesheet names no colors directly: every color, font, and radius comes from a theme's custom properties (section 3.8), so new markup must use those tokens rather than literal values.
 - **The UI, the CLI, and git are three clients of one authorization model.** Nothing should be possible in one that is forbidden in another for the same user, except where noted deliberately (branch deletion, section 3.6).
 
 ## 3. Current state
 
-Everything described here is implemented and verified end to end by `scripts/smoke.sh` (91 checks: browsing, sessions, every UI operation, authorization denials, CSRF, the JSON API, git clone/push/push-to-create, pages, repository deletion).
+Everything described here is implemented and verified end to end by `scripts/smoke.sh` (126 checks: browsing, sessions, every UI operation, authorization denials, CSRF, themes, the JSON API, git clone/push/push-to-create, pages, repository deletion).
 
 ### 3.1 Running it
 
@@ -47,13 +47,15 @@ First start against a directory with no `vault.json` initializes one and prints 
 | `src/ops.ts` | The shared write-operations layer (section 3.5); enforces no authorization itself |
 | `src/session.ts` | Signed-cookie sessions, `.secret` management, `Viewer`, CSRF check |
 | `src/vault.ts` | `vault.json` load with mtime+size stat cache, token hashing/minting, glob matching, authenticate, `canPush`, `canAdmin`, bootstrap |
+| `src/config.ts` | `config.json` load/save (vault settings; currently the theme) |
+| `src/themes.ts` | The theme collection, the active-theme state, and the custom-property block each theme emits |
 | `src/scan.ts` | Vault directory scanning, org/repo name validation, reserved names, pages dir lookup |
 | `src/web.ts` | Helpers shared by the HTML modules: `loadRepo`, `makeCtx`, wildcard/404 utilities |
 | `src/views.ts` | Read-page templates (template literals, `esc()` everywhere), `RepoCtx`, layout with sign-in header |
 | `src/forms.ts` | Form pages: login, new repo, edit/create/delete file, conflict, settings, admin users, token-shown |
 | `src/render.ts` | markdown-it rendering with relative-link rewriting, highlight.js by extension, binary sniffing |
 | `src/diff.ts` | Unified-diff to HTML (line classification, per-file boxes) |
-| `src/style.ts` | The single CSS string, GitHub-light visual language |
+| `src/style.ts` | The single structural CSS string; every color and font is a `var(--…)` from the active theme |
 | `scripts/create-example.sh` | Builds the example vault, including its `vault.json` with the fixed dev user |
 | `scripts/smoke.sh` | The end-to-end smoke test |
 | `scripts/deploy-fly.sh` | Idempotent create-app/create-volume/deploy/print-token for Fly |
@@ -89,9 +91,11 @@ UI operation routes (session + CSRF; all POSTs follow POST-redirect-GET):
 | `POST /:org/:repo/tags/create` `tags/delete` | Lightweight tag operations | push scope |
 | `GET/POST /:org/:repo/settings` | Description and default branch | push scope (page also visible with admin) |
 | `POST /:org/:repo/settings/delete` | Repository deletion after retyping `org/repo` | admin scope over the repo |
+| `GET /admin` | Administration index | admin scope |
 | `GET /admin/users`, `POST /admin/users`, `POST /admin/users/:name/grant`, `POST /admin/users/:name/token` | User administration; authorization mirrors the API exactly | admin scope |
+| `GET/POST /admin/appearance` | Choose the vault's theme (section 3.8) | admin scope over `*` |
 
-Reserved names (never valid as org or repo): `vault.json`, `api`, `assets`, `login`, `logout`, `new`, `admin`, `settings`. Anything that becomes a top-level path segment the UI owns must be added here. Repo directories may be named `name` or `name.git`; the suffix is stripped for display and both resolve.
+Reserved names (never valid as org or repo): `vault.json`, `config.json`, `api`, `assets`, `login`, `logout`, `new`, `admin`, `settings`. Anything that becomes a top-level path segment the UI owns must be added here. Repo directories may be named `name` or `name.git`; the suffix is stripped for display and both resolve.
 
 ### 3.4 Web authentication: sessions on top of tokens
 
@@ -127,6 +131,15 @@ Server-side commits to a bare repo work with a temporary index: `GIT_INDEX_FILE`
 - `isValidRepoPath` rejects control characters, so files whose names contain them cannot be browsed or edited; this is a deliberate trade against the newline-delimited git plumbing formats.
 - Rate limiting and abuse controls for public vaults are unaddressed and acceptable to defer, but say so in the README of any public deployment.
 
+### 3.8 Themes
+
+The interface ships with a collection of themes: `paper` (the default), `github`, `slate`, `midnight`, and `terminal`. Matching GitHub exactly is available but is deliberately not the default, so a repos vault reads as its own thing while keeping GitHub's conventions and layout.
+
+A theme is a record in `src/themes.ts`: a set of semantic tokens (background, surface, border, accent, tab marker, primary and danger buttons, diff colors, code and input backgrounds, three font stacks, corner radius) plus the name of the highlight.js stylesheet whose token colors suit it. `themeVarsCss()` emits them as custom properties on `:root`, prefixed by a `color-scheme` declaration so browser-native controls follow. The structural CSS in `src/style.ts` references only `var(--…)`, which is what makes adding a theme a one-entry change.
+
+The choice is vault state, not visitor state: one vault is one site. It lives in `<vault>/config.json` (`src/config.ts`, stat-cached like `vault.json`, hand-editable, missing or invalid values falling back to the default rather than failing requests). Because one process serves one vault, the active theme is process state that a middleware re-syncs from the config on each request, rather than a value threaded through every view; concurrent requests always agree, since the value is vault-wide. Stylesheet URLs carry the theme name as a query parameter so a change busts any cache in front of the server.
+
+Setting the theme in the UI (`/admin/appearance`) requires admin scope covering `*`. This is stricter than the rest of user administration on purpose: an administrator delegated to one organization may manage users there, but restyling the whole vault is not theirs to do.
 ## 4. Later phases, sketched
 
 - **Issues.** State must live in the vault. Two candidate designs: a sibling directory (`<repo>.issues/` with one markdown-plus-frontmatter file per issue), which is transparent and greppable; or a hidden git ref inside the repo (as git-bug and similar tools do), which travels with clones. We lean toward the sibling directory for consistency with pages, but this is undecided.
@@ -154,3 +167,4 @@ The verification style is `scripts/smoke.sh` plus manual curl and git against th
 6. Repository renames and transfers, which interact with issue IDs, pages directories, and clone URLs.
 7. Whether `receive.maxInputSize` and the `deny*` configs should be applied retroactively to imported repos by a vault-check command.
 8. User deletion and token revocation in the UI (today the escape hatch is hand-editing `vault.json`).
+9. Whether a visitor should be able to override the vault's theme for themselves (a cookie, or following `prefers-color-scheme` when the vault picks a light theme), versus the current position that the theme belongs to the vault.

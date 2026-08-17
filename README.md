@@ -27,6 +27,7 @@ The `.git` suffix on repository directory names is optional; it is stripped for 
   - creating and deleting branches and tags
   - repository settings: description, default branch, and deletion
   - user administration: creating users, granting scopes, minting tokens
+  - a choice of themes for the vault (see below)
 - Anonymous `git clone http://host:port/org/repo` over smart HTTP
 - Authenticated `git push`, including push-to-create for new repositories
 - A JSON API and a `repos` CLI for user management
@@ -68,6 +69,28 @@ Abilities in the interface mirror the token model exactly. Push scope over a rep
 File edits use optimistic concurrency: the edit form records the commit it was loaded against, and if the branch moves before you commit, the edit is refused with a conflict page rather than clobbering the other change. Web commits are authored as `<username> <username@noreply.<host>>`.
 
 One deliberate asymmetry: repositories created by push set `receive.denyDeletes`, so `git push --delete` is refused, while the web interface allows branch deletion after confirmation. The receive hook guards against accidents; a confirmed click is explicit intent.
+
+## Themes
+
+The interface ships with a small collection of themes, chosen under **Admin > Appearance**:
+
+| Theme | Look |
+|---|---|
+| `paper` | Warm off-white with teal links and serif headings. The default. |
+| `github` | The familiar light gray and blue, for people who want no surprises. |
+| `slate` | Cool gray surfaces with an indigo accent. |
+| `midnight` | A dark theme with azure links, for low light. |
+| `terminal` | Near-black, phosphor green, monospace throughout. |
+
+A theme is a property of the vault rather than of the visitor: one vault is one site, and the operator picks how it looks. The choice lives in `<vault>/config.json`, so it can equally be set by hand before the first start, and the server picks up an edit without a restart:
+
+```json
+{ "theme": "midnight" }
+```
+
+Changing it in the UI requires admin scope over the whole vault (`*`); an administrator delegated to one organization can manage users there but cannot restyle the site. An unknown theme name falls back to the default rather than failing requests, so a typo in `config.json` cannot take the site down.
+
+Each theme is a set of semantic CSS custom properties (background, surface, border, accent, diff colors, fonts, corner radius) plus the highlight.js palette that suits it. The structural stylesheet in `src/style.ts` names no colors of its own, so adding a theme means adding one entry to `src/themes.ts`.
 
 ## The repos command
 

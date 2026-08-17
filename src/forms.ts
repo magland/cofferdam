@@ -1,5 +1,6 @@
 import { esc } from './render';
 import { Viewer } from './session';
+import { Theme } from './themes';
 import { UserRecord } from './vault';
 import { PageOpts, RepoCtx, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from './views';
 
@@ -240,6 +241,64 @@ ${csrfField(viewer)}
 <p class="muted small">Your admin scope must cover every glob you assign. The new token is shown once on the next page.</p>
 </div>`;
   return layout('Users', content, { viewer, path: '/admin/users' });
+}
+
+export function adminIndexPage(viewer: Viewer, canTheme: boolean): string {
+  const card = (href: string, title: string, blurb: string) =>
+    `<a class="card" href="${href}"><b>${esc(title)}</b><span class="muted small">${esc(blurb)}</span></a>`;
+  const content = `<h1>Administration</h1>
+<div class="card-list">
+${card('/admin/users', 'Users', 'Create users, grant push and admin scope, mint tokens.')}
+${
+  canTheme
+    ? card('/admin/appearance', 'Appearance', 'Choose the theme this vault is served with.')
+    : ''
+}
+</div>
+${
+  canTheme
+    ? ''
+    : `<p class="muted small">Appearance is a vault-wide setting, so it is limited to administrators whose admin scope covers everything.</p>`
+}`;
+  return layout('Administration', content, { viewer, path: '/admin' });
+}
+
+export function appearancePage(
+  viewer: Viewer,
+  themes: Theme[],
+  current: string,
+  msg?: string
+): string {
+  const cards = themes
+    .map((t) => {
+      const v = t.vars;
+      const swatch = `<div class="theme-swatch" style="background:${v.bg}">
+<div class="bar" style="background:${v.surface};border:1px solid ${v.border}"></div>
+<div class="row"><span class="dot" style="background:${v.accent}"></span><span class="dot" style="background:${v.primary}"></span><span class="dot" style="background:${v.tabMarker}"></span><span style="color:${v.fg};font-size:12px;font-family:${v.fontHead}">Aa</span><span style="color:${v.fgMuted};font-size:12px">muted</span></div>
+</div>`;
+      return `<div class="theme-card${t.name === current ? ' current' : ''}">
+<label>
+${swatch}
+<div class="theme-meta">
+<span class="name"><input type="radio" name="theme" value="${esc(t.name)}"${
+        t.name === current ? ' checked' : ''
+      }> ${esc(t.label)}${t.dark ? ' <span class="counter">dark</span>' : ''}</span>
+<p class="muted small">${esc(t.blurb)}</p>
+</div>
+</label>
+</div>`;
+    })
+    .join('');
+  const content = `<div class="page-head"><h1>Appearance</h1></div>
+${flashBanner(msg)}
+<p class="muted">The theme applies to the whole vault, for every visitor. It is stored in <span class="mono">config.json</span> next to <span class="mono">vault.json</span>, so it can also be set by hand.</p>
+<form method="post" action="/admin/appearance">
+${csrfField(viewer)}
+<div class="theme-grid">${cards}</div>
+<button type="submit" class="btn btn-primary">Save theme</button>
+<a class="btn" href="/admin">Back</a>
+</form>`;
+  return layout('Appearance', content, { viewer, path: '/admin/appearance' });
 }
 
 export function tokenPage(viewer: Viewer, username: string, token: string, created: boolean): string {

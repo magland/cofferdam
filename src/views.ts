@@ -1,6 +1,7 @@
 import { CommitDetail, CommitSummary, RefInfo, TreeEntry } from './git';
 import { esc, formatDate, formatSize } from './render';
 import { Viewer, viewerIsAdmin } from './session';
+import { activeTheme } from './themes';
 
 export interface RepoCtx {
   org: string;
@@ -50,21 +51,24 @@ function userBox(opts: PageOpts): string {
     const next = opts.path && opts.path.startsWith('/') ? opts.path : '/';
     return `<a class="btn" href="/login?next=${encodeURIComponent(next)}">Sign in</a>`;
   }
-  const admin = viewerIsAdmin(viewer) ? `<a href="/admin/users">Admin</a>` : '';
+  const admin = viewerIsAdmin(viewer) ? `<a href="/admin">Admin</a>` : '';
   return `${admin}<span class="user-name">${esc(viewer.auth.username)}</span><form method="post" action="/logout">${csrfField(
     viewer
   )}<button type="submit" class="btn-link">Sign out</button></form>`;
 }
 
 export function layout(title: string, content: string, opts: PageOpts = {}): string {
+  // The theme name rides along as a query parameter so a changed theme busts
+  // any cache in front of the stylesheets.
+  const theme = activeTheme().name;
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
-<link rel="stylesheet" href="/assets/style.css">
-<link rel="stylesheet" href="/assets/hl.css">
+<link rel="stylesheet" href="/assets/style.css?t=${encodeURIComponent(theme)}">
+<link rel="stylesheet" href="/assets/hl.css?t=${encodeURIComponent(theme)}">
 </head>
 <body>
 <header class="topbar"><div class="container"><a class="brand" href="/">repos</a><span class="crumbs">${
@@ -251,7 +255,7 @@ export function treePage(
     }
   }
   const latestBar = latest
-    ? `<div class="latest-commit"><span><a class="mono" href="${base}/commit/${latest.sha}"><b>${esc(
+    ? `<div class="latest-commit"><span><a href="${base}/commit/${latest.sha}"><b>${esc(
         latest.subject
       )}</b></a> <span class="muted small">by ${esc(latest.author)}</span></span><span class="muted small">${esc(
         formatDate(latest.date)
