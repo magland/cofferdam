@@ -137,11 +137,6 @@ pre.codeview { margin: 0; padding: 10px 16px; overflow-x: auto; flex: 1; font-si
 .markdown-body table th, .markdown-body table td { border: 1px solid #d0d7de; padding: 6px 12px; }
 .markdown-body table th { background: #f6f8fa; }
 
-.cmd-hint summary { color: #57606a; cursor: pointer; user-select: none; font-size: 12px; }
-.cmd-hint summary:hover { color: #0969da; }
-.cmd-hint[open] summary { margin-bottom: 6px; }
-.cmd-body { border: 1px solid #d0d7de; border-radius: 6px; padding: 8px 12px; background: #f6f8fa; }
-.cmd-body p { margin: 6px 0 0; }
 .cmd-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
 .cmd-row code {
   flex: 1; overflow-x: auto; white-space: pre; padding: 5px 8px; background: #ffffff;
@@ -152,7 +147,6 @@ pre.codeview { margin: 0; padding: 10px 16px; overflow-x: auto; flex: 1; font-si
   background: #f6f8fa; cursor: pointer; color: #1f2328; white-space: nowrap;
 }
 .copy-btn:hover { background: #eef1f4; }
-.page-hints { margin-top: 20px; display: flex; flex-direction: column; gap: 6px; }
 .empty-cmds { max-width: 520px; margin: 12px auto; text-align: left; }
 
 .empty-state { border: 1px dashed #d0d7de; border-radius: 6px; padding: 48px; text-align: center; color: #57606a; }

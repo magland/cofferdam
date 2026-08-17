@@ -1,5 +1,4 @@
 import { NextFunction, Request, Response } from 'express';
-import * as path from 'path';
 import { GitRepo, RefInfo } from './git';
 import { findRepo, pagesDir } from './scan';
 import { Viewer } from './session';
@@ -73,7 +72,6 @@ export function makeCtx(
     tags: loaded.tags,
     cloneUrl,
     hasPages: pagesDir(root, loaded.repo.org, loaded.repo.name) !== null,
-    pagesDirPath: path.join(root, loaded.repo.org, `${loaded.repo.name}.pages`),
     viewer,
     canPush: viewer !== null && canPush(viewer.auth, loaded.repo.org, loaded.repo.name),
     canAdmin: viewer !== null && canAdmin(viewer.auth, [`${loaded.repo.org}/${loaded.repo.name}`]),

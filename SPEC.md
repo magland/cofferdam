@@ -114,7 +114,7 @@ Server-side commits to a bare repo work with a temporary index: `GIT_INDEX_FILE`
 - Creating a repository in a new org creates the org directory; there is no separate org-creation flow. The "initialize with a README" option makes the first commit on `main` through the ops layer, and the same create-file flow offers to make the first commit on an empty repository.
 - Repository deletion resolves real paths and containment-checks against the vault root before any recursive removal, then removes the repo directory and its `<repo>.pages` sibling.
 - Failed logins get one generic message (no username/token distinction).
-- CLI hints in the read views were removed where a UI control replaced them (new repo, grants, branch/tag operations, file editing). The clone box, the push hint, the empty-repo commands, and the pages-publish hint remain.
+- The collapsible CLI hints of the read-only era are gone entirely. Operations belong to the UI now, and a page full of `<details>` boxes explaining git commands works against that; keep new pages clean rather than reintroducing them. What remains is genuinely about the command line: the clone box in the repository toolbar and the clone/push commands on the empty-repository page (as GitHub also does). Publishing a pages site is documented in the README rather than hinted at in the interface.
 
 ### 3.7 Known limitations and pitfalls for the implementer
 

@@ -12,7 +12,6 @@ export interface RepoCtx {
   tags: RefInfo[];
   cloneUrl: string;
   hasPages: boolean;
-  pagesDirPath: string;
   viewer: Viewer | null;
   canPush: boolean;
   canAdmin: boolean;
@@ -102,12 +101,6 @@ export function repoOpts(ctx: RepoCtx, path?: string): PageOpts {
 
 function copyRow(cmd: string): string {
   return `<div class="cmd-row"><code>${esc(cmd)}</code><button class="copy-btn" type="button" onclick="copyCmd(this)">Copy</button></div>`;
-}
-
-export function cmdHint(summary: string, commands: string[], noteHtml?: string): string {
-  return `<details class="cmd-hint"><summary>${esc(summary)}</summary><div class="cmd-body">${commands
-    .map(copyRow)
-    .join('')}${noteHtml ? `<p class="muted small">${noteHtml}</p>` : ''}</div></details>`;
 }
 
 function refSelector(ctx: RepoCtx, urlForRef: (ref: string) => string): string {
@@ -271,22 +264,6 @@ export function treePage(
     path === ''
       ? `<div class="clone-box"><input readonly value="git clone ${esc(ctx.cloneUrl)}" onclick="this.select()"><button class="copy-btn" type="button" onclick="copyCmd(this)">Copy</button></div>`
       : '';
-  const hints =
-    path === ''
-      ? `<div class="page-hints">${cmdHint(
-          'Push to this repository',
-          [`git push ${ctx.cloneUrl} ${ctx.ref}`],
-          'From a clone, plain <code>git push</code> works. Git asks for a username and token.'
-        )}${
-          !ctx.hasPages
-            ? cmdHint(
-                'Publish a pages site',
-                [`mkdir -p ${ctx.pagesDirPath}`, `cp -r your-site/* ${ctx.pagesDirPath}/`],
-                `Static files in that directory are served at <code>${esc(repoUrl(ctx))}/pages/</code>. Requires filesystem access to the vault.`
-              )
-            : ''
-        }</div>`
-      : '';
   const readme = readmeHtml
     ? `<div class="box"><div class="box-header">${esc(readmeName ?? 'README')}</div><div class="box-body markdown-body">${readmeHtml}</div></div>`
     : '';
@@ -297,8 +274,7 @@ export function treePage(
 </div>
 ${latestBar}
 <table class="listing"><tbody>${rows.join('')}</tbody></table>
-${readme}
-${hints}`;
+${readme}`;
   return layout(
     `${ctx.org}/${ctx.repo}${path ? ` at ${path}` : ''}`,
     content,
@@ -398,12 +374,7 @@ export function commitPage(ctx: RepoCtx, detail: CommitDetail, diffHtml: string)
     <span><a href="${base}/tree/${detail.sha}">Browse files</a></span>
   </div>
 </div>
-${diffHtml}
-<div class="page-hints">${cmdHint(
-    'Revert this commit',
-    [`git revert ${detail.sha}`, 'git push'],
-    'Run inside a clone of this repository; creates a new commit that undoes this one.'
-  )}</div>`;
+${diffHtml}`;
   return layout(`${subject} - ${ctx.org}/${ctx.repo}`, content, repoOpts(ctx, `${base}/commit/${detail.sha}`));
 }
 

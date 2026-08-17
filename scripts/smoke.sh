@@ -93,6 +93,8 @@ check "create demo/proj" 302 -b "$JAR" "$BASE/new" \
 check "repo page renders" 200 -b "$JAR" "$BASE/demo/proj"
 body_has "README rendered" 'Demo project'
 body_has "settings tab shown" '>Settings<'
+body_has "clone box present" 'git clone'
+body_lacks "no collapsible cli hints" 'cmd-hint'
 
 check "csrf rejected on POST" 403 -b "$JAR" "$BASE/demo/proj/branches/create" \
   --data-urlencode csrf=bogus --data-urlencode name=x
@@ -116,6 +118,11 @@ check "stale edit conflicts" 409 -b "$JAR" "$BASE/demo/proj/edit/main/README.md"
 check "commit history shows web commit" 200 -b "$JAR" "$BASE/demo/proj/commits/main"
 body_has "web commit subject" 'Edit README from the web'
 body_has "web commit author" 'owner committed'
+WEB_SHA="$({ grep -o 'commit/[0-9a-f]\{40\}' "$BODY" || true; } | head -1 | sed 's|commit/||')"
+[ -n "$WEB_SHA" ] || { echo "FAIL: no commit sha on the commits page"; exit 1; }
+check "commit diff page" 200 -b "$JAR" "$BASE/demo/proj/commit/$WEB_SHA"
+body_has "diff shows the edit" 'Edited via the web interface'
+body_lacks "no hints on commit page" 'cmd-hint'
 
 # ---- create and delete a file ----
 
@@ -176,6 +183,8 @@ check "create demo/bare without init" 302 -b "$JAR" "$BASE/new" \
   --data-urlencode "csrf=$CSRF" --data-urlencode org=demo --data-urlencode name=bare
 check "empty repo page" 200 -b "$JAR" "$BASE/demo/bare"
 body_has "create README button" 'Create a README'
+body_has "empty repo keeps clone command" 'git clone'
+body_has "empty repo keeps push command" 'git push'
 check "new file form on empty repo" 200 -b "$JAR" "$BASE/demo/bare/new/main"
 CSRF="$(csrf_of)"
 check "first commit via web" 302 -b "$JAR" "$BASE/demo/bare/new/main" \
