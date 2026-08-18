@@ -21,8 +21,10 @@ export GIT_TERMINAL_PROMPT=0
 npm run build > /dev/null
 
 SERVER_PID=""
+FORGE_PID=""
 cleanup() {
   [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true
+  [ -n "$FORGE_PID" ] && kill "$FORGE_PID" 2>/dev/null || true
   rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -1010,6 +1012,122 @@ sleep 0.5
   echo "FAIL: cancelling did not conclude the run as cancelled"
   run_field "$RUNS/$BUILD_RUN/run.json" status; exit 1; }
 PASS=$((PASS+1)); echo "ok: cancelling a queued run concludes it as cancelled"
+
+# ---- the action cache, keyed by the commit a ref names ----
+#
+# A bare repository served as static files is forge enough for this: git
+# falls back to the dumb protocol for ls-remote, and the tarballs the store
+# downloads are ordinary files. So these checks need neither the network nor
+# Docker. A second tree under byname/ holds the tarballs without the git
+# files, which is how the fallback for a forge that cannot be resolved is
+# exercised.
+
+FORGE="$TMP/forge"
+FORGE_PORT=$((PORT + 1))
+FORGE_URL="http://127.0.0.1:$FORGE_PORT"
+ACTION_SRC="$TMP/action-src"
+ACTION_CACHE="$TMP/action-cache"
+mkdir -p "$FORGE/acme"
+git init -q "$ACTION_SRC"
+cat > "$ACTION_SRC/action.yml" <<'YML'
+name: widget-one
+description: An action at its first commit
+runs:
+  using: composite
+  steps: []
+YML
+git -C "$ACTION_SRC" add -A
+git -C "$ACTION_SRC" -c user.email=ci@example.com -c user.name=ci commit -qm one
+git -C "$ACTION_SRC" -c user.email=ci@example.com -c user.name=ci tag -a v1 -m "release one"
+git clone -q --bare "$ACTION_SRC" "$FORGE/acme/widget"
+
+forge_publish() {
+  local repo="$FORGE/acme/widget" ref sha
+  mkdir -p "$repo/archive" "$FORGE/byname/acme/widget/archive"
+  git -C "$repo" update-server-info
+  for ref in $(git -C "$repo" for-each-ref --format='%(refname:short)'); do
+    sha="$(git -C "$repo" rev-parse "$ref^{commit}")"
+    git -C "$repo" archive --format=tar.gz --prefix="widget-$sha/" "$sha" -o "$repo/archive/$sha.tar.gz"
+    git -C "$repo" archive --format=tar.gz --prefix="widget-$sha/" "$sha" \
+      -o "$FORGE/byname/acme/widget/archive/$ref.tar.gz"
+  done
+}
+forge_publish
+
+python3 -m http.server "$FORGE_PORT" --directory "$FORGE" > "$TMP/forge.log" 2>&1 &
+FORGE_PID=$!
+for _ in $(seq 1 50); do
+  if curl -s -o /dev/null "$FORGE_URL/"; then break; fi
+  sleep 0.2
+done
+
+cat > "$TMP/action-cache.mjs" <<'JS'
+// Drive the runner's ActionStore directly: it needs no server, and the
+// question here is which bytes a `uses:` ref resolves to.
+const [dist, forgeUrl, cacheDir, uses] = process.argv.slice(2);
+const { ActionStore } = await import(`${dist}/runner/actions.js`);
+const { parseActionRef } = await import(`${dist}/ci/actionref.js`);
+const store = new ActionStore(cacheDir, forgeUrl, process.env.NO_ACTION_CACHE !== '1');
+try {
+  const r = await store.resolve(parseActionRef(uses), process.cwd(), (l) => console.log(`log=${l}`));
+  console.log(`key=${r.key}`);
+  console.log(`name=${r.def.name}`);
+} catch (e) {
+  console.log(`error=${e instanceof Error ? e.message : e}`);
+}
+JS
+
+action_cache() {   # <uses> — resolve once, keeping the output for assertions
+  node "$TMP/action-cache.mjs" "$PWD/dist" "$1" "$ACTION_CACHE" "$2" > "$TMP/action-cache.out" 2>&1 || {
+    echo "FAIL: resolving $2 threw"; cat "$TMP/action-cache.out"; exit 1; }
+}
+cache_has() {      # <desc> <pattern>
+  grep -q -e "$2" "$TMP/action-cache.out" || {
+    echo "FAIL: $1 (pattern not found: $2)"; cat "$TMP/action-cache.out"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: $1"
+}
+
+action_cache "$FORGE_URL" 'acme/widget@main'
+cache_has "a first resolve downloads the action" '^log=Downloading acme/widget@main ([0-9a-f]\{12\})$'
+cache_has "the cache key names the commit" '^key=acme__widget__main__[0-9a-f]\{12\}$'
+
+action_cache "$FORGE_URL" 'acme/widget@main'
+cache_has "a second resolve reuses the download, and says so" '^log=Using cached acme/widget@main'
+
+# The point of keying by commit: a branch that moved is picked up on the next
+# job rather than a day later.
+cat > "$ACTION_SRC/action.yml" <<'YML'
+name: widget-two
+description: An action at its second commit
+runs:
+  using: composite
+  steps: []
+YML
+git -C "$ACTION_SRC" -c user.email=ci@example.com -c user.name=ci commit -qam two
+git -C "$ACTION_SRC" push -q "$FORGE/acme/widget" main
+forge_publish
+
+action_cache "$FORGE_URL" 'acme/widget@main'
+cache_has "a moved branch is fetched again at once" '^log=Downloading acme/widget@main'
+cache_has "the new commit is what the job gets" '^name=widget-two$'
+[ "$(ls "$ACTION_CACHE" | grep -c '^acme__widget__main__')" = 1 ] || {
+  echo "FAIL: the superseded cache entry was not pruned"; ls "$ACTION_CACHE"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the entry a branch pointed at before is pruned when it moves"
+
+action_cache "$FORGE_URL" 'acme/widget@v1'
+cache_has "an annotated tag resolves to the commit it points at" '^name=widget-one$'
+
+NO_ACTION_CACHE=1 action_cache "$FORGE_URL" 'acme/widget@main'
+cache_has "the cache can be turned off" '^log=Downloading acme/widget@main .*(cache disabled)$'
+
+# A forge that cannot answer ls-remote still works, by name, as before.
+action_cache "$FORGE_URL/byname" 'acme/widget@main'
+cache_has "an unresolvable ref falls back to keying by name, and says so" '^log=Could not resolve acme/widget@main'
+cache_has "the fallback key is the ref name" '^key=acme__widget__main$'
+cache_has "the fallback still delivers the action" '^name=widget-two$'
+
+kill "$FORGE_PID" 2>/dev/null || true
+FORGE_PID=""
 
 # ---- executing a job (needs Docker) ----
 

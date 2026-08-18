@@ -24,6 +24,8 @@ export interface RunnerConfig {
   actionsUrl?: string;
   /** Where downloaded actions and node builds are cached. */
   cacheDir?: string;
+  /** Reuse downloaded actions between jobs. Defaults to true. */
+  actionCache?: boolean;
 }
 
 export const DEFAULT_IMAGES: Record<string, string> = {
@@ -187,7 +189,7 @@ export class Runner {
     this.network = config.network;
     const actionCache = config.cacheDir ? path.join(config.cacheDir, 'actions') : defaultActionCacheDir();
     const externalsCache = config.cacheDir ? path.join(config.cacheDir, 'externals') : defaultExternalsDir();
-    this.actions = new ActionStore(actionCache, config.actionsUrl);
+    this.actions = new ActionStore(actionCache, config.actionsUrl, config.actionCache);
     this.externals = new Externals(externalsCache);
   }
 
@@ -279,6 +281,7 @@ export class Runner {
     console.log(`> ${label}`);
     const client = new JobClient(this, spec);
     client.start();
+    this.actions.beginJob();
     const started = Date.now();
     let result: JobResult;
     try {

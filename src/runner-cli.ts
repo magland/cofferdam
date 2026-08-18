@@ -16,6 +16,7 @@ interface RunnerArgs {
   network: string | null;
   cacheDir: string | null;
   actionsUrl: string | null;
+  actionCache: boolean;
   save: boolean;
 }
 
@@ -32,6 +33,7 @@ function parseArgs(args: string[], usage: () => never): RunnerArgs {
     network: null,
     cacheDir: null,
     actionsUrl: null,
+    actionCache: true,
     save: false,
   };
   const list = (v: string): string[] => v.split(/[\s,]+/).filter((s) => s.length > 0);
@@ -46,6 +48,7 @@ function parseArgs(args: string[], usage: () => never): RunnerArgs {
     else if (a === '--work-dir') out.workDir = args[++i];
     else if (a === '--cache-dir') out.cacheDir = args[++i];
     else if (a === '--actions-url') out.actionsUrl = args[++i];
+    else if (a === '--no-action-cache') out.actionCache = false;
     else if (a === '--network') out.network = args[++i];
     else if (a === '--save') out.save = true;
     else if (a === '--image') {
@@ -214,6 +217,7 @@ export async function runnerRunCmd(args: string[], usage: () => never): Promise<
     network: a.network ?? saved?.network,
     cacheDir: a.cacheDir ?? saved?.cacheDir,
     actionsUrl: a.actionsUrl ?? saved?.actionsUrl,
+    actionCache: a.actionCache && (saved?.actionCache ?? true),
   };
   if (a.save) {
     saveRunnerConfig(config);

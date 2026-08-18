@@ -63,13 +63,23 @@ export function parseActionRef(uses: string): ActionRef {
 
 // A stable, filesystem-safe key for an action, used both as a cache
 // directory name and as the directory the action is copied to inside a job's
-// container. Slashes in a ref (release/v1) become a safe separator.
-export function actionCacheKey(ref: ActionRef): string {
+// container. Slashes in a ref (release/v1) become a safe separator. When the
+// commit a ref names is known the key includes it, so the entry identifies
+// the bytes rather than a name that moves; the ref stays in the key as well,
+// since a listing of the cache is easier to read that way, and it gives the
+// runner a prefix to prune when the ref moves on.
+export function actionCacheKey(ref: ActionRef, commit?: string): string {
   if (ref.kind === 'repo') {
-    return `${ref.owner}__${ref.repo}__${ref.ref.replace(/\//g, '--')}`;
+    return `${commitPrefix(ref)}${commit ? `__${commit.slice(0, 12)}` : ''}`;
   }
   if (ref.kind === 'local') return `local__${ref.path.replace(/\//g, '--')}`;
   return `docker__${ref.image.replace(/[^A-Za-z0-9._-]/g, '-')}`;
+}
+
+// The part of a cache key that a ref shares with every commit it has ever
+// pointed at.
+export function commitPrefix(ref: Extract<ActionRef, { kind: 'repo' }>): string {
+  return `${ref.owner}__${ref.repo}__${ref.ref.replace(/\//g, '--')}`;
 }
 
 // Whether a ref names an immutable object. A full sha never needs

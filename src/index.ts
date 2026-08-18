@@ -67,7 +67,9 @@ function usage(code = 0): never {
       working docker command; --image <label>=<image> overrides which image
       a runs-on label maps to. Actions named by uses: are fetched from
       github.com (--actions-url changes that) and cached under
-      ~/.cache/hubbit (--cache-dir changes that).
+      ~/.cache/hubbit (--cache-dir changes that), keyed by the commit the ref
+      resolves to, so a moved branch or tag is picked up on the next run;
+      --no-action-cache downloads every time.
 
   hubbit runner list
   hubbit runner remove <name>

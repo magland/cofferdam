@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { ActionRef, actionCacheKey, refIsImmutable } from '../ci/actionref';
+import { ActionRef, actionCacheKey, commitPrefix, refIsImmutable } from '../ci/actionref';
 import { WorkflowStep } from '../ci/workflow';
 
 // Fetching actions and reading their definitions. Actions come from a forge
@@ -183,12 +183,26 @@ export function parseActionDef(source: string, where: string): ActionDef {
   throw new ActionError(`${where}: unsupported "runs.using": ${using}`);
 }
 
-function run(cmd: string, args: string[], cwd?: string): Promise<string> {
+function run(
+  cmd: string,
+  args: string[],
+  opts: { cwd?: string; timeout?: number; env?: Record<string, string> } = {}
+): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { cwd, maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) reject(new ActionError((stderr || err.message).toString().trim()));
-      else resolve(stdout.toString());
-    });
+    execFile(
+      cmd,
+      args,
+      {
+        cwd: opts.cwd,
+        timeout: opts.timeout,
+        env: opts.env ? { ...process.env, ...opts.env } : process.env,
+        maxBuffer: 32 * 1024 * 1024,
+      },
+      (err, stdout, stderr) => {
+        if (err) reject(new ActionError((stderr || err.message).toString().trim()));
+        else resolve(stdout.toString());
+      }
+    );
   });
 }
 
@@ -197,17 +211,60 @@ export function defaultActionCacheDir(): string {
   return path.join(base, 'hubbit', 'actions');
 }
 
-// A cached branch checkout goes stale, since a branch moves. A sha never
-// does, and a tag is treated as immutable by convention (GitHub's own action
-// tags are moved occasionally, which this deliberately does not chase; pin a
-// sha if that matters to you).
+// The fallback when a ref could not be resolved to a commit: the entry is
+// keyed by a name, and a name moves, so it is re-fetched after a day. A key
+// that names a commit needs none of this, since the bytes cannot change.
 const STALE_MS = 24 * 60 * 60 * 1000;
 
+// Which ref `uses: owner/repo@thing` means, when a tag and a branch share the
+// name. This is git's own precedence (rev-parse tries refs/<name>, then tags,
+// then heads), and an annotated tag is peeled to the commit it points at,
+// since that is what a tarball can be built from.
+export function pickCommit(lsRemote: string, ref: string): string | null {
+  const byName = new Map<string, string>();
+  for (const line of lsRemote.split('\n')) {
+    const m = /^([0-9a-f]{40})\s+(\S+)$/.exec(line.trim());
+    if (m) byName.set(m[2], m[1]);
+  }
+  const candidates = [ref, `${ref}^{}`, `refs/tags/${ref}^{}`, `refs/tags/${ref}`, `refs/heads/${ref}`];
+  for (const name of candidates) {
+    const sha = byName.get(name);
+    if (sha) return sha;
+  }
+  return null;
+}
+
+function describeRef(ref: Extract<ActionRef, { kind: 'repo' }>, commit: string | null): string {
+  return `${ref.owner}/${ref.repo}@${ref.ref}${commit ? ` (${commit.slice(0, 12)})` : ''}`;
+}
+
+function ago(ms: number): string {
+  const minutes = Math.round(ms / 60000);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = minutes / 60;
+  return hours < 24 ? `${Math.round(hours)}h` : `${Math.round(hours / 24)}d`;
+}
+
 export class ActionStore {
+  // Refs resolved during the current job. A job whose steps all use the same
+  // action then asks the forge once rather than once per step. Cleared
+  // between jobs (see `beginJob`), so nothing here outlives the job that
+  // learned it and a branch that moves is seen on the next run.
+  private resolved = new Map<string, string>();
+
   constructor(
     private cacheDir: string = defaultActionCacheDir(),
-    private forgeUrl: string = process.env.HUBBIT_ACTIONS_URL ?? 'https://github.com'
+    private forgeUrl: string = process.env.HUBBIT_ACTIONS_URL ?? 'https://github.com',
+    // Reusing a download between jobs is what the cache is for; turning it
+    // off is for when something about an action itself is being debugged.
+    private useCache: boolean = process.env.HUBBIT_ACTIONS_NO_CACHE !== '1'
   ) {}
+
+  // Called at the start of every job: what a ref pointed at during the last
+  // job says nothing about where it points now.
+  beginJob(): void {
+    this.resolved.clear();
+  }
 
   // Fetch (or reuse) an action's source and read its definition. The
   // workspace path is needed for local (`./…`) actions, which live in the
@@ -217,7 +274,6 @@ export class ActionStore {
     workspaceDir: string,
     onLine: (line: string) => void
   ): Promise<ResolvedAction> {
-    const key = actionCacheKey(ref);
     if (ref.kind === 'docker') {
       throw new ActionError(
         `docker actions are not supported yet (uses: ${ref.raw}); rewrite the step as a run: step or use a JavaScript or composite action`
@@ -230,28 +286,96 @@ export class ActionStore {
       if (real !== wsReal && !real.startsWith(wsReal + path.sep)) {
         throw new ActionError(`local action ${ref.raw} resolves outside the workspace`);
       }
-      return { dir, def: this.readDef(dir, ref.raw), key };
+      return { dir, def: this.readDef(dir, ref.raw), key: actionCacheKey(ref) };
     }
 
+    const commit = await this.resolveCommit(ref, onLine);
+    const key = actionCacheKey(ref, commit ?? undefined);
     const dest = path.join(this.cacheDir, key);
     const stamp = path.join(dest, '.hubbit-fetched');
-    let fresh = false;
+    let fetchedAt: number | null = null;
     try {
-      const age = Date.now() - fs.statSync(stamp).mtimeMs;
-      fresh = refIsImmutable(ref) || age < STALE_MS;
+      fetchedAt = fs.statSync(stamp).mtimeMs;
     } catch {
-      fresh = false;
+      fetchedAt = null;
     }
-    if (!fresh) {
-      onLine(`Downloading ${ref.owner}/${ref.repo}@${ref.ref}`);
-      await this.download(ref, dest);
+    // A key that names a commit identifies the bytes, so a hit is always
+    // good. Without one the key is a name, which moves.
+    const age = fetchedAt === null ? Infinity : Date.now() - fetchedAt;
+    const usable = fetchedAt !== null && (commit !== null || age < STALE_MS);
+    if (usable && this.useCache) {
+      // Say so: a run that quietly used a day-old copy of an action is hard
+      // to tell from one that used the tip, which is the whole trap.
+      const why = commit ? '' : ` (fetched ${ago(age)} ago, by name)`;
+      onLine(`Using cached ${describeRef(ref, commit)}${why}`);
+    } else {
+      onLine(`Downloading ${describeRef(ref, commit)}${!this.useCache ? ' (cache disabled)' : ''}`);
+      await this.download(ref, dest, commit);
       fs.writeFileSync(stamp, new Date().toISOString());
+      if (commit) this.pruneOtherCommits(ref, key);
     }
     const dir = ref.subpath ? path.join(dest, ref.subpath) : dest;
     if (!fs.existsSync(dir)) {
       throw new ActionError(`${ref.raw}: ${ref.subpath || '.'} does not exist in ${ref.owner}/${ref.repo}@${ref.ref}`);
     }
     return { dir, def: this.readDef(dir, ref.raw), key };
+  }
+
+  // Resolve a ref to the commit it names, so the cache is keyed by the object
+  // rather than by a name. One `git ls-remote` is a small request, needs no
+  // token against a public forge, and costs far less than the tarball it
+  // saves re-downloading. When it fails (no network, a private repository, a
+  // forge that does not speak git over HTTP) we say so and fall back to the
+  // older behavior of keying by name and re-fetching after a day.
+  private async resolveCommit(
+    ref: Extract<ActionRef, { kind: 'repo' }>,
+    onLine: (line: string) => void
+  ): Promise<string | null> {
+    if (refIsImmutable(ref)) return ref.ref.toLowerCase();
+    const memoKey = `${ref.owner}/${ref.repo}@${ref.ref}`;
+    const hit = this.resolved.get(memoKey);
+    if (hit !== undefined) return hit;
+    const url = `${this.forgeUrl.replace(/\/+$/, '')}/${ref.owner}/${ref.repo}`;
+    let out: string;
+    try {
+      // No ref patterns: git filters them on the client anyway, after the
+      // server has advertised everything, and a pattern would hide the
+      // peeled entry (refs/tags/v1^{}) that an annotated tag needs.
+      out = await run('git', ['ls-remote', url], {
+        timeout: 20000,
+        // Never stop for a credential prompt: a private or missing
+        // repository must fail rather than hang the job.
+        env: { GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', GCM_INTERACTIVE: 'never' },
+      });
+    } catch (e) {
+      onLine(
+        `Could not resolve ${ref.owner}/${ref.repo}@${ref.ref} (${e instanceof Error ? e.message : e}); ` +
+          `caching it by name instead`
+      );
+      return null;
+    }
+    const commit = pickCommit(out, ref.ref);
+    if (!commit) {
+      onLine(`${ref.owner}/${ref.repo} has no ref named ${ref.ref}; caching it by name instead`);
+      return null;
+    }
+    this.resolved.set(memoKey, commit);
+    return commit;
+  }
+
+  // A ref that moves would otherwise leave its old commit behind on every
+  // move. Removing the entries for the same owner/repo/ref keeps the cache
+  // at one copy per ref, the footprint it had when keys were names.
+  private pruneOtherCommits(ref: Extract<ActionRef, { kind: 'repo' }>, keep: string): void {
+    const prefix = `${commitPrefix(ref)}__`;
+    try {
+      for (const name of fs.readdirSync(this.cacheDir)) {
+        if (name === keep || !name.startsWith(prefix)) continue;
+        fs.rmSync(path.join(this.cacheDir, name), { recursive: true, force: true });
+      }
+    } catch {
+      // A cache we cannot tidy is not a reason to fail the job.
+    }
   }
 
   private readDef(dir: string, where: string): ActionDef {
@@ -264,10 +388,13 @@ export class ActionStore {
 
   private async download(
     ref: Extract<ActionRef, { kind: 'repo' }>,
-    dest: string
+    dest: string,
+    commit: string | null
   ): Promise<void> {
+    // Ask for the commit when it is known, so the tarball is the one the key
+    // promises even if the ref moves between resolving and downloading.
     const url = `${this.forgeUrl.replace(/\/+$/, '')}/${ref.owner}/${ref.repo}/archive/${encodeURIComponent(
-      ref.ref
+      commit ?? ref.ref
     )}.tar.gz`;
     let res: Response;
     try {
