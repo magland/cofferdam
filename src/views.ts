@@ -268,8 +268,11 @@ export function treePage(
     path === ''
       ? `<div class="clone-box"><input readonly value="git clone ${esc(ctx.cloneUrl)}" onclick="this.select()"><button class="copy-btn" type="button" onclick="copyCmd(this)">Copy</button></div>`
       : '';
+  const readmePath = path === '' ? readmeName : `${path}/${readmeName}`;
   const readme = readmeHtml
-    ? `<div class="box"><div class="box-header">${esc(readmeName ?? 'README')}</div><div class="box-body markdown-body">${readmeHtml}</div></div>`
+    ? `<div class="box"><div class="box-header"><a href="${base}/blob/${encPath(ctx.ref)}/${encPath(
+        readmePath ?? 'README'
+      )}">${esc(readmeName ?? 'README')}</a></div><div class="box-body markdown-body">${readmeHtml}</div></div>`
     : '';
   const content = `${repoHeader(ctx, 'code')}
 <div class="toolbar">
@@ -291,25 +294,41 @@ export function blobPage(
   path: string,
   view:
     | { kind: 'code'; html: string; lineCount: number; size: number; editable: boolean }
+    | { kind: 'markdown'; html: string; size: number; editable: boolean }
     | { kind: 'image'; rawUrl: string; size: number }
     | { kind: 'binary'; rawUrl: string; size: number }
-    | { kind: 'too-large'; rawUrl: string; size: number }
+    | { kind: 'too-large'; rawUrl: string; size: number },
+  isMarkdown = false
 ): string {
   const base = repoUrl(ctx);
+  const blobUrl = `${base}/blob/${encPath(ctx.ref)}/${encPath(path)}`;
   const rawUrl = `${base}/raw/${encPath(ctx.ref)}/${encPath(path)}`;
-  const editBtns =
-    view.kind === 'code' && view.editable
-      ? `<a class="btn" href="${base}/edit/${encPath(ctx.ref)}/${encPath(path)}">Edit</a><a class="btn btn-danger-outline" href="${base}/delete/${encPath(
-          ctx.ref
-        )}/${encPath(path)}">Delete</a>`
-      : '';
+  const editable = (view.kind === 'code' || view.kind === 'markdown') && view.editable;
+  const editBtns = editable
+    ? `<a class="btn" href="${base}/edit/${encPath(ctx.ref)}/${encPath(path)}">Edit</a><a class="btn btn-danger-outline" href="${base}/delete/${encPath(
+        ctx.ref
+      )}/${encPath(path)}">Delete</a>`
+    : '';
+  // GitHub spells the source view of a rendered file ?plain=1; we follow that.
+  const seg = (label: string, href: string, current: boolean) =>
+    `<a${current ? ' class="current"' : ''} href="${href}">${label}</a>`;
+  const toggle = isMarkdown
+    ? `<span class="seg">${seg('Preview', blobUrl, view.kind === 'markdown')}${seg(
+        'Code',
+        `${blobUrl}?plain=1`,
+        view.kind !== 'markdown'
+      )}</span>`
+    : '';
   let body = '';
   const meta = (left: string) =>
-    `<div class="code-meta"><span class="muted small">${left}</span><span class="right-group"><a class="btn" href="${rawUrl}">Raw</a>${editBtns}</span></div>`;
+    `<div class="code-meta"><span class="muted small">${left}</span><span class="right-group">${toggle}<a class="btn" href="${rawUrl}">Raw</a>${editBtns}</span></div>`;
   if (view.kind === 'code') {
     const gutter = Array.from({ length: view.lineCount }, (_, i) => i + 1).join('\n');
     body = `${meta(`${view.lineCount} lines &middot; ${esc(formatSize(view.size))}`)}
 <div class="code-wrap"><pre class="gutter">${gutter}</pre><pre class="codeview"><code>${view.html}</code></pre></div>`;
+  } else if (view.kind === 'markdown') {
+    body = `${meta(esc(formatSize(view.size)))}
+<div class="rendered markdown-body">${view.html}</div>`;
   } else if (view.kind === 'image') {
     body = `${meta(esc(formatSize(view.size)))}<div class="blob-image"><img src="${rawUrl}" alt="${esc(path)}"></div>`;
   } else if (view.kind === 'too-large') {
@@ -322,11 +341,7 @@ export function blobPage(
   <div class="left">${refSelector(ctx, (ref) => `${base}/blob/${encPath(ref)}/${encPath(path)}`)}${breadcrumb(ctx, path)}</div>
 </div>
 ${body}`;
-  return layout(
-    `${path} at ${ctx.ref} - ${ctx.org}/${ctx.repo}`,
-    content,
-    repoOpts(ctx, `${base}/blob/${encPath(ctx.ref)}/${encPath(path)}`)
-  );
+  return layout(`${path} at ${ctx.ref} - ${ctx.org}/${ctx.repo}`, content, repoOpts(ctx, blobUrl));
 }
 
 export function commitsPage(

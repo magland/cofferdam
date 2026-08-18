@@ -2,7 +2,7 @@ import { Express, Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { GitRepo, isValidRefName, isValidRepoPath } from './git';
-import { esc, highlightCode, isBinary, renderMarkdown } from './render';
+import { esc, highlightCode, isBinary, isMarkdownFile, renderMarkdown } from './render';
 import { renderDiff } from './diff';
 import { displayName, isValidName, listOrgs, listRepoDirs, pagesDir, repoDescription } from './scan';
 import { findRepo } from './scan';
@@ -167,12 +167,27 @@ export function registerBrowse(app: Express, root: string): void {
         return;
       }
       const text = buf.toString('utf8');
+      const editable = ctx.canPush && ctx.refIsBranch;
+      const markdown = isMarkdownFile(filePath);
+      // Markdown renders by default; ?plain=1 asks for the source, as on GitHub.
+      if (markdown && req.query.plain !== '1') {
+        const dir = filePath.includes('/') ? `/${encPath(filePath.slice(0, filePath.lastIndexOf('/')))}` : '';
+        const html = renderMarkdown(text, {
+          rawBase: `${repoUrl(ctx)}/raw/${encPath(ref)}${dir}`,
+          blobBase: `${repoUrl(ctx)}/blob/${encPath(ref)}${dir}`,
+        });
+        res
+          .type('html')
+          .send(views.blobPage(ctx, filePath, { kind: 'markdown', html, size: buf.length, editable }, true));
+        return;
+      }
       const html = highlightCode(text, filePath);
       const lineCount = text === '' ? 1 : text.replace(/\n$/, '').split('\n').length;
-      const editable = ctx.canPush && ctx.refIsBranch;
       res
         .type('html')
-        .send(views.blobPage(ctx, filePath, { kind: 'code', html, lineCount, size: buf.length, editable }));
+        .send(
+          views.blobPage(ctx, filePath, { kind: 'code', html, lineCount, size: buf.length, editable }, markdown)
+        );
     })
   );
 

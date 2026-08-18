@@ -146,6 +146,50 @@ check "delete the file" 302 -b "$JAR" "$BASE/demo/proj/delete/main/docs/notes.md
   --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" --data-urlencode "message="
 check "deleted file is gone" 404 -b "$JAR" "$BASE/demo/proj/blob/main/docs/notes.md"
 
+# ---- markdown rendering ----
+
+MD_DOC="$(cat <<'EOF'
+# Guide
+
+A [link to the readme](../README.md) and a [section link](#guide).
+
+```ts
+interface Config { root: string }
+```
+EOF
+)"
+
+check "new markdown form" 200 -b "$JAR" "$BASE/demo/proj/new/main"
+CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
+check "create docs/guide.md" 302 -b "$JAR" "$BASE/demo/proj/new/main" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
+  --data-urlencode filename=docs/guide.md --data-urlencode "content=$MD_DOC" \
+  --data-urlencode "message=Add guide"
+check "markdown blob renders" 200 -b "$JAR" "$BASE/demo/proj/blob/main/docs/guide.md"
+body_has "rendered markdown body" 'class="rendered markdown-body"'
+body_has "heading anchor id" '<h1 id="guide">'
+body_has "relative link resolved against the file directory" 'href="/demo/proj/blob/main/README.md"'
+body_has "anchor link left alone" 'href="#guide"'
+body_has "fenced code highlighted" 'hljs-keyword'
+body_has "source view offered" 'docs/guide.md?plain=1'
+body_lacks "no line gutter in the preview" 'class="gutter"'
+check "markdown source view" 200 -b "$JAR" "$BASE/demo/proj/blob/main/docs/guide.md?plain=1"
+body_has "source view has a line gutter" 'class="gutter"'
+body_has "source view shows the markup" '# Guide'
+body_lacks "source view is not rendered" 'class="rendered markdown-body"'
+check "repo home renders the readme" 200 "$BASE/demo/proj"
+body_has "readme box links to the file" 'href="/demo/proj/blob/main/README.md">README.md'
+
+check "new text file form" 200 -b "$JAR" "$BASE/demo/proj/new/main"
+CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
+check "create docs/plain.txt" 302 -b "$JAR" "$BASE/demo/proj/new/main" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
+  --data-urlencode filename=docs/plain.txt --data-urlencode "content=# not markdown" \
+  --data-urlencode "message="
+check "text file shows source" 200 -b "$JAR" "$BASE/demo/proj/blob/main/docs/plain.txt"
+body_has "text file has a line gutter" 'class="gutter"'
+body_lacks "no preview toggle on a text file" 'plain=1'
+
 # ---- branches and tags ----
 
 check "branches page" 200 -b "$JAR" "$BASE/demo/proj/branches"

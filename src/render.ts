@@ -86,10 +86,53 @@ export function highlightCode(text: string, filename: string): string {
   return esc(text);
 }
 
+export function isMarkdownFile(filename: string): boolean {
+  const base = filename.split('/').pop() ?? filename;
+  return /\.(md|markdown)$/i.test(base);
+}
+
+// GitHub-style heading anchors: lowercase, punctuation dropped, spaces to hyphens.
+function slugify(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N} _-]/gu, '')
+    .replace(/[\s_]+/g, '-');
+}
+
 export function renderMarkdown(text: string, opts: { rawBase: string; blobBase: string }): string {
-  const md = new MarkdownIt({ html: false, linkify: true });
+  const md = new MarkdownIt({
+    html: false,
+    linkify: true,
+    highlight: (code, lang) => {
+      if (lang && hljs.getLanguage(lang)) {
+        try {
+          return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
+        } catch {
+          // fall through: an empty return makes markdown-it escape the code itself
+        }
+      }
+      return '';
+    },
+  });
   const isRelative = (u: string) => !/^([a-z][a-z0-9+.-]*:|\/|#)/i.test(u);
-  const rewrite = (u: string, base: string) => `${base}/${u.replace(/^\.\//, '')}`;
+  // Resolve a relative reference against the file's directory, collapsing the
+  // dot segments ourselves so the emitted href is the path a reader would type.
+  const rewrite = (u: string, base: string) => {
+    const cut = u.search(/[#?]/);
+    const rel = cut === -1 ? u : u.slice(0, cut);
+    const suffix = cut === -1 ? '' : u.slice(cut);
+    const out: string[] = [];
+    for (const seg of `${base}/${rel}`.split('/')) {
+      if (seg === '.') continue;
+      if (seg === '..') {
+        if (out.length > 1) out.pop();
+        continue;
+      }
+      out.push(seg);
+    }
+    return out.join('/') + suffix;
+  };
   const defaultImage = md.renderer.rules.image!;
   md.renderer.rules.image = (tokens, idx, options, env, self) => {
     const src = tokens[idx].attrGet('src');
@@ -103,6 +146,17 @@ export function renderMarkdown(text: string, opts: { rawBase: string; blobBase: 
     const href = tokens[idx].attrGet('href');
     if (href && isRelative(href)) tokens[idx].attrSet('href', rewrite(href, opts.blobBase));
     return defaultLink(tokens, idx, options, env, self);
+  };
+  const used = new Map<string, number>();
+  md.renderer.rules.heading_open = (tokens, idx, options, _env, self) => {
+    const inline = tokens[idx + 1];
+    const slug = slugify(inline && inline.type === 'inline' ? inline.content : '');
+    if (slug) {
+      const seen = used.get(slug) ?? 0;
+      used.set(slug, seen + 1);
+      tokens[idx].attrSet('id', seen === 0 ? slug : `${slug}-${seen}`);
+    }
+    return self.renderToken(tokens, idx, options);
   };
   return md.render(text);
 }

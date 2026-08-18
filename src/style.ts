@@ -87,6 +87,8 @@ td.right, th.right { text-align: right; }
 .box { border: 1px solid var(--border); border-radius: var(--radius); margin-top: 24px; }
 .box-header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 8px 12px; font-weight: 600; border-radius: var(--radius) var(--radius) 0 0; }
 .box-body { padding: 16px 24px; }
+.box-header a { color: var(--fg); }
+.box-header a:hover { color: var(--accent); text-decoration: none; }
 
 .code-wrap { display: flex; border: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius); overflow: hidden; background: var(--code-bg); }
 .code-meta {
@@ -102,6 +104,17 @@ pre.codeview { margin: 0; padding: 10px 16px; overflow-x: auto; flex: 1; font-si
 .blob-image { border: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius); padding: 16px; text-align: center; background: var(--code-bg); }
 .blob-image img { max-width: 100%; }
 .blob-binary { border: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius); padding: 32px; text-align: center; color: var(--fg-muted); }
+.rendered {
+  border: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius);
+  padding: 20px 32px 28px; background: var(--bg);
+}
+
+/* Segmented Preview/Code switch on rendered files. */
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.seg a { padding: 4px 12px; font-size: 13px; line-height: 1.5; color: var(--fg-muted); background: var(--surface); }
+.seg a + a { border-left: 1px solid var(--border); }
+.seg a:hover { background: var(--surface-hover); text-decoration: none; }
+.seg a.current { background: var(--chip-bg); color: var(--fg); font-weight: 600; }
 
 .commit-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; border: 1px solid var(--border); border-top: none; padding: 8px 12px; }
 .commit-row:first-of-type { border-top: 1px solid var(--border); border-radius: var(--radius) var(--radius) 0 0; }
@@ -132,6 +145,8 @@ pre.codeview { margin: 0; padding: 10px 16px; overflow-x: auto; flex: 1; font-si
 .dline.meta { color: var(--fg-subtle); background: var(--diff-meta); }
 
 .markdown-body { font-size: 15px; }
+.markdown-body > *:first-child { margin-top: 0; }
+.markdown-body > *:last-child { margin-bottom: 0; }
 .markdown-body h1, .markdown-body h2, .markdown-body h3 { font-family: var(--font-head); }
 .markdown-body h1 { font-size: 1.7em; border-bottom: 1px solid var(--border-soft); padding-bottom: 0.3em; margin: 0.7em 0 0.5em; }
 .markdown-body h2 { font-size: 1.4em; border-bottom: 1px solid var(--border-soft); padding-bottom: 0.3em; }
@@ -144,6 +159,11 @@ pre.codeview { margin: 0; padding: 10px 16px; overflow-x: auto; flex: 1; font-si
 .markdown-body table { border-collapse: collapse; }
 .markdown-body table th, .markdown-body table td { border: 1px solid var(--border); padding: 6px 12px; }
 .markdown-body table th { background: var(--surface); }
+.markdown-body table { display: block; overflow-x: auto; max-width: 100%; }
+.markdown-body hr { border: none; border-top: 1px solid var(--border-soft); margin: 24px 0; }
+.markdown-body li + li { margin-top: 0.25em; }
+.markdown-body h1:target, .markdown-body h2:target, .markdown-body h3:target,
+.markdown-body h4:target, .markdown-body h5:target, .markdown-body h6:target { scroll-margin-top: 16px; }
 
 .cmd-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
 .cmd-row code {

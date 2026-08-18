@@ -17,7 +17,7 @@ Hosting git repositories usually means one big centralized service (GitHub, GitL
 
 ## 3. Current state
 
-Everything described here is implemented and verified end to end by `scripts/smoke.sh` (126 checks: browsing, sessions, every UI operation, authorization denials, CSRF, themes, the JSON API, git clone/push/push-to-create, pages, repository deletion).
+Everything described here is implemented and verified end to end by `scripts/smoke.sh` (147 checks: browsing, sessions, every UI operation, authorization denials, CSRF, themes, the JSON API, git clone/push/push-to-create, pages, repository deletion).
 
 ### 3.1 Running it
 
@@ -53,7 +53,7 @@ First start against a directory with no `vault.json` initializes one and prints 
 | `src/web.ts` | Helpers shared by the HTML modules: `loadRepo`, `makeCtx`, wildcard/404 utilities |
 | `src/views.ts` | Read-page templates (template literals, `esc()` everywhere), `RepoCtx`, layout with sign-in header |
 | `src/forms.ts` | Form pages: login, new repo, edit/create/delete file, conflict, settings, admin users, token-shown |
-| `src/render.ts` | markdown-it rendering with relative-link rewriting, highlight.js by extension, binary sniffing |
+| `src/render.ts` | markdown-it rendering with relative-link rewriting, heading anchors and fenced-code highlighting, highlight.js by extension, binary sniffing |
 | `src/diff.ts` | Unified-diff to HTML (line classification, per-file boxes) |
 | `src/style.ts` | The single structural CSS string; every color and font is a `var(--…)` from the active theme |
 | `scripts/create-example.sh` | Builds the example vault, including its `vault.json` with the fixed dev user |
@@ -71,7 +71,7 @@ Read routes (anonymous):
 | `GET /` | Org list |
 | `GET /:org` | Repo list with descriptions and last-update times |
 | `GET /:org/:repo` | Repo home: tree at default branch, README, clone box |
-| `GET /:org/:repo/tree/:ref/*` `blob` `raw` | Browsing; ref may contain `/`, resolved by longest match against real ref names |
+| `GET /:org/:repo/tree/:ref/*` `blob` `raw` | Browsing; ref may contain `/`, resolved by longest match against real ref names. Markdown blobs render as documents; `?plain=1` shows the source |
 | `GET /:org/:repo/commits/:ref` `commit/:sha` | History (paginated) and diff view |
 | `GET /:org/:repo/branches` `tags` | Ref listings (with operation forms when the session allows) |
 | `GET /:org/:repo/pages/*` | Static site from the sibling `<repo>.pages` directory (index.html, optional 404.html) |
@@ -140,6 +140,12 @@ A theme is a record in `src/themes.ts`: a set of semantic tokens (background, su
 The choice is vault state, not visitor state: one vault is one site. It lives in `<vault>/config.json` (`src/config.ts`, stat-cached like `vault.json`, hand-editable, missing or invalid values falling back to the default rather than failing requests). Because one process serves one vault, the active theme is process state that a middleware re-syncs from the config on each request, rather than a value threaded through every view; concurrent requests always agree, since the value is vault-wide. Stylesheet URLs carry the theme name as a query parameter so a change busts any cache in front of the server.
 
 Setting the theme in the UI (`/admin/appearance`) requires admin scope covering `*`. This is stricter than the rest of user administration on purpose: an administrator delegated to one organization may manage users there, but restyling the whole vault is not theirs to do.
+### 3.9 Rendered markdown
+
+Markdown files render as documents rather than as source. `GET /:org/:repo/blob/:ref/*path` returns rendered HTML for `.md` and `.markdown`, and `?plain=1` returns the highlighted source with line numbers, the spelling GitHub uses. A segmented Preview/Code control in the file's meta bar switches between the two, and the README box on directory pages links to the file so the source view is one click away.
+
+Rendering is markdown-it with `html: false`, so raw HTML in a document is escaped rather than injected into the site's origin. This is the same property the raw-file policy protects, and it should survive any later switch to a richer renderer. Three transformations sit on top. Relative links and image sources resolve against the file's own directory, with dot segments collapsed so that `../README.md` yields the path a reader would type; headings get GitHub-style slug ids, with a numeric suffix on duplicates, which is what makes in-document `#section` links work; and fenced code blocks in a recognized language are highlighted by highlight.js. The same function renders READMEs on directory pages, so the two views cannot drift.
+
 ## 4. Later phases, sketched
 
 - **Issues.** State must live in the vault. Two candidate designs: a sibling directory (`<repo>.issues/` with one markdown-plus-frontmatter file per issue), which is transparent and greppable; or a hidden git ref inside the repo (as git-bug and similar tools do), which travels with clones. We lean toward the sibling directory for consistency with pages, but this is undecided.
