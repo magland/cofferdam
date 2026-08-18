@@ -8,33 +8,33 @@ import { bootstrapVault } from './vault';
 
 function usage(code = 0): never {
   console.log(`Usage:
-  doqpod serve [vault-dir] [-p|--port <n>] [--host <h>]
+  hubbit serve [vault-dir] [-p|--port <n>] [--host <h>]
       Serve a vault (a directory of collections containing bare git repositories).
-      The vault defaults to $DOQPOD_VAULT, then the current directory. On the
+      The vault defaults to $HUBBIT_VAULT, then the current directory. On the
       first start with no vault.json, the server initializes one and prints
       an owner token once.
 
-  doqpod user add <username> [--scope <glob>]... [--admin <glob>]... [--token-scope <glob>]...
+  hubbit user add <username> [--scope <glob>]... [--admin <glob>]... [--token-scope <glob>]...
       Create a user and print its token once (only a SHA-256 hash is
       stored). A new user defaults to push scope "*"; --admin globs let the
       user manage other users within those globs. Run again without --scope
       on an existing user to mint an additional token.
 
-  doqpod user grant <username> [--scope <glob>]... [--admin <glob>]...
+  hubbit user grant <username> [--scope <glob>]... [--admin <glob>]...
       Extend an existing user's push scope and/or admin scope. Globs match
       collection/repo: "mycollection/*" is a whole collection,
       "mycollection/myrepo" a single repository, "*" everything. Existing
       globs are kept.
 
-  doqpod user list
+  hubbit user list
       Show users, their scopes, and how many tokens each has.
 
-  doqpod whoami
+  hubbit whoami
       Show the user, scopes, and token restriction for the current token.
 
-User commands talk to a running doqpod server:
-  DOQPOD_HOST    server URL, e.g. http://127.0.0.1:3000   (or --host <url>)
-  DOQPOD_TOKEN   a token with admin scope                  (or --token <t>)
+User commands talk to a running hubbit server:
+  HUBBIT_HOST    server URL, e.g. http://127.0.0.1:3000   (or --host <url>)
+  HUBBIT_TOKEN   a token with admin scope                  (or --token <t>)
 
 Vault layout:
   <vault>/<collection>/<repo>.git    bare repositories (the .git suffix is optional)
@@ -68,7 +68,7 @@ function serveCmd(args: string[]) {
     console.error('Invalid port');
     process.exit(1);
   }
-  const vault = path.resolve(dir ?? process.env.DOQPOD_VAULT ?? '.');
+  const vault = path.resolve(dir ?? process.env.HUBBIT_VAULT ?? '.');
   if (!fs.existsSync(vault) || !fs.statSync(vault).isDirectory()) {
     console.error(`Vault directory does not exist: ${vault}`);
     process.exit(1);
@@ -85,11 +85,11 @@ function serveCmd(args: string[]) {
       console.log(`  ${boot.token}`);
       console.log('');
       console.log('Sign in on the web with it, or manage users from anywhere:');
-      console.log(`  export DOQPOD_HOST=${url}`);
-      console.log(`  export DOQPOD_TOKEN=${boot.token}`);
+      console.log(`  export HUBBIT_HOST=${url}`);
+      console.log(`  export HUBBIT_TOKEN=${boot.token}`);
       console.log('');
     }
-    console.log(`doqpod serving vault ${vault}`);
+    console.log(`hubbit serving vault ${vault}`);
     console.log(`  ${url}`);
   });
 }
@@ -119,7 +119,7 @@ function parseUserArgs(args: string[]): UserArgs {
     else if (a === '--admin') out.admin.push(args[++i]);
     else if (a === '--token-scope') out.tokenScope.push(args[++i]);
     else if (a === '--vault') {
-      console.error('--vault is gone: user commands talk to a running server. Set DOQPOD_HOST and DOQPOD_TOKEN.');
+      console.error('--vault is gone: user commands talk to a running server. Set HUBBIT_HOST and HUBBIT_TOKEN.');
       process.exit(1);
     } else if (a.startsWith('-')) {
       console.error(`Unknown option: ${a}`);
@@ -134,14 +134,14 @@ function parseUserArgs(args: string[]): UserArgs {
 }
 
 function remoteTarget(args: { host: string | null; token: string | null }): RemoteTarget {
-  const host = (args.host ?? process.env.DOQPOD_HOST ?? '').replace(/\/+$/, '');
-  const token = args.token ?? process.env.DOQPOD_TOKEN ?? '';
+  const host = (args.host ?? process.env.HUBBIT_HOST ?? '').replace(/\/+$/, '');
+  const token = args.token ?? process.env.HUBBIT_TOKEN ?? '';
   if (!host) {
-    console.error('No server configured. Set DOQPOD_HOST (e.g. http://127.0.0.1:3000) or pass --host <url>.');
+    console.error('No server configured. Set HUBBIT_HOST (e.g. http://127.0.0.1:3000) or pass --host <url>.');
     process.exit(1);
   }
   if (!token) {
-    console.error('No token configured. Set DOQPOD_TOKEN or pass --token <token>.');
+    console.error('No token configured. Set HUBBIT_TOKEN or pass --token <token>.');
     process.exit(1);
   }
   return { host, token };
@@ -216,11 +216,11 @@ async function userAddCmd(args: string[]) {
 async function userGrantCmd(args: string[]) {
   const a = parseUserArgs(args);
   if (!a.username) {
-    console.error('Usage: doqpod user grant <username> --scope <glob> [--admin <glob>]...');
+    console.error('Usage: hubbit user grant <username> --scope <glob> [--admin <glob>]...');
     process.exit(1);
   }
   if (a.scope.length === 0 && a.admin.length === 0) {
-    console.error(`Nothing to grant. Example: doqpod user grant ${a.username} --scope 'mycollection/*'`);
+    console.error(`Nothing to grant. Example: hubbit user grant ${a.username} --scope 'mycollection/*'`);
     process.exit(1);
   }
   const target = remoteTarget(a);
@@ -271,7 +271,7 @@ async function main() {
   else if (cmd === 'user' && args[1] === 'list') await userListCmd(args.slice(2));
   else if (cmd === 'whoami') await whoamiCmd(args.slice(1));
   else if (cmd === 'user') {
-    console.error('Usage: doqpod user <add|grant|list> ... (see doqpod --help)');
+    console.error('Usage: hubbit user <add|grant|list> ... (see hubbit --help)');
     process.exit(1);
   } else serveCmd(args);
 }

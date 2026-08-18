@@ -1,9 +1,9 @@
 # A remote vault with automatic HTTPS.
 # Point a DNS record at this machine, then:
-#   DOMAIN=doqpod.example.org docker compose up -d
-#   docker compose logs doqpod   (copy the one-time owner token on first start)
+#   DOMAIN=hubbit.example.org docker compose up -d
+#   docker compose logs hubbit   (copy the one-time owner token on first start)
 services:
-  doqpod:
+  hubbit:
     build: .
     restart: unless-stopped
     volumes:
@@ -15,7 +15,7 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      DOMAIN: ${DOMAIN:?set DOMAIN to your hostname, e.g. doqpod.example.org}
+      DOMAIN: ${DOMAIN:?set DOMAIN to your hostname, e.g. hubbit.example.org}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

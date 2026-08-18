@@ -9,7 +9,7 @@ import { getSecret } from './session';
 // Storage for Git LFS objects. Two backends behind one interface: "s3" issues
 // presigned URLs against any S3-compatible bucket, so large-file bytes never
 // pass through this process; "local" stores objects inside the vault and
-// issues HMAC-signed URLs pointing back at doqpod's own transfer routes, so
+// issues HMAC-signed URLs pointing back at hubbit's own transfer routes, so
 // LFS works with no credentials (dev, smoke test, laptop vaults). The choice
 // is made from the environment at startup and never recorded in the vault.
 //
@@ -367,10 +367,10 @@ class S3LfsStore implements LfsStore {
 // Tigris works with the credentials Fly injects.
 export function createLfsStore(root: string, env: NodeJS.ProcessEnv = process.env): LfsContext {
   let maxSize = DEFAULT_MAX_SIZE;
-  if (env.DOQPOD_LFS_MAX_SIZE !== undefined) {
-    maxSize = parseInt(env.DOQPOD_LFS_MAX_SIZE, 10);
+  if (env.HUBBIT_LFS_MAX_SIZE !== undefined) {
+    maxSize = parseInt(env.HUBBIT_LFS_MAX_SIZE, 10);
     if (!Number.isSafeInteger(maxSize) || maxSize <= 0) {
-      throw new LfsConfigError(`DOQPOD_LFS_MAX_SIZE must be a positive integer, got: ${env.DOQPOD_LFS_MAX_SIZE}`);
+      throw new LfsConfigError(`HUBBIT_LFS_MAX_SIZE must be a positive integer, got: ${env.HUBBIT_LFS_MAX_SIZE}`);
     }
   }
   const local = (): LfsContext => ({
@@ -378,11 +378,11 @@ export function createLfsStore(root: string, env: NodeJS.ProcessEnv = process.en
     maxSize,
     label: 'local (objects stored inside the vault)',
   });
-  if (env.DOQPOD_LFS === 'off') return local();
+  if (env.HUBBIT_LFS === 'off') return local();
 
   const vars: [string, string | undefined][] = [
-    ['DOQPOD_LFS_BUCKET (or BUCKET_NAME)', env.DOQPOD_LFS_BUCKET || env.BUCKET_NAME],
-    ['DOQPOD_LFS_ENDPOINT (or AWS_ENDPOINT_URL_S3)', env.DOQPOD_LFS_ENDPOINT || env.AWS_ENDPOINT_URL_S3],
+    ['HUBBIT_LFS_BUCKET (or BUCKET_NAME)', env.HUBBIT_LFS_BUCKET || env.BUCKET_NAME],
+    ['HUBBIT_LFS_ENDPOINT (or AWS_ENDPOINT_URL_S3)', env.HUBBIT_LFS_ENDPOINT || env.AWS_ENDPOINT_URL_S3],
     ['AWS_ACCESS_KEY_ID', env.AWS_ACCESS_KEY_ID],
     ['AWS_SECRET_ACCESS_KEY', env.AWS_SECRET_ACCESS_KEY],
   ];
@@ -394,15 +394,15 @@ export function createLfsStore(root: string, env: NodeJS.ProcessEnv = process.en
     // bucket backend exists to prevent.
     throw new LfsConfigError(
       `Git LFS bucket configuration is incomplete; missing: ${missing.join(', ')}. ` +
-        `Set the missing variables, or set DOQPOD_LFS=off to store LFS objects inside the vault.`
+        `Set the missing variables, or set HUBBIT_LFS=off to store LFS objects inside the vault.`
     );
   }
   const [bucket, endpoint] = [vars[0][1] as string, vars[1][1] as string];
-  const addressing = env.DOQPOD_LFS_ADDRESSING ?? 'path';
+  const addressing = env.HUBBIT_LFS_ADDRESSING ?? 'path';
   if (addressing !== 'path' && addressing !== 'vhost') {
-    throw new LfsConfigError(`DOQPOD_LFS_ADDRESSING must be "path" or "vhost", got: ${addressing}`);
+    throw new LfsConfigError(`HUBBIT_LFS_ADDRESSING must be "path" or "vhost", got: ${addressing}`);
   }
-  let prefix = env.DOQPOD_LFS_PREFIX ?? '';
+  let prefix = env.HUBBIT_LFS_PREFIX ?? '';
   if (prefix !== '') prefix = prefix.replace(/^\/+|\/+$/g, '') + '/';
   const store = new S3LfsStore({
     bucket,

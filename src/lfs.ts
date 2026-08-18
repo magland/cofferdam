@@ -116,8 +116,8 @@ export function registerLfs(app: Express, root: string, lfs: LfsContext | null):
     const check = checkPushAuth(root, req, collection, repoName);
     if (!check.ok) {
       if (check.status === 401) {
-        res.setHeader('LFS-Authenticate', 'Basic realm="doqpod"');
-        res.setHeader('WWW-Authenticate', 'Basic realm="doqpod"');
+        res.setHeader('LFS-Authenticate', 'Basic realm="hubbit"');
+        res.setHeader('WWW-Authenticate', 'Basic realm="hubbit"');
       }
       lfsError(res, check.status, check.message);
       return false;

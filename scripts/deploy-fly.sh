@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create a remote doqpod vault on Fly.io, from nothing to a working server.
+# Create a remote hubbit vault on Fly.io, from nothing to a working server.
 #
 #   ./scripts/deploy-fly.sh my-vault-name [region] [size-gb]
 #
@@ -57,7 +57,7 @@ echo "==> Deployed: $URL"
 echo "==> Looking for the one-time owner token in the logs"
 TOKEN=""
 for _ in 1 2 3 4 5 6; do
-  TOKEN="$(fly logs -a "$APP" --no-tail 2>/dev/null | grep -o 'doqpod_[0-9a-f]\{64\}' | head -1 || true)"
+  TOKEN="$(fly logs -a "$APP" --no-tail 2>/dev/null | grep -o 'hubbit_[0-9a-f]\{64\}' | head -1 || true)"
   [ -n "$TOKEN" ] && break
   sleep 5
 done
@@ -66,10 +66,10 @@ echo ""
 if [ -n "$TOKEN" ]; then
   echo "Owner token (shown once by the server on first start):"
   echo ""
-  echo "  export DOQPOD_HOST=$URL"
-  echo "  export DOQPOD_TOKEN=$TOKEN"
+  echo "  export HUBBIT_HOST=$URL"
+  echo "  export HUBBIT_TOKEN=$TOKEN"
   echo ""
-  echo "Then: doqpod whoami"
+  echo "Then: hubbit whoami"
 else
   echo "No owner token found in the recent logs."
   echo "If this vault was already initialized, that is expected: the token is"

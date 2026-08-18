@@ -185,7 +185,7 @@ export function homePage(
   const content = `<div class="page-head"><h1>Collections</h1>${newBtn}</div>${body}<p class="muted small" style="margin-top:16px">Serving ${esc(
     rootLabel
   )}</p>`;
-  return layout('doqpod', content, { viewer, path: '/' });
+  return layout('hubbit', content, { viewer, path: '/' });
 }
 
 export function collectionPage(

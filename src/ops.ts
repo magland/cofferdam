@@ -106,7 +106,7 @@ export async function commitFileChange(repoDir: string, args: FileCommitArgs): P
     throw new OpError('cannot edit or delete a file on a branch that does not exist');
   }
 
-  const indexFile = tmpFile('doqpod-index');
+  const indexFile = tmpFile('hubbit-index');
   const env = { ...process.env, GIT_INDEX_FILE: indexFile };
   try {
     let baseTree: string | null = null;
@@ -129,7 +129,7 @@ export async function commitFileChange(repoDir: string, args: FileCommitArgs): P
         action.kind === 'edit' && expectedHead !== null
           ? await entryMode(repoDir, expectedHead, filePath)
           : '100644';
-      const contentFile = tmpFile('doqpod-blob');
+      const contentFile = tmpFile('hubbit-blob');
       let blobSha: string;
       try {
         fs.writeFileSync(contentFile, action.content, { mode: 0o600 });

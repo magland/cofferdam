@@ -2,7 +2,7 @@ import express, { Express, Request, Response } from 'express';
 import { isValidName } from './scan';
 import { AuthResult, addUserToken, authenticateToken, canAdmin, grantScope, loadVault } from './vault';
 
-// The bearer-token JSON API used by the doqpod CLI. Only Bearer tokens are
+// The bearer-token JSON API used by the hubbit CLI. Only Bearer tokens are
 // accepted; session cookies never authorize API calls.
 
 export function registerApi(app: Express, root: string): void {
@@ -24,7 +24,7 @@ export function registerApi(app: Express, root: string): void {
     }
     const m = (req.get('authorization') ?? '').match(/^bearer\s+(.+)$/i);
     if (!m) {
-      apiError(res, 401, 'missing bearer token; set DOQPOD_TOKEN');
+      apiError(res, 401, 'missing bearer token; set HUBBIT_TOKEN');
       return null;
     }
     const auth = authenticateToken(state.vault, m[1].trim());
@@ -100,7 +100,7 @@ export function registerApi(app: Express, root: string): void {
     const existing = state.vault.users[username];
     if (existing) {
       if (scope || admin) {
-        apiError(res, 409, `user ${username} already exists; use 'doqpod user grant' to extend it`);
+        apiError(res, 409, `user ${username} already exists; use 'hubbit user grant' to extend it`);
         return;
       }
       if (!canAdmin(auth, [...existing.scope, ...existing.admin])) {

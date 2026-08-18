@@ -39,7 +39,7 @@ if [ "$started" != 1 ]; then
   echo "FAIL: server did not start"; cat "$LOG"; exit 1
 fi
 
-OWNER_TOKEN="$(grep -o 'doqpod_[0-9a-f]\{64\}' "$LOG" | head -1 || true)"
+OWNER_TOKEN="$(grep -o 'hubbit_[0-9a-f]\{64\}' "$LOG" | head -1 || true)"
 [ -n "$OWNER_TOKEN" ] || { echo "FAIL: no owner token in server log"; cat "$LOG"; exit 1; }
 
 PASS=0
@@ -322,13 +322,13 @@ CSRF="$(csrf_of)"
 check "create user alice" 200 -b "$JAR" "$BASE/admin/users" \
   --data-urlencode "csrf=$CSRF" --data-urlencode username=alice --data-urlencode "scope=demo/*" \
   --data-urlencode "admin="
-ALICE_TOKEN="$(grep -o 'doqpod_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+ALICE_TOKEN="$(grep -o 'hubbit_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
 [ -n "$ALICE_TOKEN" ] || { echo "FAIL: no token for alice shown"; exit 1; }
 check "grant to alice" 302 -b "$JAR" "$BASE/admin/users/alice/grant" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "scope=extra/thing" --data-urlencode "admin="
 check "mint token for alice" 200 -b "$JAR" "$BASE/admin/users/alice/token" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "tokenScope="
-body_has "minted token shown" 'doqpod_'
+body_has "minted token shown" 'hubbit_'
 
 # ---- themes ----
 
@@ -385,7 +385,7 @@ CSRF="$(csrf_of)"
 check "create delegated admin" 200 -b "$JAR" "$BASE/admin/users" \
   --data-urlencode "csrf=$CSRF" --data-urlencode username=collectionadmin \
   --data-urlencode "scope=demo/*" --data-urlencode "admin=demo/*"
-COLLECTION_TOKEN="$(grep -o 'doqpod_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+COLLECTION_TOKEN="$(grep -o 'hubbit_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
 [ -n "$COLLECTION_TOKEN" ] || { echo "FAIL: no token for collectionadmin"; exit 1; }
 check "collectionadmin login" 302 -c "$TMP/collectionadmin.jar" "$BASE/login" \
   --data-urlencode username=collectionadmin --data-urlencode "token=$COLLECTION_TOKEN" --data-urlencode next=/

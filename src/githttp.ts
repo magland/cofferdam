@@ -81,7 +81,7 @@ export function checkPushAuth(
 
 export function registerGitHttp(app: Express, root: string): void {
   function denyPush(res: Response, status: number, message: string) {
-    if (status === 401) res.setHeader('WWW-Authenticate', 'Basic realm="doqpod"');
+    if (status === 401) res.setHeader('WWW-Authenticate', 'Basic realm="hubbit"');
     res.status(status).type('text/plain').send(message + '\n');
   }
 

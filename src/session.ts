@@ -10,7 +10,7 @@ import { AuthResult, TokenRecord, canAdmin, loadVault } from './vault';
 // request, so deleting a user's tokens cuts them off, and rotating .secret
 // invalidates every session at once.
 
-const COOKIE_NAME = 'doqpod_session';
+const COOKIE_NAME = 'hubbit_session';
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 
 interface SessionPayload {

@@ -227,7 +227,7 @@ echo "An empty repository for testing" > "$ROOT/bob/empty.git/description"
 
 # ---- vault.json with a dev user (fixed token, example vault only) ----
 
-DEV_TOKEN="doqpod_example_dev_token"
+DEV_TOKEN="hubbit_example_dev_token"
 DEV_HASH="$(printf %s "$DEV_TOKEN" | sha256sum | cut -d' ' -f1)"
 cat > "$ROOT/vault.json" <<EOF
 {

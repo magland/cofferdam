@@ -14,8 +14,8 @@
 #   fly logs --app my-vault-name           # one-time owner token on first start
 #
 # Then, from anywhere:
-#   export DOQPOD_HOST=https://my-vault-name.fly.dev
-#   export DOQPOD_TOKEN=<owner token>
+#   export HUBBIT_HOST=https://my-vault-name.fly.dev
+#   export HUBBIT_TOKEN=<owner token>
 #
 # Use --ha=false: a vault is a directory on one disk, so this app must run as a
 # single machine. Two machines would mean two volumes and two divergent vaults.
@@ -23,7 +23,7 @@
 # App names are globally unique on Fly, so the placeholder below is taken; the
 # --app flag overrides it, or 'fly apps create <name> --save' rewrites it here.
 
-app = "my-doqpod-vault"
+app = "my-hubbit-vault"
 primary_region = "ewr"
 
 [build]

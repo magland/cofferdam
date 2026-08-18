@@ -1,4 +1,4 @@
-# doqpod
+# hubbit
 
 Hosting git repositories usually means running a service with a database (GitHub, GitLab, Gitea). A limitation of that approach is that the state of the system lives somewhere you cannot see directly. Here we take a simpler route: the filesystem is the database. You have a directory we call a vault, each subdirectory of the vault is a collection, and each subdirectory of a collection is a bare git repository. Point the server at the vault and you get a GitHub-style web interface for browsing and operating on the repositories, anonymous clone access over HTTP, and token-authenticated push.
 
@@ -34,7 +34,7 @@ The `.git` suffix on repository directory names is optional; it is stripped for 
 - Anonymous `git clone http://host:port/collection/repo` over smart HTTP
 - Authenticated `git push`, including push-to-create for new repositories
 - Git LFS, with objects in an S3-compatible bucket or inside the vault (see below)
-- A JSON API and a `doqpod` CLI for user management
+- A JSON API and a `hubbit` CLI for user management
 - Per-repository pages sites served from a sibling `<repo>.pages` directory
 
 There is no database and no build step for the frontend: all state lives in the vault directory, and the server renders plain HTML.
@@ -47,7 +47,7 @@ npm run example    # creates example-root/ with sample collections, repositories
 npm run dev        # serves example-root/ at http://127.0.0.1:3000
 ```
 
-The example vault includes a user `dev` with the fixed token `doqpod_example_dev_token` (full push and admin scope, example vault only). Sign in with it on the web interface to see the operational controls.
+The example vault includes a user `dev` with the fixed token `hubbit_example_dev_token` (full push and admin scope, example vault only). Sign in with it on the web interface to see the operational controls.
 
 To serve your own vault:
 
@@ -96,24 +96,24 @@ Changing it in the UI requires admin scope over the whole vault (`*`); an admini
 
 Each theme is a set of semantic CSS custom properties (background, surface, border, accent, diff colors, fonts, corner radius) plus the highlight.js palette that suits it. The structural stylesheet in `src/style.ts` names no colors of its own, so adding a theme means adding one entry to `src/themes.ts`.
 
-## The doqpod command
+## The hubbit command
 
-Everything is available as `node dist/index.js <command>` after `npm run build`. To get a `doqpod` command on your PATH instead, link the package from a checkout:
+Everything is available as `node dist/index.js <command>` after `npm run build`. To get a `hubbit` command on your PATH instead, link the package from a checkout:
 
 ```bash
 npm run build
-npm link          # then: doqpod --help
+npm link          # then: hubbit --help
 ```
 
-Use `npm unlink -g doqpod` to remove it. Note that with a version manager such as fnm or nvm the link belongs to the active Node version, so switching versions hides it until you link again.
+Use `npm unlink -g hubbit` to remove it. Note that with a version manager such as fnm or nvm the link belongs to the active Node version, so switching versions hides it until you link again.
 
-`doqpod serve` is the only command that touches the vault directory (set it positionally or with `DOQPOD_VAULT`). Every other command talks to a running server, so it works the same whether the vault is on your machine or across the network:
+`hubbit serve` is the only command that touches the vault directory (set it positionally or with `HUBBIT_VAULT`). Every other command talks to a running server, so it works the same whether the vault is on your machine or across the network:
 
 ```bash
-export DOQPOD_HOST=http://127.0.0.1:3000
-export DOQPOD_TOKEN=<a token with admin scope>
-doqpod whoami
-doqpod user list
+export HUBBIT_HOST=http://127.0.0.1:3000
+export HUBBIT_TOKEN=<a token with admin scope>
+hubbit whoami
+hubbit user list
 ```
 
 `--host <url>` and `--token <t>` override the environment per command. By default the server binds 127.0.0.1. Use `--host 0.0.0.0` on `serve` to expose it on the network; note that this exposes read access to every repository in the vault, and that tokens then travel over plain HTTP unless you put TLS in front. The first line of the `description` file inside a bare repository is shown in listings, as with classic git hosting.
@@ -123,7 +123,7 @@ doqpod user list
 The first token comes from the server's first start (the printed owner token). With that you can create users on the web (Admin, in the header) or over the API:
 
 ```bash
-doqpod user add jeremy
+hubbit user add jeremy
 ```
 
 This creates the user in `<vault>/vault.json` on the server and prints the token once; only its SHA-256 hash is stored. Then push with the username and the token as the password:
@@ -145,7 +145,7 @@ git clone --bare https://github.com/owner/repo.git repo.import.git && \
   rm -rf repo.import.git
 ```
 
-git asks for a password on the push: that is your doqpod token. The push creates the repository, so the target must not exist yet, and your push scope has to cover it. Branches and tags come across. Issues and pull requests do not, and the description is set afterwards in repository settings.
+git asks for a password on the push: that is your hubbit token. The push creates the repository, so the target must not exist yet, and your push scope has to cover it. Branches and tags come across. Issues and pull requests do not, and the description is set afterwards in repository settings.
 
 If the repository uses Git LFS, the mirror push carries the pointer files but not the objects behind them, and the imported files will show as missing until you bring those over too. Do it from inside the bare clone, before deleting it:
 
@@ -181,13 +181,13 @@ The clone is `--bare` rather than `--mirror` on purpose: mirroring a GitHub repo
 Permission is granted by adding scope globs to a user, using an actor whose admin scope covers the globs being granted. On the web this is the Grant form on the users page; over the CLI:
 
 ```bash
-doqpod user add alice --scope 'mycollection/*'      # create with access to one collection
-doqpod user grant alice --scope 'othercollection/*' # extend an existing user
-doqpod user grant alice --admin 'mycollection/*'    # delegate user management for mycollection
-doqpod user list                                    # review who can push where
+hubbit user add alice --scope 'mycollection/*'      # create with access to one collection
+hubbit user grant alice --scope 'othercollection/*' # extend an existing user
+hubbit user grant alice --admin 'mycollection/*'    # delegate user management for mycollection
+hubbit user list                                    # review who can push where
 ```
 
-Note that `--scope` on `doqpod user add` applies only when creating a user; on an existing user the command refuses rather than silently replacing their permissions (run it without `--scope` to mint an additional token).
+Note that `--scope` on `hubbit user add` applies only when creating a user; on an existing user the command refuses rather than silently replacing their permissions (run it without `--scope` to mint an additional token).
 
 ### JSON API
 
@@ -239,19 +239,19 @@ Objects are stored either in an S3-compatible bucket or inside the vault, chosen
   webapp.lfs/     (its LFS objects, sharded by object id)
 ```
 
-This keeps `npm run dev` and the smoke test working with no credentials and is a reasonable choice for a laptop vault, but it stores the large objects on the same disk the feature exists to protect. For a deployment with a small volume, point it at a bucket instead. The server then returns presigned URLs and the client transfers bytes directly to and from the bucket, so large-file content never passes through the doqpod process.
+This keeps `npm run dev` and the smoke test working with no credentials and is a reasonable choice for a laptop vault, but it stores the large objects on the same disk the feature exists to protect. For a deployment with a small volume, point it at a bucket instead. The server then returns presigned URLs and the client transfers bytes directly to and from the bucket, so large-file content never passes through the hubbit process.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `DOQPOD_LFS_BUCKET` or `BUCKET_NAME` | unset | Bucket name |
-| `DOQPOD_LFS_ENDPOINT` or `AWS_ENDPOINT_URL_S3` | unset | S3 endpoint base URL |
+| `HUBBIT_LFS_BUCKET` or `BUCKET_NAME` | unset | Bucket name |
+| `HUBBIT_LFS_ENDPOINT` or `AWS_ENDPOINT_URL_S3` | unset | S3 endpoint base URL |
 | `AWS_ACCESS_KEY_ID` | unset | Access key |
 | `AWS_SECRET_ACCESS_KEY` | unset | Secret key |
 | `AWS_REGION` | `auto` | Credential-scope region; `auto` is correct for R2 and Tigris |
-| `DOQPOD_LFS_PREFIX` | unset | Optional key prefix, so LFS can share a bucket with other data |
-| `DOQPOD_LFS_MAX_SIZE` | `5000000000` | Largest object accepted, in bytes |
-| `DOQPOD_LFS_ADDRESSING` | `path` | `path` or `vhost`; path style is required by R2 |
-| `DOQPOD_LFS` | unset | Set to `off` to force the local backend even with bucket variables present |
+| `HUBBIT_LFS_PREFIX` | unset | Optional key prefix, so LFS can share a bucket with other data |
+| `HUBBIT_LFS_MAX_SIZE` | `5000000000` | Largest object accepted, in bytes |
+| `HUBBIT_LFS_ADDRESSING` | `path` | `path` or `vhost`; path style is required by R2 |
+| `HUBBIT_LFS` | unset | Set to `off` to force the local backend even with bucket variables present |
 
 Credentials are read from the environment only and are never written into `config.json` or `vault.json`: the vault is the backup unit and stays portable between deployments with different buckets. Setting some but not all of the four bucket variables is a startup error that names what is missing, rather than a silent fall back to storing large objects on the volume. The server logs which backend is active on each start.
 
@@ -263,7 +263,7 @@ All three use the same code path.
 
 - **Cloudflare R2** (recommended). Endpoint `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`, region `auto`, path-style addressing. Storage is $0.015/GB-month with no egress fees, and the free tier covers 10 GB, 1 million Class A operations, and 10 million Class B operations per month. Use Standard storage rather than Infrequent Access: IA saves a third on storage but doubles operation costs, adds $0.01/GB retrieval, imposes a 30-day minimum storage duration, and is excluded from the free tier, which suits objects people occasionally clone poorly.
 - **Tigris** (convenient on Fly). `fly storage create` provisions a bucket and injects `BUCKET_NAME`, `AWS_ENDPOINT_URL_S3`, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY` as Fly secrets, so there is nothing further to configure.
-- **Amazon S3.** Set `AWS_REGION` to the bucket's real region, and `DOQPOD_LFS_ADDRESSING=vhost` if path-style addressing is unavailable for the bucket.
+- **Amazon S3.** Set `AWS_REGION` to the bucket's real region, and `HUBBIT_LFS_ADDRESSING=vhost` if path-style addressing is unavailable for the bucket.
 
 Bucket CORS needs no configuration. The git-lfs client is not a browser, and the download link on a file's page is a top-level navigation, so neither path is subject to CORS.
 
@@ -276,20 +276,20 @@ A file stored with LFS shows a download card giving its true size and object id,
 - **Existing large files are unaffected.** LFS prevents future growth; it does not shrink a repository retroactively. Files already committed as ordinary blobs stay in the packfiles, and moving them requires `git lfs migrate import` on a client, which rewrites history and changes every downstream commit id.
 - **Directory listings show pointer sizes.** Tree listings take their sizes from `git ls-tree -l`, which reports the pointer's size of roughly 130 bytes rather than the real file size. The file's own page shows the true size.
 - **Commit diffs show pointer diffs**, which is git's own behavior without the LFS diff driver configured.
-- **Orphaned objects leak.** Objects whose commits never arrived, or which became unreachable through a force push or a branch deletion, stay in storage. Collecting them properly means enumerating every pointer blob reachable from every ref across all history; a `doqpod lfs gc` is left for later.
-- **Object size is capped** by `DOQPOD_LFS_MAX_SIZE`, because the `basic` transfer adapter uploads with a single PUT. Note what the cap is worth in each backend. Locally it is enforced on the bytes as they arrive. Against a bucket it can only be enforced on the size the client declares in the batch request, since the upload goes straight to the bucket: someone with push access who declares a small size and then sends a large body will succeed, and the bytes become orphans that `verify` reports but nothing removes. Treat it as a guard against honest mistakes rather than a quota, and use bucket-side limits or billing alerts if you need a real one.
+- **Orphaned objects leak.** Objects whose commits never arrived, or which became unreachable through a force push or a branch deletion, stay in storage. Collecting them properly means enumerating every pointer blob reachable from every ref across all history; a `hubbit lfs gc` is left for later.
+- **Object size is capped** by `HUBBIT_LFS_MAX_SIZE`, because the `basic` transfer adapter uploads with a single PUT. Note what the cap is worth in each backend. Locally it is enforced on the bytes as they arrive. Against a bucket it can only be enforced on the size the client declares in the batch request, since the upload goes straight to the bucket: someone with push access who declares a small size and then sends a large body will succeed, and the bytes become orphans that `verify` reports but nothing removes. Treat it as a guard against honest mistakes rather than a quota, and use bucket-side limits or billing alerts if you need a real one.
 - **File locking is not implemented.** The `/locks` endpoints return 404, which git-lfs reads as locking being unsupported.
 
 ## Making a remote vault
 
-A remote vault is the same server with a persistent disk and TLS in front; there is nothing else to it, since the vault directory is the entire state. The repository ships a container recipe with git included. On first start the server initializes the vault and prints the owner token to the logs; from then on all administration happens from your own machine, on the web or through `DOQPOD_HOST` and `DOQPOD_TOKEN`.
+A remote vault is the same server with a persistent disk and TLS in front; there is nothing else to it, since the vault directory is the entire state. The repository ships a container recipe with git included. On first start the server initializes the vault and prints the owner token to the logs; from then on all administration happens from your own machine, on the web or through `HUBBIT_HOST` and `HUBBIT_TOKEN`.
 
 On any machine with Docker:
 
 ```bash
-docker build -t doqpod .
-docker run -d --name doqpod -p 3000:3000 -v ./vault:/vault doqpod
-docker logs doqpod    # copy the one-time owner token
+docker build -t hubbit .
+docker run -d --name hubbit -p 3000:3000 -v ./vault:/vault hubbit
+docker logs hubbit    # copy the one-time owner token
 ```
 
 This serves plain HTTP, which is fine on a trusted or private network (a Tailscale or WireGuard address, say) but not on the open internet, since tokens travel as Basic-auth passwords and session cookies are only marked `Secure` behind HTTPS.
@@ -297,12 +297,12 @@ This serves plain HTTP, which is fine on a trusted or private network (a Tailsca
 With a domain name pointed at the machine, the included `docker-compose.yml` adds Caddy for automatic HTTPS:
 
 ```bash
-DOMAIN=doqpod.example.org docker compose up -d
-docker compose logs doqpod            # the owner token
-export DOQPOD_HOST=https://doqpod.example.org
-export DOQPOD_TOKEN=<owner token>
-doqpod user add alice --scope 'alice/*'
-git clone https://doqpod.example.org/alice/some-repo
+DOMAIN=hubbit.example.org docker compose up -d
+docker compose logs hubbit            # the owner token
+export HUBBIT_HOST=https://hubbit.example.org
+export HUBBIT_TOKEN=<owner token>
+hubbit user add alice --scope 'alice/*'
+git clone https://hubbit.example.org/alice/some-repo
 ```
 
 Without a server of your own, the same container runs on Fly.io. After `fly auth login`, one command does everything:
@@ -311,7 +311,7 @@ Without a server of your own, the same container runs on Fly.io. After `fly auth
 ./scripts/deploy-fly.sh my-vault-name
 ```
 
-That creates the app and a volume, deploys a single machine, and prints the one-time owner token together with the `DOQPOD_HOST` and `DOQPOD_TOKEN` lines to export. Pick your own name, since Fly app names are globally unique. Re-running it deploys an update, reusing the existing app and volume.
+That creates the app and a volume, deploys a single machine, and prints the one-time owner token together with the `HUBBIT_HOST` and `HUBBIT_TOKEN` lines to export. Pick your own name, since Fly app names are globally unique. Re-running it deploys an update, reusing the existing app and volume.
 
 By hand, the same thing is:
 
