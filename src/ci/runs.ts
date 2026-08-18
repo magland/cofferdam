@@ -4,7 +4,7 @@ import { displayName, isValidName } from '../scan';
 
 // Run state on disk. A repository's workflow runs live in a sibling
 // directory next to the bare repository, following the same convention as
-// pages sites and local LFS objects:
+// sites and local LFS objects:
 //
 //   <vault>/<collection>/<repo>.runs/
 //     12/

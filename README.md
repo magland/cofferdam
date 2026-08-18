@@ -11,7 +11,7 @@ Hosting git repositories usually means running a service with a database (GitHub
     hello-numerics.git/   (bare repository)
     hello-numerics.runs/  (its workflow runs and logs)
     webapp.git/
-    webapp.pages/         (static pages site for webapp)
+    webapp.site/          (static site for webapp)
     webapp.lfs/           (its Git LFS objects, when no bucket is configured)
   bob/
     notes.git/
@@ -36,9 +36,9 @@ The `.git` suffix on repository directory names is optional; it is stripped for 
 - Anonymous `git clone http://host:port/collection/repo` over smart HTTP
 - Authenticated `git push`, including push-to-create for new repositories
 - Git LFS, with objects in an S3-compatible bucket or inside the vault (see below)
-- GitHub Actions workflows from `.hubbit/workflows` or `.github/workflows`, planned by the server and executed by a runner you start elsewhere with Docker (see below), with live logs in the interface, JavaScript and composite actions, artifacts, and deployment to a repository's pages site
+- GitHub Actions workflows from `.hubbit/workflows` or `.github/workflows`, planned by the server and executed by a runner you start elsewhere with Docker (see below), with live logs in the interface, JavaScript and composite actions, artifacts, and deployment to a repository's site
 - A JSON API and a `hubbit` CLI for user management, including `hubbit login` to hand the token to git so pushing stops asking for it
-- Per-repository pages sites served from a sibling `<repo>.pages` directory
+- Per-repository static sites served from a sibling `<repo>.site` directory
 
 There is no database and no build step for the frontend: all state lives in the vault directory, and the server renders plain HTML.
 
@@ -89,13 +89,13 @@ The interface ships with a small set of themes, chosen under **Admin > Appearanc
 | `midnight` | A dark theme with azure links, for low light. |
 | `terminal` | Near-black, phosphor green, monospace throughout. |
 
-A theme is a property of the vault rather than of the visitor: one vault is one site, and the operator picks how it looks. The choice lives in `<vault>/config.json`, so it can equally be set by hand before the first start, and the server picks up an edit without a restart:
+A theme is a property of the vault rather than of the visitor: one vault is one interface, and the operator picks how it looks. The choice lives in `<vault>/config.json`, so it can equally be set by hand before the first start, and the server picks up an edit without a restart:
 
 ```json
 { "theme": "midnight" }
 ```
 
-Changing it in the UI requires admin scope over the whole vault (`*`); an administrator delegated to one collection can manage users there but cannot restyle the site. An unknown theme name falls back to the default rather than failing requests, so a typo in `config.json` cannot take the site down.
+Changing it in the UI requires admin scope over the whole vault (`*`); an administrator delegated to one collection can manage users there but cannot restyle the site. An unknown theme name falls back to the default rather than failing requests, so a typo in `config.json` cannot take the vault down.
 
 Each theme is a set of semantic CSS custom properties (background, surface, border, accent, diff colors, fonts, corner radius) plus the highlight.js palette that suits it. The structural stylesheet in `src/style.ts` names no colors of its own, so adding a theme means adding one entry to `src/themes.ts`.
 
@@ -244,17 +244,19 @@ POST /api/users/:name/grant     extend a user's scopes         {scope?, admin?}
 
 The API accepts only bearer tokens and git accepts only Basic auth; session cookies never authorize either. The two credential presentations stay deliberately distinct.
 
-## Pages sites
+## Sites
 
-A repository can have a static site, served at `/<collection>/<repo>/pages/`. The content is plain files in a sibling directory next to the bare repository:
+A repository can have a static site, served at `/<collection>/<repo>/site/`. The content is plain files in a sibling directory next to the bare repository:
 
 ```
 <root>/alice/
   webapp.git/     (the repository)
-  webapp.pages/   (its pages site; index.html at the root)
+  webapp.site/    (its site; index.html at the root)
 ```
 
-Anything that can write files can publish: a manual copy, a build script, later CI. Directory requests serve `index.html`, and a `404.html` at the site root, if present, is used for missing paths. When the pages directory exists, a Pages tab appears on the repository's web pages.
+Anything that can write files can publish: a manual copy, a build script, a workflow. Directory requests serve `index.html`, and a `404.html` at the site root, if present, is used for missing paths. When the directory exists, a Site tab appears in the repository's navigation.
+
+GitHub calls this feature Pages, and earlier versions of hubbit did too, with the directory named `<repo>.pages`. We renamed it because "pages" already means something else in a web interface made of pages. A vault created before the rename needs one command per site: `mv <repo>.pages <repo>.site`.
 
 ## Workflows
 
@@ -297,8 +299,8 @@ A few actions are not ordinary programs: they are clients for services that exis
 | `actions/checkout` | Reports the checkout the runner already made; does real work for another repository, ref, path, `fetch-depth: 0`, or submodules |
 | `actions/upload-artifact` | Tars the matched paths and stores them in the run's directory in the vault |
 | `actions/download-artifact` | Restores one, or all of the run's artifacts, into the workspace |
-| `actions/configure-pages` | Reports this vault's pages URL and base path, and exports `HUBBIT_PAGES_BASE_PATH` |
-| `actions/deploy-pages` | Publishes the `github-pages` artifact as the repository's pages site |
+| `actions/configure-pages` | Reports this vault's site URL and base path, and exports `HUBBIT_SITE_BASE_PATH` |
+| `actions/deploy-pages` | Publishes the `github-pages` artifact as the repository's site |
 
 Everything else runs unmodified, `actions/setup-node` and the rest included. Note that `actions/upload-pages-artifact` is *not* substituted: it is an ordinary composite action that tars a directory and calls `upload-artifact`, so the real one works as it is, on top of hubbit's `upload-artifact`.
 
@@ -314,7 +316,7 @@ Artifacts are addressed by the job's lease, so only a job that is actually runni
 
 hubbit checks the repository out into the workspace before the job starts. On GitHub the workspace begins empty and `actions/checkout` fills it, and hubbit's `checkout` is a re-sync of what is already there. A workflow that deliberately wants an empty workspace will be surprised.
 
-A pages site is served at `/<collection>/<repo>/pages/`, while GitHub serves one at `<owner>.github.io/<repo>/`. A site generator that reads `base_path` from `configure-pages` gets the right answer; one that computes its own from the repository name gets GitHub's shape and produces broken links. Pass the base path explicitly in that case, or have the generator emit relative URLs.
+A site is served at `/<collection>/<repo>/site/`, while GitHub serves one at `<owner>.github.io/<repo>/`. A site generator that reads `base_path` from `configure-pages` gets the right answer; one that computes its own from the repository name gets GitHub's shape and produces broken links. Pass the base path explicitly in that case, or have the generator emit relative URLs.
 
 ### Running actions needs node in the container
 
@@ -386,7 +388,7 @@ Downloading is anonymous, so `git clone` followed by `git lfs pull` on a public 
 
 Push-to-create still works for a repository that tracks files with LFS. git fetches the remote's refs before it runs the pre-push hook that uploads the objects, and it is that first request which creates the repository here, so the objects arrive at a repository that already exists.
 
-Objects are stored either in an S3-compatible bucket or inside the vault, chosen from the environment at startup. With no bucket variables set, the **local** backend stores objects in a sibling directory next to the repository, following the same convention as pages sites:
+Objects are stored either in an S3-compatible bucket or inside the vault, chosen from the environment at startup. With no bucket variables set, the **local** backend stores objects in a sibling directory next to the repository, following the same convention as sites:
 
 ```
 <vault>/alice/

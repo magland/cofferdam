@@ -1,7 +1,7 @@
 import { NextFunction, Request, Response } from 'express';
 import { hasCiState } from './ci/present';
 import { GitRepo, RefInfo } from './git';
-import { findRepo, pagesDir } from './scan';
+import { findRepo, siteDir } from './scan';
 import { Viewer } from './session';
 import { canAdmin, canPush } from './vault';
 import { RepoCtx } from './views';
@@ -72,7 +72,7 @@ export async function makeCtx(
     branches: loaded.branches,
     tags: loaded.tags,
     cloneUrl,
-    hasPages: pagesDir(root, loaded.repo.collection, loaded.repo.name) !== null,
+    hasSite: siteDir(root, loaded.repo.collection, loaded.repo.name) !== null,
     hasCi: await hasCiState(root, loaded.repo, loaded.defaultBranch, loaded.branches),
     viewer,
     canPush: viewer !== null && canPush(viewer.auth, loaded.repo.collection, loaded.repo.name),

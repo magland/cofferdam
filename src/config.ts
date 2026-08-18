@@ -46,7 +46,7 @@ export function loadConfig(root: string): VaultConfig {
   try {
     const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
     // An unknown theme name falls back to the default rather than failing the
-    // request: a typo in config.json should not take the site down.
+    // request: a typo in config.json should not take the vault down.
     if (typeof parsed.theme === 'string' && findTheme(parsed.theme)) config.theme = parsed.theme;
     // Run retention: a vault's run history is the one part of its state that
     // grows without bound, so it is bounded by default and tunable here.

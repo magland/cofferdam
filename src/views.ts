@@ -13,7 +13,7 @@ export interface RepoCtx {
   branches: RefInfo[];
   tags: RefInfo[];
   cloneUrl: string;
-  hasPages: boolean;
+  hasSite: boolean;
   hasCi: boolean;
   viewer: Viewer | null;
   canPush: boolean;
@@ -142,7 +142,7 @@ ${tab('commits', 'Commits', `${base}/commits/${encPath(ctx.ref)}`)}
 ${ctx.hasCi || active === 'actions' ? tab('actions', 'Actions', `${base}/actions`) : ''}
 ${tab('branches', 'Branches', `${base}/branches`, ctx.branches.length)}
 ${tab('tags', 'Tags', `${base}/tags`, ctx.tags.length)}
-${ctx.hasPages ? tab('pages', 'Pages', `${base}/pages/`) : ''}
+${ctx.hasSite ? tab('site', 'Site', `${base}/site/`) : ''}
 ${ctx.canPush || ctx.canAdmin ? tab('settings', 'Settings', `${base}/settings`) : ''}
 </nav>`;
 }

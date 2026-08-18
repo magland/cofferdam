@@ -5,7 +5,7 @@
 // else.
 //
 // A theme is a property of the vault, not of the visitor: one vault is one
-// site, and the operator chooses how it looks. See config.ts for storage.
+// interface, and the operator chooses how it looks. See config.ts for storage.
 
 export interface ThemeVars {
   /** Page background and primary text. */

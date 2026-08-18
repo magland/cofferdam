@@ -78,13 +78,14 @@ export function findRepo(root: string, collection: string, repoName: string): Gi
   return null;
 }
 
-export function pagesDir(root: string, collection: string, repoName: string): string | null {
+// A repository's static site lives in a sibling directory, `<repo>.site`.
+export function siteDir(root: string, collection: string, repoName: string): string | null {
   if (!isValidName(collection) || !isValidName(repoName)) return null;
-  const dir = path.join(root, collection, `${displayName(repoName)}.pages`);
+  const dir = path.join(root, collection, `${displayName(repoName)}.site`);
   try {
     if (fs.statSync(dir).isDirectory()) return dir;
   } catch {
-    // no pages directory
+    // no site directory
   }
   return null;
 }

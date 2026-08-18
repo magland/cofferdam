@@ -764,7 +764,7 @@ export function registerWebOps(
   }
 
   // The theme is vault-wide, so changing it takes admin scope over everything:
-  // a delegated collection administrator should not restyle the whole site.
+  // a delegated collection administrator should not restyle the whole vault.
   function canSetTheme(viewer: Viewer): boolean {
     return canAdmin(viewer.auth, ['*']);
   }

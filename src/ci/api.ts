@@ -4,7 +4,7 @@ import * as path from 'path';
 import { isValidName } from '../scan';
 import { AuthResult, authenticateToken, canAdmin, loadVault } from '../vault';
 import { baseUrlOf } from '../web';
-import { ArtifactError, artifactPath, artifactsDir, deployPages, isValidArtifactName, listArtifacts } from './artifacts';
+import { ArtifactError, artifactPath, artifactsDir, deploySite, isValidArtifactName, listArtifacts } from './artifacts';
 import { CiEngine } from './engine';
 import { LogLine } from './protocol';
 import { Conclusion, StepState } from './runs';
@@ -401,10 +401,10 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine): voi
     res.json({ artifacts: listArtifacts(root, a.collection, a.repo, a.run) });
   });
 
-  // Publishing an artifact as the repository's pages site. The extraction
-  // happens here rather than on the runner because the pages directory is
-  // vault state; artifacts.ts treats the archive as untrusted.
-  app.post('/api/runner/jobs/:collection/:repo/:run/:job/pages', json, async (req, res) => {
+  // Publishing an artifact as the repository's site. The extraction happens
+  // here rather than on the runner because the site directory is vault
+  // state; artifacts.ts treats the archive as untrusted.
+  app.post('/api/runner/jobs/:collection/:repo/:run/:job/site', json, async (req, res) => {
     const auth = requireRunner(req, res);
     if (!auth) return;
     const a = addressOf(req);
@@ -423,11 +423,11 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine): voi
       return;
     }
     try {
-      const result = await deployPages(root, a.collection, a.repo, a.run, name);
+      const result = await deploySite(root, a.collection, a.repo, a.run, name);
       res.json({
         deployed: true,
         files: result.files,
-        url: `${baseUrlOf(req)}/${encodeURIComponent(a.collection)}/${encodeURIComponent(a.repo)}/pages/`,
+        url: `${baseUrlOf(req)}/${encodeURIComponent(a.collection)}/${encodeURIComponent(a.repo)}/site/`,
       });
     } catch (e) {
       apiError(res, e instanceof ArtifactError ? 400 : 500, e instanceof Error ? e.message : String(e));

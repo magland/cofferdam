@@ -81,7 +81,7 @@ User commands talk to a running hubbit server:
 
 Vault layout:
   <vault>/<collection>/<repo>.git    bare repositories (the .git suffix is optional)
-  <vault>/<collection>/<repo>.pages  optional static pages site for a repo
+  <vault>/<collection>/<repo>.site   optional static site for a repo
   <vault>/<collection>/<repo>.lfs    Git LFS objects, when no bucket is configured
   <vault>/<collection>/<repo>.runs   workflow run history and logs
   <vault>/vault.json                 users and hashed tokens (server-managed)

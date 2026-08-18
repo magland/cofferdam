@@ -11,7 +11,8 @@ import type { StepExecContext } from './steps';
 //
 // Most actions are ordinary programs and run unmodified. A few are not: they
 // are thin clients for services that exist only inside GitHub, such as the
-// artifact store, the cache service, and the Pages deployment API. Running
+// artifact store, the cache service, and the Pages deployment API (which
+// hubbit answers with a site). Running
 // those verbatim against a hubbit vault cannot work, so hubbit substitutes
 // its own implementation of the same interface, chosen by the `uses:` string.
 //
@@ -412,12 +413,16 @@ const downloadArtifact: Override = {
   },
 };
 
-// ---- pages ----
+// ---- the site ----
+//
+// These two keep GitHub's spelling in their `uses:` keys and in the
+// `github-pages` artifact name, because those are somebody else's interface.
+// hubbit's own noun for what they publish is a site.
 
-function pagesUrls(ctx: StepExecContext): { origin: string; basePath: string; baseUrl: string; host: string } {
+function siteUrls(ctx: StepExecContext): { origin: string; basePath: string; baseUrl: string; host: string } {
   const a = ctx.spec.address;
   const origin = ctx.serverUrl.replace(/\/+$/, '');
-  const basePath = `/${a.collection}/${a.repo}/pages`;
+  const basePath = `/${a.collection}/${a.repo}/site`;
   let host = origin;
   try {
     host = new URL(origin).host;
@@ -430,14 +435,17 @@ function pagesUrls(ctx: StepExecContext): { origin: string; basePath: string; ba
 // configure-pages exists to tell the rest of a workflow where the site will
 // live. The real one asks GitHub's API; this answers from the vault's own
 // URL. Note the shape differs from GitHub's: a hubbit site is served at
-// /<collection>/<repo>/pages/ rather than at /<repo>/, so a generator that
+// /<collection>/<repo>/site/ rather than at /<repo>/, so a generator that
 // computes its own base path instead of reading base_path will be wrong, and
 // needs the path passed to it explicitly.
 const configurePages: Override = {
   name: 'configure-pages',
   async run({ ctx }) {
-    const u = pagesUrls(ctx);
+    const u = siteUrls(ctx);
     ctx.log(`This site will be served at ${u.baseUrl}/`);
+    ctx.rt.env.HUBBIT_SITE_BASE_PATH = u.basePath;
+    // The former name of the same variable, kept so workflows written against
+    // it keep working; remove it once they have moved.
     ctx.rt.env.HUBBIT_PAGES_BASE_PATH = u.basePath;
     return {
       ok: true,
@@ -447,7 +455,7 @@ const configurePages: Override = {
 };
 
 // deploy-pages publishes the artifact that upload-pages-artifact produced.
-// The server unpacks it, since the pages directory is vault state.
+// The server unpacks it, since the site directory is vault state.
 const deployPages: Override = {
   name: 'deploy-pages',
   async run({ ctx, inputs }) {
@@ -455,7 +463,7 @@ const deployPages: Override = {
     const a = ctx.spec.address;
     const url = `${ctx.serverUrl}/api/runner/jobs/${encodeURIComponent(a.collection)}/${encodeURIComponent(
       a.repo
-    )}/${a.run}/${encodeURIComponent(a.job)}/pages`;
+    )}/${a.run}/${encodeURIComponent(a.job)}/site`;
     const res = await fetch(url, {
       method: 'POST',
       headers: {
@@ -467,11 +475,11 @@ const deployPages: Override = {
     });
     const body = (await res.json().catch(() => ({}))) as { error?: string; files?: number; url?: string };
     if (!res.ok) {
-      ctx.log(`deploying to pages failed: ${body.error ?? res.status}`);
+      ctx.log(`deploying the site failed: ${body.error ?? res.status}`);
       return { ok: false };
     }
     ctx.log(`Deployed ${body.files} file${body.files === 1 ? '' : 's'} to ${body.url}`);
-    return { ok: true, outputs: { page_url: body.url ?? pagesUrls(ctx).baseUrl + '/' } };
+    return { ok: true, outputs: { page_url: body.url ?? siteUrls(ctx).baseUrl + '/' } };
   },
 };
 

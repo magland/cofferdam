@@ -81,14 +81,14 @@ function run(cmd: string, args: string[]): Promise<string> {
   });
 }
 
-// Deploy an artifact as the repository's pages site.
+// Deploy an artifact as the repository's site.
 //
 // The bytes arrive from a runner, so extraction is treated as untrusted: tar
 // runs into a scratch directory outside the published one, every resulting
 // path is checked to be inside it, and only then does the new site replace
 // the old one by rename. A half-extracted archive therefore never becomes the
 // live site, and a crafted archive cannot write outside the vault.
-export async function deployPages(
+export async function deploySite(
   root: string,
   collection: string,
   repo: string,
@@ -100,9 +100,9 @@ export async function deployPages(
   if (!tar || !fs.existsSync(tar)) {
     throw new ArtifactError(`no artifact named ${artifactName} in run #${n}`);
   }
-  const pagesDir = path.join(root, collection, `${displayName(repo)}.pages`);
-  const scratch = `${pagesDir}.incoming-${process.pid}`;
-  const previous = `${pagesDir}.previous-${process.pid}`;
+  const dir = path.join(root, collection, `${displayName(repo)}.site`);
+  const scratch = `${dir}.incoming-${process.pid}`;
+  const previous = `${dir}.previous-${process.pid}`;
   fs.rmSync(scratch, { recursive: true, force: true });
   fs.mkdirSync(scratch, { recursive: true });
   try {
@@ -144,12 +144,12 @@ export async function deployPages(
     if (files === 0) throw new ArtifactError(`artifact ${artifactName} contains no files`);
 
     fs.rmSync(previous, { recursive: true, force: true });
-    const hadPages = fs.existsSync(pagesDir);
-    if (hadPages) fs.renameSync(pagesDir, previous);
+    const had = fs.existsSync(dir);
+    if (had) fs.renameSync(dir, previous);
     try {
-      fs.renameSync(scratch, pagesDir);
+      fs.renameSync(scratch, dir);
     } catch (e) {
-      if (hadPages) fs.renameSync(previous, pagesDir);
+      if (had) fs.renameSync(previous, dir);
       throw e;
     }
     fs.rmSync(previous, { recursive: true, force: true });

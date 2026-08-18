@@ -7,7 +7,7 @@ import { isMarkdownFile, renderMarkdown } from './markdown';
 import { parsePointer } from './pointer';
 import { esc, highlightCode, isBinary } from './render';
 import { renderDiff } from './diff';
-import { displayName, isValidName, listCollections, listRepoDirs, pagesDir, repoDescription } from './scan';
+import { displayName, isValidName, listCollections, listRepoDirs, repoDescription, siteDir } from './scan';
 import { findRepo } from './scan';
 import { getViewer } from './session';
 import * as views from './views';
@@ -357,18 +357,18 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
   );
 
   app.get(
-    '/:collection/:repo/pages/*',
+    '/:collection/:repo/site/*',
     ah(async (req, res) => {
       const repo = findRepo(root, req.params.collection, req.params.repo);
       if (!repo) {
         send404(res, `Repository ${req.params.collection}/${req.params.repo} not found`);
         return;
       }
-      const dir = pagesDir(root, repo.collection, repo.name);
+      const dir = siteDir(root, repo.collection, repo.name);
       if (!dir) {
         send404(
           res,
-          `No pages site for ${repo.collection}/${repo.name}. Create a ${repo.name}.pages directory next to the repository, with an index.html at its root.`
+          `No site for ${repo.collection}/${repo.name}. Create a ${repo.name}.site directory next to the repository, with an index.html at its root.`
         );
         return;
       }
@@ -403,7 +403,7 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
         if (fs.existsSync(notFound)) {
           res.status(404).sendFile(notFound);
         } else {
-          send404(res, 'Page not found in this pages site');
+          send404(res, 'Page not found in this site');
         }
         return;
       }
@@ -411,9 +411,9 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
     })
   );
 
-  app.get('/:collection/:repo/pages', (req, res) => {
+  app.get('/:collection/:repo/site', (req, res) => {
     res.redirect(
-      `/${encodeURIComponent(req.params.collection)}/${encodeURIComponent(displayName(req.params.repo))}/pages/`
+      `/${encodeURIComponent(req.params.collection)}/${encodeURIComponent(displayName(req.params.repo))}/site/`
     );
   });
 }

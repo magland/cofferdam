@@ -217,7 +217,7 @@ ${defaultBranchField}
   const dangerZone = ctx.canAdmin
     ? `<div class="danger-zone">
 <h3>Danger zone</h3>
-<p>Deleting a repository removes its directory${ctx.hasPages ? ' and its pages site' : ''} from the vault permanently. There is no undo.</p>
+<p>Deleting a repository removes its directory${ctx.hasSite ? ' and its site' : ''} from the vault permanently. There is no undo.</p>
 <form method="post" action="${base}/settings/delete">
 ${csrfField(ctx.viewer!)}
 <div class="field"><label for="confirm">Type <b class="mono">${esc(ctx.collection)}/${esc(ctx.repo)}</b> to confirm</label><input type="text" id="confirm" name="confirm" autocomplete="off"></div>

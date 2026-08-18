@@ -5,7 +5,7 @@ import * as path from 'path';
 import { GitRepo, execGit, isValidRefName, isValidRepoPath, isValidSha } from './git';
 import type { LfsStore } from './lfsstore';
 import { runsDir } from './ci/runs';
-import { findRepo, isValidName, pagesDir } from './scan';
+import { findRepo, isValidName, siteDir } from './scan';
 
 // The shared write-operations layer. Every function takes explicit arguments
 // and enforces no authorization: the route layer knows the actor and decides.
@@ -239,9 +239,9 @@ export async function deleteRepo(
     throw new OpError('repository directory is outside the vault; refusing to delete');
   }
   fs.rmSync(repo.dir, { recursive: true, force: true });
-  const pages = pagesDir(root, collection, name);
-  if (pages && containedIn(rootReal, pages)) {
-    fs.rmSync(pages, { recursive: true, force: true });
+  const site = siteDir(root, collection, name);
+  if (site && containedIn(rootReal, site)) {
+    fs.rmSync(site, { recursive: true, force: true });
   }
   // Workflow runs go too. Leaving them would orphan the history, and worse,
   // a repository later created under the same name would inherit it, with

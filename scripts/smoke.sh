@@ -519,12 +519,12 @@ check "pushed commit visible" 200 "$BASE/demo/proj/blob/main/README.md"
 body_has "pushed content" 'pushed line'
 check "push-created repo visible" 200 "$BASE/pushed/created"
 
-# ---- pages site ----
+# ---- site ----
 
-mkdir -p "$VAULT/pushed/created.pages"
-echo '<h1>pages ok</h1>' > "$VAULT/pushed/created.pages/index.html"
-check "pages site served" 200 "$BASE/pushed/created/pages/"
-body_has "pages content" 'pages ok'
+mkdir -p "$VAULT/pushed/created.site"
+echo '<h1>site ok</h1>' > "$VAULT/pushed/created.site/index.html"
+check "site served" 200 "$BASE/pushed/created/site/"
+body_has "site content" 'site ok'
 
 # ---- Git LFS: batch API and local transfer routes ----
 # All of this runs against the local backend, so the suite needs no bucket
@@ -1260,9 +1260,9 @@ jobs:
       - run: echo "continued past a missing action"
 YML
 
-  # ---- artifacts and pages ----
-  cat > "$CI_REPO/.github/workflows/pages.yml" <<'YML'
-name: Pages
+  # ---- artifacts and the site ----
+  cat > "$CI_REPO/.github/workflows/site.yml" <<'YML'
+name: Site
 on: workflow_dispatch
 jobs:
   build:
@@ -1273,7 +1273,7 @@ jobs:
           echo "<h1>built by a workflow</h1>" > _site/index.html
           echo "body{}" > _site/css/style.css
       - uses: actions/configure-pages@v5
-      - run: echo "base path is $HUBBIT_PAGES_BASE_PATH"
+      - run: echo "base path is $HUBBIT_SITE_BASE_PATH (was $HUBBIT_PAGES_BASE_PATH)"
       - uses: actions/upload-artifact@v4
         with:
           name: site
@@ -1356,24 +1356,24 @@ YML
     echo "FAIL: the actions job did not succeed"; cat "$ACT_LOG"; exit 1; }
   PASS=$((PASS+1)); echo "ok: the whole actions job succeeds"
 
-  run_workflow pages.yml Pages
-  PAGES_RUN="$RUN_N"
-  [ -f "$RUNS/$PAGES_RUN/artifacts/site.tar" ] || {
+  run_workflow site.yml Site
+  SITE_RUN="$RUN_N"
+  [ -f "$RUNS/$SITE_RUN/artifacts/site.tar" ] || {
     echo "FAIL: the artifact was not stored in the run directory"; exit 1; }
   PASS=$((PASS+1)); echo "ok: upload-artifact stores an artifact in the vault"
-  grep -q "the artifact round-tripped" "$RUNS/$PAGES_RUN/jobs/deploy.log" || {
+  grep -q "the artifact round-tripped" "$RUNS/$SITE_RUN/jobs/deploy.log" || {
     echo "FAIL: download-artifact did not restore the files"
-    cat "$RUNS/$PAGES_RUN/jobs/deploy.log"; exit 1; }
+    cat "$RUNS/$SITE_RUN/jobs/deploy.log"; exit 1; }
   PASS=$((PASS+1)); echo "ok: download-artifact restores an artifact in a later job"
-  grep -q "base path is /demo/ci/pages" "$RUNS/$PAGES_RUN/jobs/build.log" || {
+  grep -q "base path is /demo/ci/site (was /demo/ci/site)" "$RUNS/$SITE_RUN/jobs/build.log" || {
     echo "FAIL: configure-pages reported the wrong base path"; exit 1; }
-  PASS=$((PASS+1)); echo "ok: configure-pages reports the vault's own pages path"
-  check "the artifact is listed on the run page" 200 "$BASE/demo/ci/actions/runs/$PAGES_RUN"
+  PASS=$((PASS+1)); echo "ok: configure-pages reports the vault's own site path, under both variable names"
+  check "the artifact is listed on the run page" 200 "$BASE/demo/ci/actions/runs/$SITE_RUN"
   body_has "artifact name shown" 'site'
-  check "the artifact downloads" 200 "$BASE/demo/ci/actions/runs/$PAGES_RUN/artifacts/site"
-  check "an unknown artifact is 404" 404 "$BASE/demo/ci/actions/runs/$PAGES_RUN/artifacts/nosuch"
+  check "the artifact downloads" 200 "$BASE/demo/ci/actions/runs/$SITE_RUN/artifacts/site"
+  check "an unknown artifact is 404" 404 "$BASE/demo/ci/actions/runs/$SITE_RUN/artifacts/nosuch"
 
-  # Deploying to pages needs the real upload-pages-artifact action, which is
+  # Deploying a site needs the real upload-pages-artifact action, which is
   # fetched from a forge; skip when there is no network rather than failing.
   if curl -sS --max-time 10 -o /dev/null "https://github.com" 2>/dev/null; then
     cat > "$CI_REPO/.github/workflows/deploy.yml" <<'YML'
@@ -1398,19 +1398,19 @@ jobs:
       - run: echo "page url is ${{ steps.deployment.outputs.page_url }}"
 YML
     git -C "$CI_REPO" add -A
-    git -C "$CI_REPO" -c user.email=ci@example.com -c user.name=ci commit -qm "Add a pages deployment workflow"
+    git -C "$CI_REPO" -c user.email=ci@example.com -c user.name=ci commit -qm "Add a site deployment workflow"
     git -C "$CI_REPO" push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/demo/ci" main
     sleep 1
     run_workflow deploy.yml Deploy
     DEPLOY_RUN="$RUN_N"
     [ "$(run_field "$RUNS/$DEPLOY_RUN/run.json" conclusion)" = "success" ] || {
-      echo "FAIL: the pages deployment run did not succeed"
+      echo "FAIL: the site deployment run did not succeed"
       cat "$RUNS/$DEPLOY_RUN/jobs/build.log" "$RUNS/$DEPLOY_RUN/jobs/deploy.log"; exit 1; }
     PASS=$((PASS+1)); echo "ok: a real upload-pages-artifact and deploy-pages run to completion"
-    [ -f "$VAULT/demo/ci.pages/index.html" ] || {
-      echo "FAIL: the site was not written to the pages directory"; exit 1; }
+    [ -f "$VAULT/demo/ci.site/index.html" ] || {
+      echo "FAIL: the site was not written to the site directory"; exit 1; }
     PASS=$((PASS+1)); echo "ok: deploy-pages published the artifact as the repository's site"
-    check "the deployed site is served" 200 "$BASE/demo/ci/pages/"
+    check "the deployed site is served" 200 "$BASE/demo/ci/site/"
     body_has "the deployed content" 'deployed by a workflow'
     check "a remote action was fetched and cached" 200 "$BASE/demo/ci/actions/runs/$DEPLOY_RUN"
     [ -d "$TMP/runner-cache/actions" ] || { echo "FAIL: no action cache was written"; exit 1; }

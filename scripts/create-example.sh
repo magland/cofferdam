@@ -202,34 +202,34 @@ git -C "$T" commit -q -m "Add TypeScript entry point"
 
 publish "$T" alice webapp "A tiny static web page (example repository)"
 
-mkdir -p "$ROOT/alice/webapp.pages"
-cat > "$ROOT/alice/webapp.pages/index.html" <<'EOF'
+mkdir -p "$ROOT/alice/webapp.site"
+cat > "$ROOT/alice/webapp.site/index.html" <<'EOF'
 <!doctype html>
 <html>
   <head>
     <meta charset="utf-8">
-    <title>webapp pages</title>
+    <title>webapp site</title>
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
     <h1>webapp</h1>
-    <p>This site is served from the <code>alice/webapp.pages</code> directory, next to the bare repository.</p>
+    <p>This site is served from the <code>alice/webapp.site</code> directory, next to the bare repository.</p>
     <p><a href="about.html">About</a></p>
   </body>
 </html>
 EOF
-cat > "$ROOT/alice/webapp.pages/styles.css" <<'EOF'
+cat > "$ROOT/alice/webapp.site/styles.css" <<'EOF'
 body { font-family: sans-serif; margin: 3rem auto; max-width: 40rem; padding: 0 1rem; }
 h1 { color: #2a6f97; }
 EOF
-cat > "$ROOT/alice/webapp.pages/about.html" <<'EOF'
+cat > "$ROOT/alice/webapp.site/about.html" <<'EOF'
 <!doctype html>
 <html>
   <head><meta charset="utf-8"><title>About</title><link rel="stylesheet" href="styles.css"></head>
-  <body><h1>About</h1><p>A minimal example pages site.</p><p><a href="./">Home</a></p></body>
+  <body><h1>About</h1><p>A minimal example site.</p><p><a href="./">Home</a></p></body>
 </html>
 EOF
-cat > "$ROOT/alice/webapp.pages/404.html" <<'EOF'
+cat > "$ROOT/alice/webapp.site/404.html" <<'EOF'
 <!doctype html>
 <html>
   <head><meta charset="utf-8"><title>Not found</title><link rel="stylesheet" href="styles.css"></head>
@@ -249,7 +249,7 @@ cat > "$T/2026-01-ideas.md" <<'EOF'
 # Ideas
 
 - A filesystem-backed git host
-- Pages sites built from a branch
+- Static sites built from a branch
 EOF
 git -C "$T" add -A
 git -C "$T" commit -q -m "Start notes"
