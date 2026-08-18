@@ -17,7 +17,7 @@ Hosting git repositories usually means one big centralized service (GitHub, GitL
 
 ## 3. Current state
 
-Everything described here is implemented and verified end to end by `scripts/smoke.sh` (355 checks: browsing, sessions, every UI operation, authorization denials, CSRF, themes, the JSON API, git clone/push/push-to-create, pages, Git LFS, workflow planning and execution, repository deletion). The LFS checks run against the local backend, so the suite stays credential-free; the handful that need a real `git lfs` on the host skip with a message when it is absent, and have been run against git-lfs 3.6.1 (push, anonymous clone and pull, the blob card, the raw route, and the edit refusal, all passing). Note that git-lfs derives its endpoint as `<remote>.git/info/lfs`, which is why the `.git`-suffix stripping in `findRepo` is load-bearing here rather than cosmetic.
+Everything described here is implemented and verified end to end by `scripts/smoke.sh` (381 checks: browsing, sessions, every UI operation, authorization denials, CSRF, themes, the JSON API, git clone/push/push-to-create, pages, Git LFS, workflow planning and execution, JavaScript and composite actions, artifacts, pages deployment, repository deletion). The LFS checks run against the local backend, so the suite stays credential-free; the handful that need a real `git lfs` on the host skip with a message when it is absent, and have been run against git-lfs 3.6.1 (push, anonymous clone and pull, the blob card, the raw route, and the edit refusal, all passing). Note that git-lfs derives its endpoint as `<remote>.git/info/lfs`, which is why the `.git`-suffix stripping in `findRepo` is load-bearing here rather than cosmetic.
 
 ### 3.1 Running it
 
@@ -53,13 +53,20 @@ First start against a directory with no `vault.json` initializes one and prints 
 | `src/ci/runs.ts` | Run state on disk under `<repo>.runs/`, and retention |
 | `src/ci/runners.ts` | The runner registry in `runners.json` and runner authentication |
 | `src/ci/protocol.ts` | The runner protocol's wire types, shared by both sides |
-| `src/ci/api.ts` | The runner-facing API and runner registration |
+| `src/ci/actionref.ts` | Parsing the `uses:` value of a step |
+| `src/ci/artifacts.ts` | Artifact storage in a run's directory, and publishing one as a pages site |
+| `src/ci/api.ts` | The runner-facing API, artifacts, pages deployment, and runner registration |
 | `src/ci/web.ts` | The Actions pages and their operations |
 | `src/ci/views.ts` | Actions page templates |
 | `src/ci/present.ts` | The memoized check behind showing the Actions tab |
 | `src/runner/client.ts` | `hubbit runner run`: the poll loop, log shipping, and status reporting |
 | `src/runner/docker.ts` | Container lifecycle and exec, as thin wrappers over the `docker` CLI |
-| `src/runner/job.ts` | Executing one job: steps, workflow commands, file commands, conclusions |
+| `src/runner/context.ts` | Container paths, the environment, expression contexts, and the workflow-command and file-command parsers |
+| `src/runner/steps.ts` | The step engine: `run` steps, JavaScript and composite actions, post hooks |
+| `src/runner/actions.ts` | Fetching and caching actions, and reading `action.yml` |
+| `src/runner/externals.ts` | Providing a node interpreter to the container when the image has none |
+| `src/runner/overrides.ts` | The actions hubbit implements itself (3.12) |
+| `src/runner/job.ts` | Orchestrating one job: workspace, container, step loop, conclusion |
 | `src/runner-cli.ts` | The `hubbit runner` subcommands |
 | `src/ops.ts` | The shared write-operations layer (section 3.5); enforces no authorization itself |
 | `src/session.ts` | Signed-cookie sessions, `.secret` management, `Viewer`, CSRF check |
@@ -102,9 +109,11 @@ Read routes (anonymous):
 | `GET /:collection/:repo/actions` | Workflow runs, the workflow filter, and the dispatch form |
 | `GET /:collection/:repo/actions/runs/:n` | One run: its jobs, steps, and logs (`?job=` selects a job) |
 | `GET /:collection/:repo/actions/runs/:n/log/:job` | JSON log tail from a byte offset, used by the live tailer |
+| `GET /:collection/:repo/actions/runs/:n/artifacts/:name` | Download an artifact (a tar); anonymous, like every other read |
 | `GET /api/whoami`, `GET/POST /api/users`, `POST /api/users/:name/grant` | Bearer-token JSON API used by the CLI |
 | `GET/POST /api/runners`, `DELETE /api/runners/:name` | Runner registration; user token with admin scope |
 | `POST /api/runner/acquire`, `.../jobs/:c/:r/:n/:job/{heartbeat,logs,status}`, `GET /api/runner/whoami` | The runner protocol; runner token plus a lease (3.12) |
+| `PUT/GET .../jobs/:c/:r/:n/:job/artifacts[/:name]`, `POST .../pages` | Artifacts and pages deployment; same lease check |
 
 UI operation routes (session + CSRF; all POSTs follow POST-redirect-GET):
 
@@ -243,16 +252,28 @@ One pitfall is recorded because it cost a debugging session and would recur: the
 
 **Execution.** One container per job, started with a sleeping entrypoint, with steps run through `docker exec`, matching how container jobs behave on GitHub: steps share a filesystem and anything one installs is there for the next. Three host directories are bind-mounted: the workspace, `RUNNER_TEMP`, and a directory for the file commands. The runner clones the repository into the workspace *before* the job starts, which is a deliberate divergence from GitHub's empty workspace (see the note in the README); it makes `run:` steps useful before action support exists and means `actions/checkout` becomes a re-sync rather than the first clone when actions land. `runs-on` labels map to images through a table the operator can override.
 
-**What is not implemented, and how it fails.** A `uses:` step fails the job with a message naming the action; a reusable workflow, `container:` job, or `services:` block fails at plan time with a message; a dynamic (expression) matrix likewise. All of these fail loudly rather than skipping, because a build step that silently did nothing and reported success is the worst possible outcome. Artifacts, caching, secrets, `hashFiles()`, and the object-filter (`*`) expression syntax are absent. `::add-mask::` masking *is* implemented despite the absence of secrets, since steps derive tokens at runtime.
+**Actions.** A `uses:` step resolves to one of three things. A JavaScript action (`node16`/`node20`/`node24`) is fetched as a source tarball from github.com, cached under `~/.cache/hubbit/actions`, copied into the job's own directory, and run with a node interpreter; its `pre` and `post` scripts become hooks, and post hooks run in reverse order after the job's steps, whatever the job's outcome. A composite action is expanded natively: `runSteps` recurses with a fresh scope, so a composite's `steps` context, its `inputs`, and its `GITHUB_ACTION_PATH` are its own, and nesting works to a depth limit of 10. A docker action fails with a message.
 
-The next phase is actions, and the design is settled even though the code is not: resolve `uses:` from github.com into a local action cache, execute JS actions with a node binary the runner provides and bind-mounts (rather than requiring one in every image), expand composite actions natively, and override by `uses:` string the handful of actions that talk to GitHub-only services (`actions/checkout`, `upload-artifact`, `download-artifact`, `cache`, `configure-pages`, `upload-pages-artifact`, `deploy-pages`). Overriding is the recommendation over implementing the artifact v4 twirp protocol and an OIDC issuer: perhaps a tenth of the work, at the cost of tracking a handful of action interfaces. Note when that lands that `deploy-pages` writes to `<repo>.pages`, and that actions which guess their own base path guess GitHub's shape (`/<repo>/`) while hubbit serves `/<collection>/<repo>/pages/`; `configure-pages` should report the real base path, and workflows whose generators compute their own will need it passed explicitly.
+The pristine download is never what the container sees: the action is copied into the job's directory first, so an action that writes into its own directory cannot poison the next job's copy. A cache entry pinned to a full sha is trusted forever; anything else is re-fetched after a day, since a branch moves.
+
+JavaScript actions need node inside the container. If the image has a new enough one, it is used; otherwise the runner downloads an official build once and bind-mounts it read-only at `/hubbit/externals`, which is how GitHub's own runner makes `actions/checkout` work on an image with no node. Those builds are glibc-linked, so a musl image gets an explicit message rather than a loader error.
+
+**Overrides** (`src/runner/overrides.ts`) substitute hubbit's own implementation for actions that are clients of GitHub-only services: `actions/checkout`, `upload-artifact`, `download-artifact`, `configure-pages`, and `deploy-pages`. They are matched on `owner/repo` ignoring the ref, and applied at any nesting depth, which is what makes one inside a third-party composite action work. Note that `upload-pages-artifact` is deliberately *not* overridden: it is an ordinary composite that tars a directory and calls `upload-artifact`, so the real action runs on top of hubbit's override, and the same will be true of anything else built that way. Substituting by name rather than implementing the artifact v4 twirp protocol and an OIDC issuer is perhaps a tenth of the work; the cost is following a handful of action interfaces as they change.
+
+One thing to keep in mind when touching the overrides: a path in a workflow or an action is written as the *container* sees it, while an override works on the host side of the bind mounts. `StepExecContext.hostPath` does that translation, and forgetting it is why `upload-pages-artifact` (which passes `${{ runner.temp }}/artifact.tar`) failed the first time.
+
+**Artifacts** are tars under `<repo>.runs/<n>/artifacts/<name>.tar`, so they are pruned with their run and copied with a vault backup. Writing one is authorized by the job's lease, so only a running job can, and only into its own run. Reading is anonymous on the web, like every other read in a vault. `deployPages` in `src/ci/artifacts.ts` publishes one as `<repo>.pages`: extraction happens on the server because the pages directory is vault state, and the archive is treated as untrusted, extracted into a scratch directory, checked for symlinks pointing out of it, and swapped in by rename so a half-extracted archive is never the live site.
+
+**What is still not implemented, and how it fails.** Reusable workflows, `container:` jobs, and `services:` fail at plan time with a message; a dynamic (expression) matrix and docker actions fail at the step. All fail loudly rather than skipping, because a build step that silently did nothing and reported success is the worst possible outcome. Absent: secrets, `actions/cache` and the cache service, `hashFiles()`, a token for the run, and the object-filter (`*`) expression syntax. Note that an action which calls a forge API gets an empty `github.token`; `actions/setup-node` handles that by falling back to nodejs.org, but not everything will. `::add-mask::` masking *is* implemented despite the absence of secrets, since steps derive tokens at runtime.
+
+A pages site is served at `/<collection>/<repo>/pages/` while GitHub serves one at `<owner>.github.io/<repo>/`. `configure-pages` reports the real base path and exports `HUBBIT_PAGES_BASE_PATH`, so a generator that reads it is correct; one that computes its own from the repository name produces GitHub's shape and broken links, and needs the base passed explicitly. The numbl workflow this feature was built against happens to emit relative URLs, so it is unaffected; do not read that as the general case.
 
 ## 4. Later phases, sketched
 
 - **Issues.** State must live in the vault. Two candidate designs: a sibling directory (`<repo>.issues/` with one markdown-plus-frontmatter file per issue), which is transparent and greppable; or a hidden git ref inside the repo (as git-bug and similar tools do), which travels with clones. We lean toward the sibling directory for consistency with pages, but this is undecided.
 - **Pull requests.** Within a vault, a PR can be branch-to-branch with a merge button (server-side `git merge-tree`/`merge` in a temp worktree or index). Across vaults is the federation question below.
-- **Actions in workflows** (3.12), then artifacts, then deploying an artifact to `<repo>.pages`, which is what turns the workflow engine into a way to publish a site. The design is recorded at the end of 3.12; the code is not written.
-- **Secrets and a run token.** Neither exists yet. A run token minted per job from the workflow's `permissions:` block, revoked when the job ends, is what would let a workflow push back to its own repository. Secrets storage was deliberately deferred rather than designed badly: the question of whether a vault backup should carry live secrets is unresolved (7.11).
+- **Secrets and a run token.** Neither exists yet. A run token minted per job from the workflow's `permissions:` block, revoked when the job ends, is what would let a workflow push back to its own repository and call the vault's API; it is also what would stop actions that expect `github.token` from reporting "Bad credentials" and taking a fallback path. Secrets storage was deliberately deferred rather than designed badly: whether a vault backup should carry live secrets is unresolved (7.11).
+- **A cache service**, so `actions/cache` and the caching built into `setup-node` and its relatives stop being no-ops. A runner-local directory is the obvious first implementation, with the trade-off that a second runner starts cold.
 - **JSON everywhere.** Content negotiation on the read routes, the ops layer exposed through the API for CLI parity, `--json` on the CLI, and a raw `hubbit api` passthrough command.
 - **Federation.** The distinctive long-term idea: vault-to-vault interaction (forking a repo from another vault, cross-vault pull requests, identity assertions between vaults). Nothing is designed yet; do not let near-term features paint this into a corner (for example, keep repository identity as `host/collection/repo`-shaped in any stored references).
 - **Published container images and CI for hubbit itself**, once the project is hosted somewhere with CI.
@@ -262,6 +283,8 @@ The next phase is actions, and the design is settled even though the code is not
 Escaping is manual (`esc()` in views); every new interpolation into HTML must go through it, and command arguments must keep using `execFile` arrays, never a shell. Validate every collection/repo/ref/path from a URL or form with the existing validators before it reaches git; ref names additionally must not start with `-`. LFS object ids are the same kind of boundary and get the same treatment (3.11): validate against `/^[0-9a-f]{64}$/` before building any key or path from one, and keep the `lfs` domain prefix on transfer signatures, since `.secret` also signs session cookies. The raw-serving content-type policy (3.7) must survive any refactor. So must the markdown sanitizer (3.9): rendered documents are attacker-controlled markup on the site's origin, and an escape there hands a repository writer any reader's session. Session cookies must never be accepted for the git or Bearer API endpoints, and tokens never grant UI sessions implicitly; the two credential presentations stay distinct. Deletion paths (`deleteRepo`) must resolve and containment-check against the vault root before any recursive removal. Every mutating route re-derives abilities from live `vault.json` and checks CSRF; keep both properties when adding routes.
 
 Workflows (3.12) add a category of risk the rest of the system does not have, because they execute repository-controlled code. Three properties hold it together and must survive any change. Jobs never run in the server process or on its machine. A runner's `allow` list is the whole of its authority, an empty one grants nothing, and registering a runner demands admin scope over exactly the globs granted, since the grant is really a grant of that machine. And the job-scoped runner endpoints check the per-job lease in addition to the runner token, so a runner allowed to serve a collection still cannot write to a job it does not hold. Note also that `::add-mask::` masking runs on the runner before lines are shipped, so an unmasked value never reaches the vault; keep it there rather than moving it server-side.
+
+Two further boundaries came with artifacts (3.12). Artifact names become filenames and are validated like job ids. And `deployPages` extracts an archive a runner supplied into vault state: it must keep extracting into a scratch directory, removing symlinks that point out of it, and swapping in by rename, so that neither a crafted archive nor a failure part-way through can write outside the site or leave a broken one live.
 
 ## 6. Housekeeping
 

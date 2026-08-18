@@ -13,6 +13,8 @@ export interface CiConfig {
   runs: number;
   /** Also drop completed runs older than this many days; 0 disables. */
   days: number;
+  /** Largest artifact a job may upload, in megabytes. */
+  artifactMb: number;
 }
 
 export interface VaultConfig {
@@ -24,7 +26,7 @@ export function configFilePath(root: string): string {
   return path.join(root, CONFIG_FILE);
 }
 
-const DEFAULTS: VaultConfig = { theme: DEFAULT_THEME, ci: { runs: 100, days: 0 } };
+const DEFAULTS: VaultConfig = { theme: DEFAULT_THEME, ci: { runs: 100, days: 0, artifactMb: 500 } };
 
 let cache: { file: string; mtimeMs: number; size: number; config: VaultConfig } | null = null;
 
@@ -52,7 +54,9 @@ export function loadConfig(root: string): VaultConfig {
       const ci = parsed.ci as Record<string, unknown>;
       const runs = typeof ci.runs === 'number' && ci.runs >= 0 ? Math.floor(ci.runs) : DEFAULTS.ci.runs;
       const days = typeof ci.days === 'number' && ci.days >= 0 ? Math.floor(ci.days) : DEFAULTS.ci.days;
-      config.ci = { runs, days };
+      const artifactMb =
+        typeof ci.artifactMb === 'number' && ci.artifactMb > 0 ? Math.floor(ci.artifactMb) : DEFAULTS.ci.artifactMb;
+      config.ci = { runs, days, artifactMb };
     }
   } catch {
     config = { ...DEFAULTS, ci: { ...DEFAULTS.ci } };

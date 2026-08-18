@@ -316,8 +316,15 @@ export function filterPatternToRegExp(pattern: string): RegExp {
     const c = pattern[i];
     if (c === '*') {
       if (pattern[i + 1] === '*') {
-        rx += '.*';
-        i += 2;
+        // `**/` spans zero or more directories, so that dist/**/*.js matches
+        // dist/a.js as well as dist/sub/b.js. A bare `**` matches anything.
+        if (pattern[i + 2] === '/') {
+          rx += '(?:.*/)?';
+          i += 3;
+        } else {
+          rx += '.*';
+          i += 2;
+        }
       } else {
         rx += '[^/]*';
         i++;

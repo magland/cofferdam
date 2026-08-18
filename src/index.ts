@@ -65,7 +65,9 @@ function usage(code = 0): never {
       Take jobs and run them, one at a time, each in a Docker container.
       Reads ~/.config/hubbit/runner.json when given no arguments. Needs a
       working docker command; --image <label>=<image> overrides which image
-      a runs-on label maps to.
+      a runs-on label maps to. Actions named by uses: are fetched from
+      github.com (--actions-url changes that) and cached under
+      ~/.cache/hubbit (--cache-dir changes that).
 
   hubbit runner list
   hubbit runner remove <name>

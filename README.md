@@ -36,7 +36,7 @@ The `.git` suffix on repository directory names is optional; it is stripped for 
 - Anonymous `git clone http://host:port/collection/repo` over smart HTTP
 - Authenticated `git push`, including push-to-create for new repositories
 - Git LFS, with objects in an S3-compatible bucket or inside the vault (see below)
-- GitHub Actions workflows from `.hubbit/workflows` or `.github/workflows`, planned by the server and executed by a runner you start elsewhere with Docker (see below), with live logs in the interface
+- GitHub Actions workflows from `.hubbit/workflows` or `.github/workflows`, planned by the server and executed by a runner you start elsewhere with Docker (see below), with live logs in the interface, JavaScript and composite actions, artifacts, and deployment to a repository's pages site
 - A JSON API and a `hubbit` CLI for user management, including `hubbit login` to hand the token to git so pushing stops asking for it
 - Per-repository pages sites served from a sibling `<repo>.pages` directory
 
@@ -282,13 +282,43 @@ Triggers are `push` (with `branches`, `tags`, and `paths` filters, plus their `-
 
 Within a run: the `${{ }}` expression language, `needs` between jobs, `strategy.matrix` with `include`, `exclude`, and `fail-fast`, `if` on jobs and steps (including `always()`, `failure()`, and `cancelled()`), `env` at workflow, job, and step level, `concurrency` groups with `cancel-in-progress`, `continue-on-error`, `timeout-minutes`, job `outputs`, and `defaults.run`.
 
-Within a step: `run` with `shell` and `working-directory`, the file commands (`GITHUB_OUTPUT`, `GITHUB_ENV`, `GITHUB_PATH`, `GITHUB_STEP_SUMMARY`), and the stdout commands (`::group::`, `::error::`, `::add-mask::` and friends). Values passed to `::add-mask::` are redacted from every later log line.
+Within a step: `run` with `shell` and `working-directory`, the file commands (`GITHUB_OUTPUT`, `GITHUB_ENV`, `GITHUB_PATH`, `GITHUB_STEP_SUMMARY`), and the stdout commands (`::group::`, `::error::`, `::add-mask::` and friends). Values passed to `::add-mask::` are redacted from every later log line, on the runner, before the line is sent to the vault.
 
-**Steps that use an action do not run yet.** A `uses:` step fails the job with a message saying so, rather than being skipped, because a workflow whose build step quietly did nothing and then reported success is worse than one that fails. Artifacts, caching, secrets, service containers, `container:` jobs, and reusable workflows are likewise not implemented. The roadmap below says where they sit.
+Steps that `use:` an action run too. JavaScript actions (`node16`, `node20`, `node24`) and composite actions work, nested to any depth, with their `pre` and `post` scripts; actions are fetched from github.com as source tarballs and cached on the runner. A local action (`uses: ./.github/actions/thing`) comes from the repository being built. Docker actions (`runs.using: docker`) are not implemented and fail the step with a message saying so, as do reusable workflows, `container:` jobs, and `services:`.
 
-### One divergence worth knowing
+Not implemented: secrets, `actions/cache` and the cache service, `hashFiles()`, and a token for the run (so an action that calls a forge API gets no credential, and one that needs it will say so).
 
-hubbit checks the repository out into the workspace before the job starts. On GitHub the workspace begins empty and `actions/checkout` fills it. Pre-cloning is what makes `run:` steps useful before action support exists, and it means nothing changes under you when actions arrive, since `checkout` will then be a re-sync rather than the first clone. A workflow that deliberately wants an empty workspace will be surprised.
+### Actions hubbit implements itself
+
+A few actions are not ordinary programs: they are clients for services that exist only inside GitHub. Running them verbatim against a vault cannot work, so hubbit substitutes its own implementation of the same interface, chosen by the `uses:` string and applied at any nesting depth, including inside somebody else's composite action.
+
+| `uses:` | What hubbit does instead |
+| --- | --- |
+| `actions/checkout` | Reports the checkout the runner already made; does real work for another repository, ref, path, `fetch-depth: 0`, or submodules |
+| `actions/upload-artifact` | Tars the matched paths and stores them in the run's directory in the vault |
+| `actions/download-artifact` | Restores one, or all of the run's artifacts, into the workspace |
+| `actions/configure-pages` | Reports this vault's pages URL and base path, and exports `HUBBIT_PAGES_BASE_PATH` |
+| `actions/deploy-pages` | Publishes the `github-pages` artifact as the repository's pages site |
+
+Everything else runs unmodified, `actions/setup-node` and the rest included. Note that `actions/upload-pages-artifact` is *not* substituted: it is an ordinary composite action that tars a directory and calls `upload-artifact`, so the real one works as it is, on top of hubbit's `upload-artifact`.
+
+Substituting by name rather than implementing GitHub's artifact and Pages wire protocols is a deliberate trade: far less code, at the cost of following a handful of action interfaces as they change.
+
+### Artifacts
+
+`upload-artifact` stores a tar in the run's directory, `download-artifact` restores it in a later job of the same run, and the run page lists what was produced with a download link. Anonymous, like every other read in a vault. Artifacts are pruned with their run, and a job may not upload more than `ci.artifactMb` (500 MB by default).
+
+Artifacts are addressed by the job's lease, so only a job that is actually running can write one, and only into its own run.
+
+### Two divergences worth knowing
+
+hubbit checks the repository out into the workspace before the job starts. On GitHub the workspace begins empty and `actions/checkout` fills it, and hubbit's `checkout` is a re-sync of what is already there. A workflow that deliberately wants an empty workspace will be surprised.
+
+A pages site is served at `/<collection>/<repo>/pages/`, while GitHub serves one at `<owner>.github.io/<repo>/`. A site generator that reads `base_path` from `configure-pages` gets the right answer; one that computes its own from the repository name gets GitHub's shape and produces broken links. Pass the base path explicitly in that case, or have the generator emit relative URLs.
+
+### Running actions needs node in the container
+
+JavaScript actions need a node interpreter inside the job's container. If the image has one new enough, that one is used and nothing is downloaded, which is the usual case for CI images. Otherwise the runner downloads the official build once, caches it, and mounts it read-only into every container, so a bare `ubuntu:24.04` runs `actions/checkout` too. Those builds are linked against glibc, so a musl image (Alpine) needs node in the image; the runner says so rather than failing obscurely.
 
 ### Runners
 
@@ -313,6 +343,8 @@ hubbit runner run --labels ubuntu-latest --image ubuntu-latest=ghcr.io/me/ci:lat
 
 The runner long-polls for a job, so it needs no inbound connectivity and works behind NAT and through any ordinary HTTP proxy. It takes one job at a time, runs the whole job in a single container (steps `exec` into it, so what one step installs is there for the next), streams logs back as it goes, and reports the result. Ctrl-C finishes the current job and stops.
 
+Actions named by `uses:` are downloaded from `https://github.com` and cached under `~/.cache/hubbit`, which `--actions-url` and `--cache-dir` change. A cached action pinned to a commit sha is never re-fetched; one pinned to a tag or branch is re-fetched when the cached copy is a day old.
+
 `runs-on` labels map to images. The defaults cover `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, and `self-hosted` with the [`catthehacker`](https://github.com/catthehacker/docker_images) images that `act` also uses; `--image <label>=<image>` overrides any of them, and an unmapped label that looks like an image name (`runs-on: node:24`) is used as one. Note that the images decide what your workflows can assume: a bare `ubuntu:24.04` has no node, no python, and no compilers.
 
 If the runner dies mid-job, the server notices the lease expire and requeues the job; after three attempts it fails it with a message naming the runner, rather than retrying forever.
@@ -332,10 +364,10 @@ Run state is files, like everything else:
 Runs are the one part of a vault that grows without bound, so they are pruned. The default keeps the last 100 completed runs per repository; `config.json` tunes it:
 
 ```json
-{ "theme": "paper", "ci": { "runs": 100, "days": 30 } }
+{ "theme": "paper", "ci": { "runs": 100, "days": 30, "artifactMb": 500 } }
 ```
 
-`days` of `0` disables the age rule. Active runs are never pruned.
+`days` of `0` disables the age rule. Active runs are never pruned. `artifactMb` caps a single artifact upload.
 
 ## Git LFS
 
@@ -455,9 +487,9 @@ Backing up a vault is copying a directory. Moving it to another host, or from yo
 
 The project direction is specified in [SPEC.md](SPEC.md). The phase described there as "a web interface that performs operations" is implemented; nearer-term items now are:
 
-- Workflow steps that `use:` an action: JS and composite actions resolved from github.com, with hubbit-native overrides for the handful that talk to GitHub-only services (`checkout`, the artifact actions, `cache`, and the Pages trio)
-- Artifacts, and deploying one to `<repo>.pages` so a workflow can publish a site
-- Secrets, and a scoped token for the run so a workflow can push back
+- Secrets, and a scoped token for the run, so a workflow can push back to its own repository and call the vault's API
+- `actions/cache`, so dependency installs stop being repeated on every run
+- Docker actions, `container:` jobs, and service containers
 - Issues and pull requests, stored in the vault (design in SPEC.md, undecided between sibling directories and in-repo refs)
 - JSON responses on the read routes via content negotiation, and UI operations mirrored into the API
 - Federation between vaults: forking and cross-vault pull requests

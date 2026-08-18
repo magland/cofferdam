@@ -1,6 +1,7 @@
-import { esc, formatDate } from '../render';
+import { esc, formatDate, formatSize } from '../render';
 import { Viewer } from '../session';
 import { RepoCtx, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from '../views';
+import { ArtifactInfo } from './artifacts';
 import { DispatchableWorkflow } from './engine';
 import { JobRecord, RunRecord, StepState } from './runs';
 
@@ -227,7 +228,8 @@ export function runPage(
   jobs: JobRecord[],
   selected: JobRecord | null,
   logLines: { s: number; l: string }[],
-  logOffset: number
+  logOffset: number,
+  artifacts: ArtifactInfo[] = []
 ): string {
   const base = repoUrl(ctx);
   const actionsBase = `${base}/actions`;
@@ -313,6 +315,17 @@ ${summaryBox}`;
     ? `<form method="post" action="${runBase}/rerun">${csrfField(viewer!)}<button type="submit" class="btn">Re-run</button></form>`
     : '';
 
+  const artifactBox = artifacts.length
+    ? `<div class="box artifacts"><div class="box-header">Artifacts</div><div class="box-body">${artifacts
+        .map(
+          (a) =>
+            `<a class="artifact" href="${runBase}/artifacts/${encodeURIComponent(a.name)}"><b>${esc(
+              a.name
+            )}</b><span class="muted small">${esc(formatSize(a.size))}</span></a>`
+        )
+        .join('')}<p class="muted small">Artifacts are tar archives, and are removed when the run is pruned.</p></div></div>`
+    : '';
+
   const content = `${repoHeader(ctx, 'actions')}
 <div class="run-head">
   <div class="run-title">${statusIcon(s)}<h2>${esc(runTitle(run))}</h2></div>
@@ -330,7 +343,8 @@ ${summaryBox}`;
 <div class="run-body">
   <div class="job-list">${jobList}</div>
   <div class="job-detail">${detail}</div>
-</div>`;
+</div>
+${artifactBox}`;
   return layout(`${runTitle(run)} - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, runBase));
 }
 

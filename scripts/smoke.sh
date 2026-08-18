@@ -873,16 +873,6 @@ jobs:
     runs-on: ubuntu-latest
 YML
 
-cat > "$CI_REPO/.github/workflows/usesaction.yml" <<'YML'
-name: Uses an action
-on: workflow_dispatch
-jobs:
-  act:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-YML
-
 echo "# ci" > "$CI_REPO/README.md"
 git -C "$CI_REPO" add -A
 git -C "$CI_REPO" -c user.email=ci@example.com -c user.name=ci commit -qm "Add workflows"
@@ -1073,27 +1063,244 @@ if command -v docker > /dev/null 2>&1 && docker version --format '{{.Server.Vers
   check "the run page defaults to the failed job" 200 "$BASE/demo/ci/actions/runs/$EXEC_RUN"
   body_has "matrix job name resolved" 'fan (2)'
 
-  # A step that uses an action must fail loudly rather than appear to pass.
-  check "actions page for the uses dispatch" 200 -b "$JAR" "$BASE/demo/ci/actions"
-  CSRF="$(csrf_of)"
-  check "dispatch the workflow with a uses: step" 302 -b "$JAR" "$BASE/demo/ci/actions/dispatch" \
-    --data-urlencode "csrf=$CSRF" --data-urlencode "workflow=.github/workflows/usesaction.yml" \
-    --data-urlencode ref=main
-  USES_RUN="$(runs_named 'Uses an action' | awk '{print $NF}')"
-  node dist/index.js runner run --host "$BASE" --runner-token "$RUNNER_TOKEN" \
-    --image "ubuntu-latest=$CI_IMAGE" >> "$TMP/runner.log" 2>&1 &
-  RUNNER_PID=$!
-  for _ in $(seq 1 90); do
-    [ "$(run_field "$RUNS/$USES_RUN/run.json" status)" = "completed" ] && break
+
+  # ---- actions: local JavaScript and composite actions ----
+  #
+  # Local actions keep these checks offline. Resolving an action from a forge
+  # is exercised separately, and skipped when there is no network.
+
+  mkdir -p "$CI_REPO/.github/actions/js-hello" "$CI_REPO/.github/actions/greet"
+  cat > "$CI_REPO/.github/actions/js-hello/action.yml" <<'YML'
+name: JS hello
+description: A JavaScript action
+inputs:
+  who:
+    description: Who to greet
+    required: true
+runs:
+  using: node20
+  main: index.js
+  post: cleanup.js
+YML
+  cat > "$CI_REPO/.github/actions/js-hello/index.js" <<'JS'
+const fs = require('fs');
+console.log(`hello ${process.env.INPUT_WHO} from node ${process.version}`);
+console.log(`action path is ${process.env.GITHUB_ACTION_PATH}`);
+fs.appendFileSync(process.env.GITHUB_OUTPUT, `message=hello ${process.env.INPUT_WHO}\n`);
+fs.appendFileSync(process.env.GITHUB_ENV, `FROM_JS=set-by-the-js-action\n`);
+JS
+  cat > "$CI_REPO/.github/actions/js-hello/cleanup.js" <<'JS'
+console.log('the js action post step ran');
+JS
+  cat > "$CI_REPO/.github/actions/greet/action.yml" <<'YML'
+name: Greet
+description: A composite action
+inputs:
+  who:
+    description: Who to greet
+    default: nobody
+outputs:
+  greeting:
+    description: What was said
+    value: ${{ steps.say.outputs.text }}
+runs:
+  using: composite
+  steps:
+    - id: say
+      shell: bash
+      run: |
+        echo "composite greeting ${{ inputs.who }}"
+        echo "text=hello ${{ inputs.who }}" >> "$GITHUB_OUTPUT"
+    - shell: bash
+      run: test -f "$GITHUB_ACTION_PATH/action.yml" && echo "action path is right"
+    - uses: ./.github/actions/js-hello
+      with:
+        who: nested
+YML
+  cat > "$CI_REPO/.github/workflows/actions.yml" <<'YML'
+name: Actions
+on: workflow_dispatch
+jobs:
+  act:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: js
+        uses: ./.github/actions/js-hello
+        with:
+          who: world
+      - run: |
+          echo "js said '${{ steps.js.outputs.message }}'"
+          echo "FROM_JS=$FROM_JS"
+      - id: comp
+        uses: ./.github/actions/greet
+        with:
+          who: everyone
+      - run: echo "composite output '${{ steps.comp.outputs.greeting }}'"
+      - uses: ./.github/actions/nonexistent
+        continue-on-error: true
+      - run: echo "continued past a missing action"
+YML
+
+  # ---- artifacts and pages ----
+  cat > "$CI_REPO/.github/workflows/pages.yml" <<'YML'
+name: Pages
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          mkdir -p _site/css
+          echo "<h1>built by a workflow</h1>" > _site/index.html
+          echo "body{}" > _site/css/style.css
+      - uses: actions/configure-pages@v5
+      - run: echo "base path is $HUBBIT_PAGES_BASE_PATH"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: _site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: incoming
+      - run: test -f incoming/index.html && test -f incoming/css/style.css && echo "the artifact round-tripped"
+YML
+
+  git -C "$CI_REPO" add -A
+  git -C "$CI_REPO" -c user.email=ci@example.com -c user.name=ci commit -qm "Add action and artifact workflows"
+  git -C "$CI_REPO" push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/demo/ci" main
+  sleep 1
+
+  # Dispatch a workflow, run it to completion with one runner, and leave the
+  # run number in RUN_N. It cannot return the number on stdout, since the
+  # checks it performs print there too.
+  run_workflow() {
+    local wf="$1" name="$2"
+    check "actions page before dispatching $wf" 200 -b "$JAR" "$BASE/demo/ci/actions"
+    CSRF="$(csrf_of)"
+    check "dispatch $wf" 302 -b "$JAR" "$BASE/demo/ci/actions/dispatch" \
+      --data-urlencode "csrf=$CSRF" --data-urlencode "workflow=.github/workflows/$wf" \
+      --data-urlencode ref=main
+    RUN_N="$(runs_named "$name" | awk '{print $NF}')"
+    [ -n "$RUN_N" ] || { echo "FAIL: dispatching $wf planned no run"; exit 1; }
+    node dist/index.js runner run --host "$BASE" --runner-token "$RUNNER_TOKEN" \
+      --image "ubuntu-latest=$CI_IMAGE" --cache-dir "$TMP/runner-cache" >> "$TMP/runner.log" 2>&1 &
+    RUNNER_PID=$!
+    local i
+    for i in $(seq 1 240); do
+      [ "$(run_field "$RUNS/$RUN_N/run.json" status)" = "completed" ] && break
+      sleep 1
+    done
+    kill "$RUNNER_PID" 2>/dev/null || true
+    wait "$RUNNER_PID" 2>/dev/null || true
+    [ "$(run_field "$RUNS/$RUN_N/run.json" status)" = "completed" ] || {
+      echo "FAIL: run #$RUN_N ($name) never completed"; tail -40 "$TMP/runner.log"; exit 1; }
+  }
+
+  run_workflow actions.yml Actions
+  ACT_RUN="$RUN_N"
+  ACT_LOG="$RUNS/$ACT_RUN/jobs/act.log"
+  grep -q "already checked out" "$ACT_LOG" || {
+    echo "FAIL: actions/checkout was not substituted"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: actions/checkout is substituted by hubbit's own"
+  grep -q "hello world from node v20" "$ACT_LOG" || {
+    echo "FAIL: the JavaScript action did not run on node 20"; cat "$ACT_LOG"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: a JavaScript action runs, on the node version it asks for"
+  grep -q "js said 'hello world'" "$ACT_LOG" || {
+    echo "FAIL: the action's GITHUB_OUTPUT did not reach a later step"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: an action's outputs reach a later step"
+  grep -q "FROM_JS=set-by-the-js-action" "$ACT_LOG" || {
+    echo "FAIL: the action's GITHUB_ENV did not reach a later step"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: an action's GITHUB_ENV reaches a later step"
+  grep -q "composite greeting everyone" "$ACT_LOG" || {
+    echo "FAIL: the composite action's steps did not run"; exit 1; }
+  grep -q "action path is right" "$ACT_LOG" || {
+    echo "FAIL: GITHUB_ACTION_PATH was wrong inside a composite action"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: a composite action runs with its inputs and its own directory"
+  grep -q "hello nested from node" "$ACT_LOG" || {
+    echo "FAIL: an action nested inside a composite action did not run"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: an action nested inside a composite action runs"
+  grep -q "composite output 'hello everyone'" "$ACT_LOG" || {
+    echo "FAIL: the composite action's outputs did not resolve"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: a composite action's outputs resolve for the caller"
+  grep -q "the js action post step ran" "$ACT_LOG" || {
+    echo "FAIL: the action's post step did not run"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: an action's post step runs after the job's steps"
+  grep -q "continued past a missing action" "$ACT_LOG" || {
+    echo "FAIL: continue-on-error did not apply to a failing action step"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: a missing action fails its step, and continue-on-error still applies"
+  [ "$(job_field "$RUNS/$ACT_RUN/jobs/act.json" conclusion)" = "success" ] || {
+    echo "FAIL: the actions job did not succeed"; cat "$ACT_LOG"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: the whole actions job succeeds"
+
+  run_workflow pages.yml Pages
+  PAGES_RUN="$RUN_N"
+  [ -f "$RUNS/$PAGES_RUN/artifacts/site.tar" ] || {
+    echo "FAIL: the artifact was not stored in the run directory"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: upload-artifact stores an artifact in the vault"
+  grep -q "the artifact round-tripped" "$RUNS/$PAGES_RUN/jobs/deploy.log" || {
+    echo "FAIL: download-artifact did not restore the files"
+    cat "$RUNS/$PAGES_RUN/jobs/deploy.log"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: download-artifact restores an artifact in a later job"
+  grep -q "base path is /demo/ci/pages" "$RUNS/$PAGES_RUN/jobs/build.log" || {
+    echo "FAIL: configure-pages reported the wrong base path"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: configure-pages reports the vault's own pages path"
+  check "the artifact is listed on the run page" 200 "$BASE/demo/ci/actions/runs/$PAGES_RUN"
+  body_has "artifact name shown" 'site'
+  check "the artifact downloads" 200 "$BASE/demo/ci/actions/runs/$PAGES_RUN/artifacts/site"
+  check "an unknown artifact is 404" 404 "$BASE/demo/ci/actions/runs/$PAGES_RUN/artifacts/nosuch"
+
+  # Deploying to pages needs the real upload-pages-artifact action, which is
+  # fetched from a forge; skip when there is no network rather than failing.
+  if curl -sS --max-time 10 -o /dev/null "https://github.com" 2>/dev/null; then
+    cat > "$CI_REPO/.github/workflows/deploy.yml" <<'YML'
+name: Deploy
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          mkdir -p _site
+          echo "<h1>deployed by a workflow</h1>" > _site/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+      - run: echo "page url is ${{ steps.deployment.outputs.page_url }}"
+YML
+    git -C "$CI_REPO" add -A
+    git -C "$CI_REPO" -c user.email=ci@example.com -c user.name=ci commit -qm "Add a pages deployment workflow"
+    git -C "$CI_REPO" push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/demo/ci" main
     sleep 1
-  done
-  kill "$RUNNER_PID" 2>/dev/null || true
-  wait "$RUNNER_PID" 2>/dev/null || true
-  [ "$(job_field "$RUNS/$USES_RUN/jobs/act.json" conclusion)" = "failure" ] || {
-    echo "FAIL: a uses: step did not fail the job"; exit 1; }
-  grep -q 'not supported yet' "$RUNS/$USES_RUN/jobs/act.log" || {
-    echo "FAIL: a uses: step failed without saying why"; exit 1; }
-  PASS=$((PASS+1)); echo "ok: a uses: step fails with a clear message rather than passing silently"
+    run_workflow deploy.yml Deploy
+    DEPLOY_RUN="$RUN_N"
+    [ "$(run_field "$RUNS/$DEPLOY_RUN/run.json" conclusion)" = "success" ] || {
+      echo "FAIL: the pages deployment run did not succeed"
+      cat "$RUNS/$DEPLOY_RUN/jobs/build.log" "$RUNS/$DEPLOY_RUN/jobs/deploy.log"; exit 1; }
+    PASS=$((PASS+1)); echo "ok: a real upload-pages-artifact and deploy-pages run to completion"
+    [ -f "$VAULT/demo/ci.pages/index.html" ] || {
+      echo "FAIL: the site was not written to the pages directory"; exit 1; }
+    PASS=$((PASS+1)); echo "ok: deploy-pages published the artifact as the repository's site"
+    check "the deployed site is served" 200 "$BASE/demo/ci/pages/"
+    body_has "the deployed content" 'deployed by a workflow'
+    check "a remote action was fetched and cached" 200 "$BASE/demo/ci/actions/runs/$DEPLOY_RUN"
+    [ -d "$TMP/runner-cache/actions" ] || { echo "FAIL: no action cache was written"; exit 1; }
+    PASS=$((PASS+1)); echo "ok: actions fetched from a forge are cached on the runner"
+  else
+    echo "skip: no network; skipping the checks that fetch actions from a forge"
+  fi
+
 else
   echo "skip: docker is not available; skipping the job-execution checks"
 fi

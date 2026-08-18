@@ -1,11 +1,13 @@
 import express, { Express, Request, Response } from 'express';
 import * as fs from 'fs';
+import * as path from 'path';
 import { isValidRefName } from '../git';
 import { findRepo, isValidName } from '../scan';
 import { Viewer, checkCsrf, getViewer, viewerIsAdmin } from '../session';
 import { canAdmin } from '../vault';
 import * as forms from '../forms';
 import { ah, loadRepo, makeCtx, send404 } from '../web';
+import { artifactPath, isValidArtifactName, listArtifacts } from './artifacts';
 import { CiEngine, listWorkflowsAt } from './engine';
 import { JobRecord, RunRecord, jobLogPath, listRuns } from './runs';
 import { loadRunners, registerRunner, removeRunner } from './runners';
@@ -183,7 +185,36 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
         lines = r.lines;
         offset = r.offset;
       }
-      res.type('html').send(ciViews.runPage(ctx, run, jobs, selected, lines, offset));
+      const artifacts = listArtifacts(root, repo.collection, repo.name, run.number);
+      res.type('html').send(ciViews.runPage(ctx, run, jobs, selected, lines, offset, artifacts));
+    })
+  );
+
+  // Artifact download. Anonymous, like every other read in a vault: a
+  // repository's build output is as public as its source.
+  app.get(
+    '/:collection/:repo/actions/runs/:run/artifacts/:name',
+    ah(async (req, res) => {
+      const viewer = getViewer(req, root);
+      const repo = findRepo(root, req.params.collection, req.params.repo);
+      if (!repo) {
+        send404(res, 'Repository not found', viewer);
+        return;
+      }
+      const n = parseInt(req.params.run, 10);
+      if (!Number.isInteger(n) || n <= 0 || !isValidArtifactName(req.params.name)) {
+        send404(res, 'No such artifact', viewer);
+        return;
+      }
+      const file = artifactPath(root, repo.collection, repo.name, n, req.params.name);
+      if (!file || !fs.existsSync(file)) {
+        send404(res, `No artifact named ${req.params.name} in run #${n}`, viewer);
+        return;
+      }
+      res
+        .type('application/x-tar')
+        .set('Content-Disposition', `attachment; filename="${req.params.name}.tar"`)
+        .sendFile(path.resolve(file));
     })
   );
 

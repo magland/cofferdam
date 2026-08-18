@@ -1,7 +1,10 @@
 import express, { Express, Request, Response } from 'express';
+import * as fs from 'fs';
+import * as path from 'path';
 import { isValidName } from '../scan';
 import { AuthResult, authenticateToken, canAdmin, loadVault } from '../vault';
 import { baseUrlOf } from '../web';
+import { ArtifactError, artifactPath, artifactsDir, deployPages, isValidArtifactName, listArtifacts } from './artifacts';
 import { CiEngine } from './engine';
 import { LogLine } from './protocol';
 import { Conclusion, StepState } from './runs';
@@ -296,6 +299,139 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine): voi
       return;
     }
     res.json({ ok: true });
+  });
+
+  // ---- artifacts ----
+  //
+  // A job uploads under a name and a later job in the same run downloads by
+  // that name. Authorization is the job's lease, so an artifact can only be
+  // written by a job that is actually running, and only into its own run.
+
+  app.put('/api/runner/jobs/:collection/:repo/:run/:job/artifacts/:name', (req, res) => {
+    const auth = requireRunner(req, res);
+    if (!auth) return;
+    const a = addressOf(req);
+    if (!a) {
+      apiError(res, 400, 'invalid job address');
+      return;
+    }
+    const name = req.params.name;
+    if (!isValidArtifactName(name)) {
+      apiError(res, 400, 'invalid artifact name');
+      return;
+    }
+    if (!engine.heartbeat(a.collection, a.repo, a.run, a.job, leaseOf(req))) {
+      apiError(res, 409, 'the lease on this job is no longer valid');
+      return;
+    }
+    const dir = artifactsDir(root, a.collection, a.repo, a.run);
+    const file = artifactPath(root, a.collection, a.repo, a.run, name);
+    if (!dir || !file) {
+      apiError(res, 400, 'invalid artifact target');
+      return;
+    }
+    const limit = engine.artifactLimitBytes();
+    fs.mkdirSync(dir, { recursive: true });
+    const tmp = `${file}.tmp-${process.pid}`;
+    const out = fs.createWriteStream(tmp);
+    let written = 0;
+    let failed = false;
+    const abort = (status: number, message: string) => {
+      if (failed) return;
+      failed = true;
+      out.destroy();
+      fs.rmSync(tmp, { force: true });
+      req.unpipe(out);
+      req.resume();
+      apiError(res, status, message);
+    };
+    req.on('data', (chunk: Buffer) => {
+      written += chunk.length;
+      if (written > limit) {
+        abort(413, `artifact ${name} exceeds the ${Math.round(limit / (1024 * 1024))} MB limit for this vault`);
+      }
+    });
+    req.on('error', () => abort(400, 'the upload was interrupted'));
+    out.on('error', () => abort(500, 'could not store the artifact'));
+    out.on('finish', () => {
+      if (failed) return;
+      try {
+        fs.renameSync(tmp, file);
+      } catch {
+        apiError(res, 500, 'could not store the artifact');
+        return;
+      }
+      res.json({ name, size: written });
+    });
+    req.pipe(out);
+  });
+
+  app.get('/api/runner/jobs/:collection/:repo/:run/:job/artifacts/:name', (req, res) => {
+    const auth = requireRunner(req, res);
+    if (!auth) return;
+    const a = addressOf(req);
+    if (!a) {
+      apiError(res, 400, 'invalid job address');
+      return;
+    }
+    if (!engine.heartbeat(a.collection, a.repo, a.run, a.job, leaseOf(req))) {
+      apiError(res, 409, 'the lease on this job is no longer valid');
+      return;
+    }
+    const file = artifactPath(root, a.collection, a.repo, a.run, req.params.name);
+    if (!file || !fs.existsSync(file)) {
+      apiError(res, 404, `no artifact named ${req.params.name} in this run`);
+      return;
+    }
+    res.type('application/x-tar').sendFile(path.resolve(file));
+  });
+
+  app.get('/api/runner/jobs/:collection/:repo/:run/:job/artifacts', (req, res) => {
+    const auth = requireRunner(req, res);
+    if (!auth) return;
+    const a = addressOf(req);
+    if (!a) {
+      apiError(res, 400, 'invalid job address');
+      return;
+    }
+    if (!engine.heartbeat(a.collection, a.repo, a.run, a.job, leaseOf(req))) {
+      apiError(res, 409, 'the lease on this job is no longer valid');
+      return;
+    }
+    res.json({ artifacts: listArtifacts(root, a.collection, a.repo, a.run) });
+  });
+
+  // Publishing an artifact as the repository's pages site. The extraction
+  // happens here rather than on the runner because the pages directory is
+  // vault state; artifacts.ts treats the archive as untrusted.
+  app.post('/api/runner/jobs/:collection/:repo/:run/:job/pages', json, async (req, res) => {
+    const auth = requireRunner(req, res);
+    if (!auth) return;
+    const a = addressOf(req);
+    if (!a) {
+      apiError(res, 400, 'invalid job address');
+      return;
+    }
+    if (!engine.heartbeat(a.collection, a.repo, a.run, a.job, leaseOf(req))) {
+      apiError(res, 409, 'the lease on this job is no longer valid');
+      return;
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const name = typeof body.artifact === 'string' ? body.artifact : 'github-pages';
+    if (!isValidArtifactName(name)) {
+      apiError(res, 400, 'invalid artifact name');
+      return;
+    }
+    try {
+      const result = await deployPages(root, a.collection, a.repo, a.run, name);
+      res.json({
+        deployed: true,
+        files: result.files,
+        url: `${baseUrlOf(req)}/${encodeURIComponent(a.collection)}/${encodeURIComponent(a.repo)}/pages/`,
+      });
+    } catch (e) {
+      apiError(res, e instanceof ArtifactError ? 400 : 500, e instanceof Error ? e.message : String(e));
+    }
   });
 
   // Runner-side liveness check, so `hubbit runner run` can fail fast with a

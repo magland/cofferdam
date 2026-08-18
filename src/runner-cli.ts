@@ -14,6 +14,8 @@ interface RunnerArgs {
   images: Record<string, string>;
   workDir: string | null;
   network: string | null;
+  cacheDir: string | null;
+  actionsUrl: string | null;
   save: boolean;
 }
 
@@ -28,6 +30,8 @@ function parseArgs(args: string[], usage: () => never): RunnerArgs {
     images: {},
     workDir: null,
     network: null,
+    cacheDir: null,
+    actionsUrl: null,
     save: false,
   };
   const list = (v: string): string[] => v.split(/[\s,]+/).filter((s) => s.length > 0);
@@ -40,6 +44,8 @@ function parseArgs(args: string[], usage: () => never): RunnerArgs {
     else if (a === '--labels' || a === '--label') out.labels.push(...list(args[++i] ?? ''));
     else if (a === '--allow') out.allow.push(...list(args[++i] ?? ''));
     else if (a === '--work-dir') out.workDir = args[++i];
+    else if (a === '--cache-dir') out.cacheDir = args[++i];
+    else if (a === '--actions-url') out.actionsUrl = args[++i];
     else if (a === '--network') out.network = args[++i];
     else if (a === '--save') out.save = true;
     else if (a === '--image') {
@@ -206,6 +212,8 @@ export async function runnerRunCmd(args: string[], usage: () => never): Promise<
     images: { ...DEFAULT_IMAGES, ...(saved?.images ?? {}), ...a.images },
     workDir: a.workDir ?? saved?.workDir,
     network: a.network ?? saved?.network,
+    cacheDir: a.cacheDir ?? saved?.cacheDir,
+    actionsUrl: a.actionsUrl ?? saved?.actionsUrl,
   };
   if (a.save) {
     saveRunnerConfig(config);

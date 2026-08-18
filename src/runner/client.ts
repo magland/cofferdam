@@ -3,7 +3,9 @@ import * as os from 'os';
 import * as path from 'path';
 import { JobSpec } from '../ci/protocol';
 import { StepState } from '../ci/runs';
+import { ActionStore, defaultActionCacheDir } from './actions';
 import { dockerAvailable } from './docker';
+import { Externals, defaultExternalsDir } from './externals';
 import { JobResult, defaultWorkDir, runJob } from './job';
 
 // `hubbit runner run`: acquire a job, execute it, report back, repeat. The
@@ -18,6 +20,10 @@ export interface RunnerConfig {
   images?: Record<string, string>;
   workDir?: string;
   network?: string;
+  /** Where `uses:` actions are downloaded from. */
+  actionsUrl?: string;
+  /** Where downloaded actions and node builds are cached. */
+  cacheDir?: string;
 }
 
 export const DEFAULT_IMAGES: Record<string, string> = {
@@ -169,6 +175,8 @@ export class Runner {
   private workDir: string;
   private network?: string;
   private stopping = false;
+  private actions: ActionStore;
+  private externals: Externals;
 
   constructor(config: RunnerConfig) {
     this.host = config.host.replace(/\/+$/, '');
@@ -177,6 +185,10 @@ export class Runner {
     this.images = { ...DEFAULT_IMAGES, ...(config.images ?? {}) };
     this.workDir = config.workDir ?? defaultWorkDir();
     this.network = config.network;
+    const actionCache = config.cacheDir ? path.join(config.cacheDir, 'actions') : defaultActionCacheDir();
+    const externalsCache = config.cacheDir ? path.join(config.cacheDir, 'externals') : defaultExternalsDir();
+    this.actions = new ActionStore(actionCache, config.actionsUrl);
+    this.externals = new Externals(externalsCache);
   }
 
   imageFor(labels: string[]): string {
@@ -277,6 +289,10 @@ export class Runner {
           cloneUrl: (c, r) => this.cloneUrl(c, r),
           workDir: this.workDir,
           network: this.network,
+          actions: this.actions,
+          externals: this.externals,
+          serverUrl: this.host,
+          runnerToken: this.token,
         },
         {
           log: (i, line) => client.log(i, line),

@@ -180,6 +180,8 @@ export function expandMatrix(matrix: unknown): Combo[] | null {
 export interface CiRetention {
   runs: number;
   days: number;
+  /** Largest artifact a job may upload, in megabytes. */
+  artifactMb: number;
 }
 
 export class CiEngine {
@@ -188,7 +190,7 @@ export class CiEngine {
   private retention: () => CiRetention;
 
   constructor(private root: string, retention?: () => CiRetention) {
-    this.retention = retention ?? (() => ({ runs: 200, days: 0 }));
+    this.retention = retention ?? (() => ({ runs: 200, days: 0, artifactMb: 500 }));
     this.emitter.setMaxListeners(100);
     this.loadActiveRuns();
     const t = setInterval(() => this.sweepLeases(), 30 * 1000);
@@ -1048,6 +1050,11 @@ export class CiEngine {
         }
       }
     }
+  }
+
+  artifactLimitBytes(): number {
+    const mb = this.retention().artifactMb;
+    return Math.max(1, mb) * 1024 * 1024;
   }
 
   // Called when a repository is deleted: drop its runs from the live index so

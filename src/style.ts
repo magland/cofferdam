@@ -313,4 +313,10 @@ textarea.code-editor {
   .run-body { flex-direction: column; }
   .job-list { flex: 1 1 auto; width: 100%; }
 }
+
+.artifacts { margin-top: 20px; max-width: 620px; }
+.artifacts .box-body { display: flex; flex-direction: column; gap: 6px; }
+.artifacts a.artifact { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--fg); }
+.artifacts a.artifact:hover { background: var(--surface); text-decoration: none; }
+.artifacts p { margin: 4px 0 0; }
 `;
