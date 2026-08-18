@@ -1,9 +1,9 @@
 {
-  "name": "repos",
+  "name": "doqpod",
   "version": "0.2.0",
-  "description": "A filesystem-backed alternative to GitHub/GitLab: point a web server at a directory of orgs and bare git repos.",
+  "description": "A filesystem-backed alternative to GitHub/GitLab: point a web server at a directory of collections and bare git repositories.",
   "bin": {
-    "repos": "dist/index.js"
+    "doqpod": "dist/index.js"
   },
   "main": "dist/index.js",
   "scripts": {

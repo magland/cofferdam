@@ -4,7 +4,7 @@ import { Viewer, viewerIsAdmin } from './session';
 import { activeTheme } from './themes';
 
 export interface RepoCtx {
-  org: string;
+  collection: string;
   repo: string;
   ref: string;
   refIsBranch: boolean;
@@ -32,8 +32,8 @@ export function encPath(p: string): string {
     .join('/');
 }
 
-export function repoUrl(ctx: { org: string; repo: string }): string {
-  return `/${encodeURIComponent(ctx.org)}/${encodeURIComponent(ctx.repo)}`;
+export function repoUrl(ctx: { collection: string; repo: string }): string {
+  return `/${encodeURIComponent(ctx.collection)}/${encodeURIComponent(ctx.repo)}`;
 }
 
 export function csrfField(viewer: Viewer): string {
@@ -72,7 +72,7 @@ export function layout(title: string, content: string, opts: PageOpts = {}): str
 <link rel="stylesheet" href="/assets/katex/katex.css">
 </head>
 <body>
-<header class="topbar"><div class="container"><a class="brand" href="/">repos</a><span class="crumbs">${
+<header class="topbar"><div class="container"><a class="brand" href="/">doqpod</a><span class="crumbs">${
     opts.crumbs ?? ''
   }</span><div class="userbox">${userBox(opts)}</div></div></header>
 <main class="container">
@@ -130,7 +130,7 @@ export function repoHeader(
     `<a class="tab${active === id ? ' active' : ''}" href="${href}">${label}${
       count !== undefined ? `<span class="counter">${count}</span>` : ''
     }</a>`;
-  return `<div class="repo-title"><a href="/${encodeURIComponent(ctx.org)}">${esc(ctx.org)}</a> / <a href="${base}"><b>${esc(
+  return `<div class="repo-title"><a href="/${encodeURIComponent(ctx.collection)}">${esc(ctx.collection)}</a> / <a href="${base}"><b>${esc(
     ctx.repo
   )}</b></a></div>
 <nav class="tabs">
@@ -162,10 +162,10 @@ function breadcrumb(ctx: RepoCtx, path: string): string {
 
 export function homePage(
   rootLabel: string,
-  orgs: { name: string; repoCount: number }[],
+  collections: { name: string; repoCount: number }[],
   viewer: Viewer | null
 ): string {
-  const rows = orgs
+  const rows = collections
     .map(
       (o) =>
         `<tr><td>${FOLDER_ICON}<a href="/${encodeURIComponent(o.name)}">${esc(o.name)}</a></td><td class="right muted">${
@@ -174,27 +174,27 @@ export function homePage(
     )
     .join('');
   const body =
-    orgs.length === 0
+    collections.length === 0
       ? `<div class="empty-state">No repositories yet.${
           viewer ? ' Create one with the button above, or push to a new path.' : ''
         }</div>`
       : `<table class="listing"><tbody>${rows}</tbody></table>`;
   const newBtn = viewer ? `<a class="btn btn-primary" href="/new">New repository</a>` : '';
-  const content = `<div class="page-head"><h1>Organizations</h1>${newBtn}</div>${body}<p class="muted small" style="margin-top:16px">Serving ${esc(
+  const content = `<div class="page-head"><h1>Collections</h1>${newBtn}</div>${body}<p class="muted small" style="margin-top:16px">Serving ${esc(
     rootLabel
   )}</p>`;
-  return layout('repos', content, { viewer, path: '/' });
+  return layout('doqpod', content, { viewer, path: '/' });
 }
 
-export function orgPage(
-  org: string,
-  repos: { name: string; description: string | null; updated: string | null }[],
+export function collectionPage(
+  collection: string,
+  repoList: { name: string; description: string | null; updated: string | null }[],
   viewer: Viewer | null
 ): string {
-  const rows = repos
+  const rows = repoList
     .map(
       (r) =>
-        `<tr><td>${FILE_ICON}<a href="/${encodeURIComponent(org)}/${encodeURIComponent(r.name)}"><b>${esc(
+        `<tr><td>${FILE_ICON}<a href="/${encodeURIComponent(collection)}/${encodeURIComponent(r.name)}"><b>${esc(
           r.name
         )}</b></a>${r.description ? `<div class="muted small">${esc(r.description)}</div>` : ''}</td><td class="right muted small">${
           r.updated ? `Updated ${esc(formatDate(r.updated))}` : ''
@@ -202,19 +202,19 @@ export function orgPage(
     )
     .join('');
   const body =
-    repos.length === 0
-      ? `<div class="empty-state">No repositories in this organization yet.</div>`
+    repoList.length === 0
+      ? `<div class="empty-state">No repositories in this collection yet.</div>`
       : `<table class="listing"><tbody>${rows}</tbody></table>`;
   const newBtn = viewer
-    ? `<a class="btn" href="/import?org=${encodeURIComponent(org)}">Import</a><a class="btn btn-primary" href="/new?org=${encodeURIComponent(
-        org
+    ? `<a class="btn" href="/import?collection=${encodeURIComponent(collection)}">Import</a><a class="btn btn-primary" href="/new?collection=${encodeURIComponent(
+        collection
       )}">New repository</a>`
     : '';
-  const content = `<div class="page-head"><h1>${esc(org)}</h1><span class="right-group">${newBtn}</span></div>${body}`;
-  return layout(org, content, {
-    crumbs: ` / <a href="/${encodeURIComponent(org)}">${esc(org)}</a>`,
+  const content = `<div class="page-head"><h1>${esc(collection)}</h1><span class="right-group">${newBtn}</span></div>${body}`;
+  return layout(collection, content, {
+    crumbs: ` / <a href="/${encodeURIComponent(collection)}">${esc(collection)}</a>`,
     viewer,
-    path: `/${encodeURIComponent(org)}`,
+    path: `/${encodeURIComponent(collection)}`,
   });
 }
 
@@ -286,7 +286,7 @@ ${latestBar}
 <table class="listing"><tbody>${rows.join('')}</tbody></table>
 ${readme}`;
   return layout(
-    `${ctx.org}/${ctx.repo}${path ? ` at ${path}` : ''}`,
+    `${ctx.collection}/${ctx.repo}${path ? ` at ${path}` : ''}`,
     content,
     repoOpts(ctx, path === '' ? repoUrl(ctx) : `${refBase}/${encPath(path)}`)
   );
@@ -344,7 +344,7 @@ export function blobPage(
   <div class="left">${refSelector(ctx, (ref) => `${base}/blob/${encPath(ref)}/${encPath(path)}`)}${breadcrumb(ctx, path)}</div>
 </div>
 ${body}`;
-  return layout(`${path} at ${ctx.ref} - ${ctx.org}/${ctx.repo}`, content, repoOpts(ctx, blobUrl));
+  return layout(`${path} at ${ctx.ref} - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, blobUrl));
 }
 
 export function commitsPage(
@@ -373,7 +373,7 @@ export function commitsPage(
 <div class="toolbar"><div class="left">${refSelector(ctx, (ref) => `${base}/commits/${encPath(ref)}`)}<span class="muted">${totalCount} commits</span></div></div>
 ${rows || '<div class="empty-state">No commits on this ref.</div>'}
 ${pager.length ? `<div class="pagination">${pager.join('')}</div>` : ''}`;
-  return layout(`Commits at ${ctx.ref} - ${ctx.org}/${ctx.repo}`, content, repoOpts(ctx, `${base}/commits/${encPath(ctx.ref)}`));
+  return layout(`Commits at ${ctx.ref} - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, `${base}/commits/${encPath(ctx.ref)}`));
 }
 
 export function commitPage(ctx: RepoCtx, detail: CommitDetail, diffHtml: string): string {
@@ -397,7 +397,7 @@ export function commitPage(ctx: RepoCtx, detail: CommitDetail, diffHtml: string)
   </div>
 </div>
 ${diffHtml}`;
-  return layout(`${subject} - ${ctx.org}/${ctx.repo}`, content, repoOpts(ctx, `${base}/commit/${detail.sha}`));
+  return layout(`${subject} - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, `${base}/commit/${detail.sha}`));
 }
 
 export function refListPage(ctx: RepoCtx, kind: 'branches' | 'tags'): string {
@@ -445,7 +445,7 @@ export function refListPage(ctx: RepoCtx, kind: 'branches' | 'tags'): string {
   const content = `${repoHeader(ctx, kind)}<div class="page-head"><h2>${
     kind === 'branches' ? 'Branches' : 'Tags'
   }</h2>${createForm}</div>${body}`;
-  return layout(`${kind} - ${ctx.org}/${ctx.repo}`, content, repoOpts(ctx, `${base}/${kind}`));
+  return layout(`${kind} - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, `${base}/${kind}`));
 }
 
 export function emptyRepoPage(ctx: RepoCtx): string {
@@ -463,7 +463,7 @@ ${copyRow(`git push ${ctx.cloneUrl} main`)}
   </div>
   <p class="small">Pushing requires a username and token.</p>
 </div>`;
-  return layout(`${ctx.org}/${ctx.repo}`, content, repoOpts(ctx, base));
+  return layout(`${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, base));
 }
 
 export function errorPage(status: number, message: string, opts: PageOpts & { backUrl?: string } = {}): string {

@@ -39,11 +39,11 @@ function parseBasicAuth(req: Request): { username: string; password: string } | 
 
 export function registerGitHttp(app: Express, root: string): void {
   function denyPush(res: Response, status: number, message: string) {
-    if (status === 401) res.setHeader('WWW-Authenticate', 'Basic realm="repos"');
+    if (status === 401) res.setHeader('WWW-Authenticate', 'Basic realm="doqpod"');
     res.status(status).type('text/plain').send(message + '\n');
   }
 
-  function requirePushAuth(req: Request, res: Response, org: string, repoName: string): AuthResult | null {
+  function requirePushAuth(req: Request, res: Response, collection: string, repoName: string): AuthResult | null {
     const state = loadVault(root);
     if (state.status === 'missing') {
       denyPush(res, 401, 'push denied: no vault.json in this vault; restart the server to initialize one');
@@ -63,8 +63,8 @@ export function registerGitHttp(app: Express, root: string): void {
       denyPush(res, 401, 'invalid username or token');
       return null;
     }
-    if (!canPush(auth, org, repoName)) {
-      denyPush(res, 403, `user ${creds.username} is not allowed to push to ${org}/${repoName}`);
+    if (!canPush(auth, collection, repoName)) {
+      denyPush(res, 403, `user ${creds.username} is not allowed to push to ${collection}/${repoName}`);
       return null;
     }
     return auth;
@@ -116,13 +116,13 @@ export function registerGitHttp(app: Express, root: string): void {
   }
 
   app.get(
-    '/:org/:repo/info/refs',
+    '/:collection/:repo/info/refs',
     ah(async (req, res) => {
       const service = req.query.service;
-      const orgName = req.params.org;
+      const collectionName = req.params.collection;
       const repoName = displayName(req.params.repo);
       if (service === 'git-upload-pack') {
-        const repo = findRepo(root, orgName, req.params.repo);
+        const repo = findRepo(root, collectionName, req.params.repo);
         if (!repo) {
           res.status(404).type('text/plain').send('repository not found\n');
           return;
@@ -131,14 +131,14 @@ export function registerGitHttp(app: Express, root: string): void {
         return;
       }
       if (service === 'git-receive-pack') {
-        if (!isValidName(orgName) || !isValidName(repoName)) {
+        if (!isValidName(collectionName) || !isValidName(repoName)) {
           res.status(404).type('text/plain').send('invalid repository name\n');
           return;
         }
-        const auth = requirePushAuth(req, res, orgName, repoName);
+        const auth = requirePushAuth(req, res, collectionName, repoName);
         if (!auth) return;
-        let repo = findRepo(root, orgName, req.params.repo);
-        if (!repo) repo = await createRepo(root, orgName, repoName);
+        let repo = findRepo(root, collectionName, req.params.repo);
+        if (!repo) repo = await createRepo(root, collectionName, repoName);
         advertise(req, res, 'git-receive-pack', repo.dir);
         return;
       }
@@ -146,8 +146,8 @@ export function registerGitHttp(app: Express, root: string): void {
     })
   );
 
-  app.post('/:org/:repo/git-upload-pack', (req, res) => {
-    const repo = findRepo(root, req.params.org, req.params.repo);
+  app.post('/:collection/:repo/git-upload-pack', (req, res) => {
+    const repo = findRepo(root, req.params.collection, req.params.repo);
     if (!repo) {
       res.status(404).type('text/plain').send('repository not found\n');
       return;
@@ -156,18 +156,18 @@ export function registerGitHttp(app: Express, root: string): void {
   });
 
   app.post(
-    '/:org/:repo/git-receive-pack',
+    '/:collection/:repo/git-receive-pack',
     ah(async (req, res) => {
-      const orgName = req.params.org;
+      const collectionName = req.params.collection;
       const repoName = displayName(req.params.repo);
-      if (!isValidName(orgName) || !isValidName(repoName)) {
+      if (!isValidName(collectionName) || !isValidName(repoName)) {
         res.status(404).type('text/plain').send('invalid repository name\n');
         return;
       }
-      const auth = requirePushAuth(req, res, orgName, repoName);
+      const auth = requirePushAuth(req, res, collectionName, repoName);
       if (!auth) return;
-      let repo = findRepo(root, orgName, req.params.repo);
-      if (!repo) repo = await createRepo(root, orgName, repoName);
+      let repo = findRepo(root, collectionName, req.params.repo);
+      if (!repo) repo = await createRepo(root, collectionName, repoName);
       const target = repo;
       runService(req, res, 'git-receive-pack', repo.dir, (code) => {
         if (code === 0) ensureHead(target).catch(() => {});

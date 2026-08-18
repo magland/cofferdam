@@ -5,7 +5,7 @@ import { GitRepo, isValidRefName, isValidRepoPath } from './git';
 import { isMarkdownFile, renderMarkdown } from './markdown';
 import { esc, highlightCode, isBinary } from './render';
 import { renderDiff } from './diff';
-import { displayName, isValidName, listOrgs, listRepoDirs, pagesDir, repoDescription } from './scan';
+import { displayName, isValidName, listCollections, listRepoDirs, pagesDir, repoDescription } from './scan';
 import { findRepo } from './scan';
 import { getViewer } from './session';
 import * as views from './views';
@@ -27,28 +27,28 @@ export const IMAGE_TYPES: Record<string, string> = {
 
 export function registerBrowse(app: Express, root: string): void {
   app.get('/', (req, res) => {
-    res.type('html').send(views.homePage(root, listOrgs(root), getViewer(req, root)));
+    res.type('html').send(views.homePage(root, listCollections(root), getViewer(req, root)));
   });
 
   app.get(
-    '/:org',
+    '/:collection',
     ah(async (req, res) => {
-      const org = req.params.org;
+      const collection = req.params.collection;
       const viewer = getViewer(req, root);
-      let orgIsDir = false;
+      let collectionIsDir = false;
       try {
-        orgIsDir = fs.statSync(path.join(root, org)).isDirectory();
+        collectionIsDir = fs.statSync(path.join(root, collection)).isDirectory();
       } catch {
-        orgIsDir = false;
+        collectionIsDir = false;
       }
-      if (!isValidName(org) || !orgIsDir) {
-        send404(res, `Organization ${org} not found`, viewer);
+      if (!isValidName(collection) || !collectionIsDir) {
+        send404(res, `Collection ${collection} not found`, viewer);
         return;
       }
-      const dirs = listRepoDirs(root, org);
-      const repos = await Promise.all(
+      const dirs = listRepoDirs(root, collection);
+      const repoList = await Promise.all(
         dirs.map(async (d) => {
-          const repo = new GitRepo(`${root}/${org}/${d}`, org, displayName(d));
+          const repo = new GitRepo(`${root}/${collection}/${d}`, collection, displayName(d));
           return {
             name: displayName(d),
             description: repoDescription(repo.dir),
@@ -56,7 +56,7 @@ export function registerBrowse(app: Express, root: string): void {
           };
         })
       );
-      res.type('html').send(views.orgPage(org, repos, viewer));
+      res.type('html').send(views.collectionPage(collection, repoList, viewer));
     })
   );
 
@@ -96,7 +96,7 @@ export function registerBrowse(app: Express, root: string): void {
   }
 
   app.get(
-    '/:org/:repo',
+    '/:collection/:repo',
     ah(async (req, res) => {
       const viewer = getViewer(req, root);
       const loaded = await loadRepo(root, req, res, viewer);
@@ -110,7 +110,7 @@ export function registerBrowse(app: Express, root: string): void {
   );
 
   app.get(
-    '/:org/:repo/tree/*',
+    '/:collection/:repo/tree/*',
     ah(async (req, res) => {
       const viewer = getViewer(req, root);
       const loaded = await loadRepo(root, req, res, viewer);
@@ -132,7 +132,7 @@ export function registerBrowse(app: Express, root: string): void {
   );
 
   app.get(
-    '/:org/:repo/blob/*',
+    '/:collection/:repo/blob/*',
     ah(async (req, res) => {
       const viewer = getViewer(req, root);
       const loaded = await loadRepo(root, req, res, viewer);
@@ -193,7 +193,7 @@ export function registerBrowse(app: Express, root: string): void {
   );
 
   app.get(
-    '/:org/:repo/raw/*',
+    '/:collection/:repo/raw/*',
     ah(async (req, res) => {
       const loaded = await loadRepo(root, req, res, null);
       if (!loaded) return;
@@ -224,12 +224,12 @@ export function registerBrowse(app: Express, root: string): void {
     })
   );
 
-  app.get('/:org/:repo/commits', (req, res) => {
-    res.redirect(`/${encodeURIComponent(req.params.org)}/${encodeURIComponent(req.params.repo)}`);
+  app.get('/:collection/:repo/commits', (req, res) => {
+    res.redirect(`/${encodeURIComponent(req.params.collection)}/${encodeURIComponent(req.params.repo)}`);
   });
 
   app.get(
-    '/:org/:repo/commits/*',
+    '/:collection/:repo/commits/*',
     ah(async (req, res) => {
       const viewer = getViewer(req, root);
       const loaded = await loadRepo(root, req, res, viewer);
@@ -256,7 +256,7 @@ export function registerBrowse(app: Express, root: string): void {
   );
 
   app.get(
-    '/:org/:repo/commit/:sha',
+    '/:collection/:repo/commit/:sha',
     ah(async (req, res) => {
       const viewer = getViewer(req, root);
       const loaded = await loadRepo(root, req, res, viewer);
@@ -278,7 +278,7 @@ export function registerBrowse(app: Express, root: string): void {
   );
 
   app.get(
-    '/:org/:repo/branches',
+    '/:collection/:repo/branches',
     ah(async (req, res) => {
       const viewer = getViewer(req, root);
       const loaded = await loadRepo(root, req, res, viewer);
@@ -289,7 +289,7 @@ export function registerBrowse(app: Express, root: string): void {
   );
 
   app.get(
-    '/:org/:repo/tags',
+    '/:collection/:repo/tags',
     ah(async (req, res) => {
       const viewer = getViewer(req, root);
       const loaded = await loadRepo(root, req, res, viewer);
@@ -300,18 +300,18 @@ export function registerBrowse(app: Express, root: string): void {
   );
 
   app.get(
-    '/:org/:repo/pages/*',
+    '/:collection/:repo/pages/*',
     ah(async (req, res) => {
-      const repo = findRepo(root, req.params.org, req.params.repo);
+      const repo = findRepo(root, req.params.collection, req.params.repo);
       if (!repo) {
-        send404(res, `Repository ${req.params.org}/${req.params.repo} not found`);
+        send404(res, `Repository ${req.params.collection}/${req.params.repo} not found`);
         return;
       }
-      const dir = pagesDir(root, repo.org, repo.name);
+      const dir = pagesDir(root, repo.collection, repo.name);
       if (!dir) {
         send404(
           res,
-          `No pages site for ${repo.org}/${repo.name}. Create a ${repo.name}.pages directory next to the repository, with an index.html at its root.`
+          `No pages site for ${repo.collection}/${repo.name}. Create a ${repo.name}.pages directory next to the repository, with an index.html at its root.`
         );
         return;
       }
@@ -354,9 +354,9 @@ export function registerBrowse(app: Express, root: string): void {
     })
   );
 
-  app.get('/:org/:repo/pages', (req, res) => {
+  app.get('/:collection/:repo/pages', (req, res) => {
     res.redirect(
-      `/${encodeURIComponent(req.params.org)}/${encodeURIComponent(displayName(req.params.repo))}/pages/`
+      `/${encodeURIComponent(req.params.collection)}/${encodeURIComponent(displayName(req.params.repo))}/pages/`
     );
   });
 }

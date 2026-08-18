@@ -36,9 +36,9 @@ export async function loadRepo(
   res: Response,
   viewer: Viewer | null
 ): Promise<LoadedRepo | null> {
-  const repo = findRepo(root, req.params.org, req.params.repo);
+  const repo = findRepo(root, req.params.collection, req.params.repo);
   if (!repo) {
-    send404(res, `Repository ${req.params.org}/${req.params.repo} not found`, viewer);
+    send404(res, `Repository ${req.params.collection}/${req.params.repo} not found`, viewer);
     return null;
   }
   const [branches, tags] = await Promise.all([repo.listRefs('heads'), repo.listRefs('tags')]);
@@ -59,11 +59,11 @@ export function makeCtx(
   ref: string,
   viewer: Viewer | null
 ): RepoCtx {
-  const cloneUrl = `${req.protocol}://${req.get('host')}/${encodeURIComponent(loaded.repo.org)}/${encodeURIComponent(
+  const cloneUrl = `${req.protocol}://${req.get('host')}/${encodeURIComponent(loaded.repo.collection)}/${encodeURIComponent(
     loaded.repo.name
   )}`;
   return {
-    org: loaded.repo.org,
+    collection: loaded.repo.collection,
     repo: loaded.repo.name,
     ref,
     refIsBranch: loaded.branches.some((b) => b.name === ref),
@@ -71,10 +71,10 @@ export function makeCtx(
     branches: loaded.branches,
     tags: loaded.tags,
     cloneUrl,
-    hasPages: pagesDir(root, loaded.repo.org, loaded.repo.name) !== null,
+    hasPages: pagesDir(root, loaded.repo.collection, loaded.repo.name) !== null,
     viewer,
-    canPush: viewer !== null && canPush(viewer.auth, loaded.repo.org, loaded.repo.name),
-    canAdmin: viewer !== null && canAdmin(viewer.auth, [`${loaded.repo.org}/${loaded.repo.name}`]),
+    canPush: viewer !== null && canPush(viewer.auth, loaded.repo.collection, loaded.repo.name),
+    canAdmin: viewer !== null && canAdmin(viewer.auth, [`${loaded.repo.collection}/${loaded.repo.name}`]),
   };
 }
 

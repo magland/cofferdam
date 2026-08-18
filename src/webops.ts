@@ -5,7 +5,7 @@ import { THEMES, findTheme, setActiveTheme } from './themes';
 import * as forms from './forms';
 import * as ops from './ops';
 import { OpError } from './ops';
-import { findRepo, isValidName, listOrgs, repoDescription } from './scan';
+import { findRepo, isValidName, listCollections, repoDescription } from './scan';
 import {
   Viewer,
   checkCsrf,
@@ -37,8 +37,8 @@ function parseSource(input: string): { url: string; name: string } | null {
   return name === '' ? null : { url, name };
 }
 
-function urlOf(repo: { org: string; name: string }): string {
-  return repoUrl({ org: repo.org, repo: repo.name });
+function urlOf(repo: { collection: string; name: string }): string {
+  return repoUrl({ collection: repo.collection, repo: repo.name });
 }
 
 // UI operations: every handler here re-derives the actor's abilities from
@@ -155,16 +155,16 @@ export function registerWebOps(app: Express, root: string): void {
   app.get('/import', (req, res) => {
     const viewer = requireViewerPage(req, res);
     if (!viewer) return;
-    const orgs = listOrgs(root).map((o) => o.name);
+    const collections = listCollections(root).map((o) => o.name);
     const src = typeof req.query.src === 'string' ? req.query.src.trim() : '';
-    const org = typeof req.query.org === 'string' ? req.query.org.trim() : '';
+    const collection = typeof req.query.collection === 'string' ? req.query.collection.trim() : '';
     const wanted = typeof req.query.name === 'string' ? req.query.name.trim() : '';
-    const preset = { src, org, name: wanted };
+    const preset = { src, collection, name: wanted };
     const fail = (status: number, error: string) => {
-      res.status(status).type('html').send(forms.importPage(viewer, orgs, preset, null, error));
+      res.status(status).type('html').send(forms.importPage(viewer, collections, preset, null, error));
     };
     if (src === '') {
-      res.type('html').send(forms.importPage(viewer, orgs, preset, null));
+      res.type('html').send(forms.importPage(viewer, collections, preset, null));
       return;
     }
     const source = parseSource(src);
@@ -173,16 +173,16 @@ export function registerWebOps(app: Express, root: string): void {
       return;
     }
     const name = wanted === '' ? source.name : wanted;
-    if (!isValidName(org) || !isValidName(name)) {
-      fail(400, 'Organization and repository names may use letters, digits, dot, underscore, and dash, and must not be reserved words.');
+    if (!isValidName(collection) || !isValidName(name)) {
+      fail(400, 'Collection and repository names may use letters, digits, dot, underscore, and dash, and must not be reserved words.');
       return;
     }
-    if (!canPush(viewer.auth, org, name)) {
-      fail(403, `Your push scope does not cover ${org}/${name}, so the push would be refused.`);
+    if (!canPush(viewer.auth, collection, name)) {
+      fail(403, `Your push scope does not cover ${collection}/${name}, so the push would be refused.`);
       return;
     }
-    if (findRepo(root, org, name)) {
-      fail(409, `Repository ${org}/${name} already exists; a mirror push would overwrite it.`);
+    if (findRepo(root, collection, name)) {
+      fail(409, `Repository ${collection}/${name} already exists; a mirror push would overwrite it.`);
       return;
     }
     const host = req.get('host') ?? '';
@@ -191,19 +191,19 @@ export function registerWebOps(app: Express, root: string): void {
       return;
     }
     const dest = `${req.protocol}://${encodeURIComponent(viewer.auth.username)}@${host}/${encodeURIComponent(
-      org
+      collection
     )}/${encodeURIComponent(name)}`;
     const tmp = `${name}.import.git`;
     const command = `git clone --bare ${source.url} ${tmp} && git -C ${tmp} push --mirror ${dest} && rm -rf ${tmp}`;
-    res.type('html').send(forms.importPage(viewer, orgs, preset, { command, org, name }));
+    res.type('html').send(forms.importPage(viewer, collections, preset, { command, collection, name }));
   });
 
   app.get('/new', (req, res) => {
     const viewer = requireViewerPage(req, res);
     if (!viewer) return;
-    const orgs = listOrgs(root).map((o) => o.name);
-    const org = typeof req.query.org === 'string' ? req.query.org : '';
-    res.type('html').send(forms.newRepoPage(viewer, orgs, { org }));
+    const collections = listCollections(root).map((o) => o.name);
+    const collection = typeof req.query.collection === 'string' ? req.query.collection : '';
+    res.type('html').send(forms.newRepoPage(viewer, collections, { collection }));
   });
 
   app.post(
@@ -212,29 +212,29 @@ export function registerWebOps(app: Express, root: string): void {
     ah(async (req, res) => {
       const viewer = requireViewerPost(req, res);
       if (!viewer) return;
-      const org = field(req, 'org').trim();
+      const collection = field(req, 'collection').trim();
       const name = field(req, 'name').trim();
       const description = field(req, 'description').trim();
-      const orgs = listOrgs(root).map((o) => o.name);
+      const collections = listCollections(root).map((o) => o.name);
       const rerender = (status: number, error: string) => {
         res
           .status(status)
           .type('html')
-          .send(forms.newRepoPage(viewer, orgs, { org, name, description }, error));
+          .send(forms.newRepoPage(viewer, collections, { collection, name, description }, error));
       };
-      if (!isValidName(org) || !isValidName(name)) {
-        rerender(400, 'Organization and repository names may use letters, digits, dot, underscore, and dash, and must not be reserved words.');
+      if (!isValidName(collection) || !isValidName(name)) {
+        rerender(400, 'Collection and repository names may use letters, digits, dot, underscore, and dash, and must not be reserved words.');
         return;
       }
-      if (!canPush(viewer.auth, org, name)) {
-        rerender(403, `Your push scope does not cover ${org}/${name}.`);
+      if (!canPush(viewer.auth, collection, name)) {
+        rerender(403, `Your push scope does not cover ${collection}/${name}.`);
         return;
       }
-      if (findRepo(root, org, name)) {
-        rerender(409, `Repository ${org}/${name} already exists.`);
+      if (findRepo(root, collection, name)) {
+        rerender(409, `Repository ${collection}/${name} already exists.`);
         return;
       }
-      const repo = await ops.createRepo(root, org, name);
+      const repo = await ops.createRepo(root, collection, name);
       if (description) ops.setDescription(repo.dir, description);
       if (field(req, 'init') === '1') {
         await ops.commitFileChange(repo.dir, {
@@ -246,7 +246,7 @@ export function registerWebOps(app: Express, root: string): void {
           action: { kind: 'create', content: Buffer.from(`# ${name}\n${description ? `\n${description}\n` : ''}`) },
         });
       }
-      res.redirect(`/${encodeURIComponent(org)}/${encodeURIComponent(name)}`);
+      res.redirect(`/${encodeURIComponent(collection)}/${encodeURIComponent(name)}`);
     })
   );
 
@@ -260,7 +260,7 @@ export function registerWebOps(app: Express, root: string): void {
     tip: string | null;
   }
 
-  // Resolves an /:org/:repo/<verb>/<branch>/<path> URL and enforces what all
+  // Resolves an /:collection/:repo/<verb>/<branch>/<path> URL and enforces what all
   // file operations share: the ref must be a branch (or the repository must
   // be empty) and the viewer needs push scope over the repository.
   async function loadFileTarget(
@@ -276,8 +276,8 @@ export function registerWebOps(app: Express, root: string): void {
       send404(res, 'Not found', viewer);
       return null;
     }
-    if (!canPush(viewer.auth, loaded.repo.org, loaded.repo.name)) {
-      fail(res, 403, `Your push scope does not cover ${loaded.repo.org}/${loaded.repo.name}.`, viewer, urlOf(loaded.repo));
+    if (!canPush(viewer.auth, loaded.repo.collection, loaded.repo.name)) {
+      fail(res, 403, `Your push scope does not cover ${loaded.repo.collection}/${loaded.repo.name}.`, viewer, urlOf(loaded.repo));
       return null;
     }
     const branchInfo = loaded.branches.find((b) => b.name === ref);
@@ -318,7 +318,7 @@ export function registerWebOps(app: Express, root: string): void {
   }
 
   app.get(
-    '/:org/:repo/edit/*',
+    '/:collection/:repo/edit/*',
     ah(async (req, res) => {
       const viewer = requireViewerPage(req, res);
       if (!viewer) return;
@@ -341,7 +341,7 @@ export function registerWebOps(app: Express, root: string): void {
   );
 
   app.post(
-    '/:org/:repo/edit/*',
+    '/:collection/:repo/edit/*',
     form,
     ah(async (req, res) => {
       const viewer = requireViewerPost(req, res);
@@ -375,7 +375,7 @@ export function registerWebOps(app: Express, root: string): void {
   );
 
   app.get(
-    '/:org/:repo/new/*',
+    '/:collection/:repo/new/*',
     ah(async (req, res) => {
       const viewer = requireViewerPage(req, res);
       if (!viewer) return;
@@ -388,7 +388,7 @@ export function registerWebOps(app: Express, root: string): void {
   );
 
   app.post(
-    '/:org/:repo/new/*',
+    '/:collection/:repo/new/*',
     form,
     ah(async (req, res) => {
       const viewer = requireViewerPost(req, res);
@@ -435,7 +435,7 @@ export function registerWebOps(app: Express, root: string): void {
   );
 
   app.get(
-    '/:org/:repo/delete/*',
+    '/:collection/:repo/delete/*',
     ah(async (req, res) => {
       const viewer = requireViewerPage(req, res);
       if (!viewer) return;
@@ -453,7 +453,7 @@ export function registerWebOps(app: Express, root: string): void {
   );
 
   app.post(
-    '/:org/:repo/delete/*',
+    '/:collection/:repo/delete/*',
     form,
     ah(async (req, res) => {
       const viewer = requireViewerPost(req, res);
@@ -491,15 +491,15 @@ export function registerWebOps(app: Express, root: string): void {
   async function loadForRefOp(req: Request, res: Response, viewer: Viewer): Promise<LoadedRepo | null> {
     const loaded = await loadRepo(root, req, res, viewer);
     if (!loaded) return null;
-    if (!canPush(viewer.auth, loaded.repo.org, loaded.repo.name)) {
-      fail(res, 403, `Your push scope does not cover ${loaded.repo.org}/${loaded.repo.name}.`, viewer, urlOf(loaded.repo));
+    if (!canPush(viewer.auth, loaded.repo.collection, loaded.repo.name)) {
+      fail(res, 403, `Your push scope does not cover ${loaded.repo.collection}/${loaded.repo.name}.`, viewer, urlOf(loaded.repo));
       return null;
     }
     return loaded;
   }
 
   app.post(
-    '/:org/:repo/branches/create',
+    '/:collection/:repo/branches/create',
     form,
     ah(async (req, res) => {
       const viewer = requireViewerPost(req, res);
@@ -523,7 +523,7 @@ export function registerWebOps(app: Express, root: string): void {
   );
 
   app.post(
-    '/:org/:repo/branches/delete',
+    '/:collection/:repo/branches/delete',
     form,
     ah(async (req, res) => {
       const viewer = requireViewerPost(req, res);
@@ -546,7 +546,7 @@ export function registerWebOps(app: Express, root: string): void {
   );
 
   app.post(
-    '/:org/:repo/tags/create',
+    '/:collection/:repo/tags/create',
     form,
     ah(async (req, res) => {
       const viewer = requireViewerPost(req, res);
@@ -570,7 +570,7 @@ export function registerWebOps(app: Express, root: string): void {
   );
 
   app.post(
-    '/:org/:repo/tags/delete',
+    '/:collection/:repo/tags/delete',
     form,
     ah(async (req, res) => {
       const viewer = requireViewerPost(req, res);
@@ -591,7 +591,7 @@ export function registerWebOps(app: Express, root: string): void {
   // ---- repository settings ----
 
   app.get(
-    '/:org/:repo/settings',
+    '/:collection/:repo/settings',
     ah(async (req, res) => {
       const viewer = requireViewerPage(req, res);
       if (!viewer) return;
@@ -608,7 +608,7 @@ export function registerWebOps(app: Express, root: string): void {
   );
 
   app.post(
-    '/:org/:repo/settings',
+    '/:collection/:repo/settings',
     form,
     ah(async (req, res) => {
       const viewer = requireViewerPost(req, res);
@@ -616,8 +616,8 @@ export function registerWebOps(app: Express, root: string): void {
       const loaded = await loadRepo(root, req, res, viewer);
       if (!loaded) return;
       const backUrl = `${urlOf(loaded.repo)}/settings`;
-      if (!canPush(viewer.auth, loaded.repo.org, loaded.repo.name)) {
-        fail(res, 403, `Your push scope does not cover ${loaded.repo.org}/${loaded.repo.name}.`, viewer, backUrl);
+      if (!canPush(viewer.auth, loaded.repo.collection, loaded.repo.name)) {
+        fail(res, 403, `Your push scope does not cover ${loaded.repo.collection}/${loaded.repo.name}.`, viewer, backUrl);
         return;
       }
       ops.setDescription(loaded.repo.dir, field(req, 'description'));
@@ -634,7 +634,7 @@ export function registerWebOps(app: Express, root: string): void {
   );
 
   app.post(
-    '/:org/:repo/settings/delete',
+    '/:collection/:repo/settings/delete',
     form,
     ah(async (req, res) => {
       const viewer = requireViewerPost(req, res);
@@ -642,7 +642,7 @@ export function registerWebOps(app: Express, root: string): void {
       const loaded = await loadRepo(root, req, res, viewer);
       if (!loaded) return;
       const backUrl = `${urlOf(loaded.repo)}/settings`;
-      const target = `${loaded.repo.org}/${loaded.repo.name}`;
+      const target = `${loaded.repo.collection}/${loaded.repo.name}`;
       if (!canAdmin(viewer.auth, [target])) {
         fail(res, 403, `Repository deletion requires admin scope over ${target}.`, viewer, backUrl);
         return;
@@ -651,8 +651,8 @@ export function registerWebOps(app: Express, root: string): void {
         fail(res, 400, `Type ${target} exactly to confirm deletion.`, viewer, backUrl);
         return;
       }
-      ops.deleteRepo(root, loaded.repo.org, loaded.repo.name);
-      res.redirect(`/${encodeURIComponent(loaded.repo.org)}`);
+      ops.deleteRepo(root, loaded.repo.collection, loaded.repo.name);
+      res.redirect(`/${encodeURIComponent(loaded.repo.collection)}`);
     })
   );
 
@@ -682,7 +682,7 @@ export function registerWebOps(app: Express, root: string): void {
   }
 
   // The theme is vault-wide, so changing it takes admin scope over everything:
-  // a delegated org administrator should not restyle the whole site.
+  // a delegated collection administrator should not restyle the whole site.
   function canSetTheme(viewer: Viewer): boolean {
     return canAdmin(viewer.auth, ['*']);
   }

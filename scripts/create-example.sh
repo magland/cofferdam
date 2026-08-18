@@ -21,10 +21,10 @@ new_workdir() {
 }
 
 publish() {
-  local tmp="$1" org="$2" name="$3" desc="$4"
-  mkdir -p "$ROOT/$org"
-  git clone --bare -q "$tmp" "$ROOT/$org/$name.git"
-  echo "$desc" > "$ROOT/$org/$name.git/description"
+  local tmp="$1" collection="$2" name="$3" desc="$4"
+  mkdir -p "$ROOT/$collection"
+  git clone --bare -q "$tmp" "$ROOT/$collection/$name.git"
+  echo "$desc" > "$ROOT/$collection/$name.git/description"
   rm -rf "$tmp"
 }
 
@@ -212,7 +212,7 @@ git -C "$T" commit -q -m "Start notes"
 cat > "$T/2026-02-followup.md" <<'EOF'
 # Follow-up
 
-The directory layout is root/org/repo.git. No database is involved.
+The directory layout is root/collection/repo.git. No database is involved.
 EOF
 git -C "$T" add -A
 git -C "$T" commit -q -m "Add follow-up note"
@@ -227,7 +227,7 @@ echo "An empty repository for testing" > "$ROOT/bob/empty.git/description"
 
 # ---- vault.json with a dev user (fixed token, example vault only) ----
 
-DEV_TOKEN="repos_example_dev_token"
+DEV_TOKEN="doqpod_example_dev_token"
 DEV_HASH="$(printf %s "$DEV_TOKEN" | sha256sum | cut -d' ' -f1)"
 cat > "$ROOT/vault.json" <<EOF
 {

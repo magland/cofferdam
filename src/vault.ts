@@ -103,7 +103,7 @@ export function hashToken(token: string): string {
 }
 
 export function mintToken(): { token: string; hash: string } {
-  const token = 'repos_' + crypto.randomBytes(32).toString('hex');
+  const token = 'doqpod_' + crypto.randomBytes(32).toString('hex');
   return { token, hash: hashToken(token) };
 }
 
@@ -157,8 +157,8 @@ export function authenticateToken(vault: Vault, tokenPlain: string): AuthResult 
   return null;
 }
 
-export function canPush(auth: AuthResult, org: string, repo: string): boolean {
-  const target = `${org}/${repo}`;
+export function canPush(auth: AuthResult, collection: string, repo: string): boolean {
+  const target = `${collection}/${repo}`;
   const matches = (globs: string[]) => globs.some((g) => globMatch(g, target));
   if (!matches(auth.user.scope)) return false;
   if (auth.token.scope !== undefined && !matches(auth.token.scope)) return false;
@@ -194,7 +194,7 @@ export function addUserToken(
     vault.users[username] = user;
   } else if (opts.scope || opts.admin) {
     throw new Error(
-      `user ${username} already exists; use 'repos user grant ${username} --scope <glob>' to extend its scope`
+      `user ${username} already exists; use 'doqpod user grant ${username} --scope <glob>' to extend its scope`
     );
   }
   const { token, hash } = mintToken();
@@ -212,12 +212,12 @@ export function grantScope(
 ): UserRecord {
   const file = vaultFilePath(root);
   if (!fs.existsSync(file)) {
-    throw new Error(`no vault.json at ${file}; create the user first with: repos user add ${username}`);
+    throw new Error(`no vault.json at ${file}; create the user first with: doqpod user add ${username}`);
   }
   const vault = normalizeVault(JSON.parse(fs.readFileSync(file, 'utf8')));
   const user = vault.users[username];
   if (!user) {
-    throw new Error(`user ${username} does not exist; create it with: repos user add ${username}`);
+    throw new Error(`user ${username} does not exist; create it with: doqpod user add ${username}`);
   }
   for (const g of globs.scope ?? []) {
     if (!user.scope.includes(g)) user.scope.push(g);

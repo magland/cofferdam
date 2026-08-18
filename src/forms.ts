@@ -33,20 +33,20 @@ ${errorBanner(error)}
 
 export function newRepoPage(
   viewer: Viewer,
-  orgNames: string[],
-  preset: { org?: string; name?: string; description?: string },
+  collectionNames: string[],
+  preset: { collection?: string; name?: string; description?: string },
   error?: string
 ): string {
-  const datalist = orgNames.map((o) => `<option value="${esc(o)}">`).join('');
+  const datalist = collectionNames.map((o) => `<option value="${esc(o)}">`).join('');
   const content = `<div class="form-box">
 <h1>New repository</h1>
 ${errorBanner(error)}
 <form method="post" action="/new">
 ${csrfField(viewer)}
-<div class="field"><label for="org">Organization</label><input type="text" id="org" name="org" list="orgs" value="${esc(
-    preset.org ?? ''
-  )}" required><datalist id="orgs">${datalist}</datalist>
-<p class="muted small">An existing organization, or a new one to create with the repository.</p></div>
+<div class="field"><label for="collection">Collection</label><input type="text" id="collection" name="collection" list="collections" value="${esc(
+    preset.collection ?? ''
+  )}" required><datalist id="collections">${datalist}</datalist>
+<p class="muted small">An existing collection, or a new one to create with the repository.</p></div>
 <div class="field"><label for="name">Repository name</label><input type="text" id="name" name="name" value="${esc(
     preset.name ?? ''
   )}" required></div>
@@ -62,17 +62,17 @@ ${csrfField(viewer)}
 
 export function importPage(
   viewer: Viewer,
-  orgNames: string[],
-  preset: { src?: string; org?: string; name?: string },
-  result: { command: string; org: string; name: string } | null,
+  collectionNames: string[],
+  preset: { src?: string; collection?: string; name?: string },
+  result: { command: string; collection: string; name: string } | null,
   error?: string
 ): string {
-  const datalist = orgNames.map((o) => `<option value="${esc(o)}">`).join('');
+  const datalist = collectionNames.map((o) => `<option value="${esc(o)}">`).join('');
   const command = result
     ? `<h2>Run this</h2>
 ${copyRow(result.command)}
-<p class="muted small">git asks for a password: paste a token with push access to ${esc(result.org)}. The repository is created here by the push, so ${esc(
-        result.org
+<p class="muted small">git asks for a password: paste a token with push access to ${esc(result.collection)}. The repository is created here by the push, so ${esc(
+        result.collection
       )}/${esc(result.name)} must not exist yet. Branches and tags come across; git-lfs objects, issues, and pull requests do not.</p>`
     : '';
   const content = `<div class="form-box wide">
@@ -84,9 +84,9 @@ ${errorBanner(error)}
     preset.src ?? ''
   )}" placeholder="https://github.com/owner/repo" required>
 <p class="muted small">An https or ssh git URL, or <code>owner/repo</code> for GitHub.</p></div>
-<div class="field"><label for="org">Organization</label><input type="text" id="org" name="org" list="orgs" value="${esc(
-    preset.org ?? ''
-  )}" required><datalist id="orgs">${datalist}</datalist></div>
+<div class="field"><label for="collection">Collection</label><input type="text" id="collection" name="collection" list="collections" value="${esc(
+    preset.collection ?? ''
+  )}" required><datalist id="collections">${datalist}</datalist></div>
 <div class="field"><label for="name">Repository name <span class="muted">(optional)</span></label><input type="text" id="name" name="name" value="${esc(
     preset.name ?? ''
   )}" placeholder="taken from the source URL"></div>
@@ -126,7 +126,7 @@ ${commitFields(ctx.viewer!, expectedHead, `Update ${filePath.split('/').pop()}`)
 <div class="actions"><button type="submit" class="btn btn-primary">Commit changes</button><a class="btn" href="${cancel}">Cancel</a></div>
 </div>
 </form>`;
-  return layout(`Editing ${filePath} - ${ctx.org}/${ctx.repo}`, body, repoOpts(ctx));
+  return layout(`Editing ${filePath} - ${ctx.collection}/${ctx.repo}`, body, repoOpts(ctx));
 }
 
 export function newFilePage(
@@ -161,7 +161,7 @@ ${commitFields(ctx.viewer!, expectedHead, 'Create new file')}
 <div class="actions"><button type="submit" class="btn btn-primary">Commit new file</button><a class="btn" href="${cancel}">Cancel</a></div>
 </div>
 </form>`;
-  return layout(`New file - ${ctx.org}/${ctx.repo}`, body, repoOpts(ctx));
+  return layout(`New file - ${ctx.collection}/${ctx.repo}`, body, repoOpts(ctx));
 }
 
 export function deleteFilePage(ctx: RepoCtx, filePath: string, expectedHead: string, error?: string): string {
@@ -178,7 +178,7 @@ ${commitFields(ctx.viewer!, expectedHead, `Delete ${filePath.split('/').pop()}`)
 <div class="actions"><button type="submit" class="btn btn-danger">Delete file</button><a class="btn" href="${cancel}">Cancel</a></div>
 </form>
 </div>`;
-  return layout(`Delete ${filePath} - ${ctx.org}/${ctx.repo}`, body, repoOpts(ctx));
+  return layout(`Delete ${filePath} - ${ctx.collection}/${ctx.repo}`, body, repoOpts(ctx));
 }
 
 export function conflictPage(ctx: RepoCtx, branch: string, retryUrl: string): string {
@@ -188,7 +188,7 @@ export function conflictPage(ctx: RepoCtx, branch: string, retryUrl: string): st
 <p>Someone updated <b>${esc(branch)}</b> while you were editing, so your change was not committed; committing it now could silently undo theirs.</p>
 <p><a class="btn btn-primary" href="${esc(retryUrl)}">Reload and try again</a></p>
 </div>`;
-  return layout(`Conflict - ${ctx.org}/${ctx.repo}`, body, repoOpts(ctx));
+  return layout(`Conflict - ${ctx.collection}/${ctx.repo}`, body, repoOpts(ctx));
 }
 
 export function settingsPage(ctx: RepoCtx, description: string, msg?: string, error?: string): string {
@@ -221,7 +221,7 @@ ${defaultBranchField}
 <p>Deleting a repository removes its directory${ctx.hasPages ? ' and its pages site' : ''} from the vault permanently. There is no undo.</p>
 <form method="post" action="${base}/settings/delete">
 ${csrfField(ctx.viewer!)}
-<div class="field"><label for="confirm">Type <b class="mono">${esc(ctx.org)}/${esc(ctx.repo)}</b> to confirm</label><input type="text" id="confirm" name="confirm" autocomplete="off"></div>
+<div class="field"><label for="confirm">Type <b class="mono">${esc(ctx.collection)}/${esc(ctx.repo)}</b> to confirm</label><input type="text" id="confirm" name="confirm" autocomplete="off"></div>
 <button type="submit" class="btn btn-danger">Delete this repository</button>
 </form>
 </div>`
@@ -232,7 +232,7 @@ ${flashBanner(msg)}
 ${errorBanner(error)}
 ${settingsForm}
 ${dangerZone}`;
-  return layout(`Settings - ${ctx.org}/${ctx.repo}`, body, repoOpts(ctx, `${base}/settings`));
+  return layout(`Settings - ${ctx.collection}/${ctx.repo}`, body, repoOpts(ctx, `${base}/settings`));
 }
 
 export function adminUsersPage(
@@ -246,7 +246,7 @@ export function adminUsersPage(
       const actions = `<details><summary>Manage</summary><div class="user-actions">
 <form method="post" action="/admin/users/${encodeURIComponent(name)}/grant" class="inline-form">
 ${csrfField(viewer)}
-<input type="text" name="scope" placeholder="push globs, e.g. myorg/*">
+<input type="text" name="scope" placeholder="push globs, e.g. mycollection/*">
 <input type="text" name="admin" placeholder="admin globs">
 <button type="submit" class="btn">Grant</button>
 </form>
@@ -270,9 +270,9 @@ ${errorBanner(error)}
 <form method="post" action="/admin/users">
 ${csrfField(viewer)}
 <div class="field"><label for="username">Username</label><input type="text" id="username" name="username" required></div>
-<div class="field"><label for="scope">Push scope globs</label><input type="text" id="scope" name="scope" value="*" placeholder="e.g. myorg/*">
-<p class="muted small">Space-separated globs over <span class="mono">org/repo</span>. <span class="mono">*</span> matches everything.</p></div>
-<div class="field"><label for="admin">Admin scope globs <span class="muted">(optional)</span></label><input type="text" id="admin" name="admin" placeholder="e.g. myorg/*"></div>
+<div class="field"><label for="scope">Push scope globs</label><input type="text" id="scope" name="scope" value="*" placeholder="e.g. mycollection/*">
+<p class="muted small">Space-separated globs over <span class="mono">collection/repo</span>. <span class="mono">*</span> matches everything.</p></div>
+<div class="field"><label for="admin">Admin scope globs <span class="muted">(optional)</span></label><input type="text" id="admin" name="admin" placeholder="e.g. mycollection/*"></div>
 <button type="submit" class="btn btn-primary">Create user and mint token</button>
 </form>
 <p class="muted small">Your admin scope must cover every glob you assign. The new token is shown once on the next page.</p>

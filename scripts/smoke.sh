@@ -39,7 +39,7 @@ if [ "$started" != 1 ]; then
   echo "FAIL: server did not start"; cat "$LOG"; exit 1
 fi
 
-OWNER_TOKEN="$(grep -o 'repos_[0-9a-f]\{64\}' "$LOG" | head -1 || true)"
+OWNER_TOKEN="$(grep -o 'doqpod_[0-9a-f]\{64\}' "$LOG" | head -1 || true)"
 [ -n "$OWNER_TOKEN" ] || { echo "FAIL: no owner token in server log"; cat "$LOG"; exit 1; }
 
 PASS=0
@@ -88,7 +88,7 @@ check "new repo form" 200 -b "$JAR" "$BASE/new"
 CSRF="$(csrf_of)"
 [ -n "$CSRF" ] || { echo "FAIL: no csrf on /new"; exit 1; }
 check "create demo/proj" 302 -b "$JAR" "$BASE/new" \
-  --data-urlencode "csrf=$CSRF" --data-urlencode org=demo --data-urlencode name=proj \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=proj \
   --data-urlencode "description=Demo project" --data-urlencode init=1
 check "repo page renders" 200 -b "$JAR" "$BASE/demo/proj"
 body_has "README rendered" 'Demo project'
@@ -152,22 +152,22 @@ check "import page needs a session" 302 "$BASE/import"
 check "import page" 200 -b "$JAR" "$BASE/import"
 body_has "import form" 'name="src"'
 check "import command for a github url" 200 -b "$JAR" \
-  --get "$BASE/import" --data-urlencode "src=https://github.com/octocat/Hello-World" --data-urlencode org=demo
+  --get "$BASE/import" --data-urlencode "src=https://github.com/octocat/Hello-World" --data-urlencode collection=demo
 body_has "clone is bare, not mirror" 'git clone --bare https://github.com/octocat/Hello-World'
 body_has "push is a mirror push" 'push --mirror'
 body_has "destination carries the username" "owner@"
 body_lacks "no mirror clone" 'clone --mirror'
 check "import command from owner/repo shorthand" 200 -b "$JAR" \
-  --get "$BASE/import" --data-urlencode src=octocat/Hello-World --data-urlencode org=demo
+  --get "$BASE/import" --data-urlencode src=octocat/Hello-World --data-urlencode collection=demo
 body_has "shorthand expands to github" 'https://github.com/octocat/Hello-World.git'
 check "shell metacharacters refused" 400 -b "$JAR" \
-  --get "$BASE/import" --data-urlencode "src=https://github.com/a/b; rm -rf ~" --data-urlencode org=demo
+  --get "$BASE/import" --data-urlencode "src=https://github.com/a/b; rm -rf ~" --data-urlencode collection=demo
 check "non-git scheme refused" 400 -b "$JAR" \
-  --get "$BASE/import" --data-urlencode "src=file:///etc/passwd" --data-urlencode org=demo
+  --get "$BASE/import" --data-urlencode "src=file:///etc/passwd" --data-urlencode collection=demo
 check "existing repo refused" 409 -b "$JAR" \
-  --get "$BASE/import" --data-urlencode src=octocat/proj --data-urlencode org=demo
+  --get "$BASE/import" --data-urlencode src=octocat/proj --data-urlencode collection=demo
 check "import is a reserved repo name" 400 -b "$JAR" "$BASE/new" \
-  --data-urlencode "csrf=$CSRF" --data-urlencode org=demo --data-urlencode name=import
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=import
 
 # ---- markdown rendering ----
 
@@ -294,7 +294,7 @@ CSRF="$(csrf_of)"
 check "save settings" 302 -b "$JAR" "$BASE/demo/proj/settings" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "description=A refreshed description" \
   --data-urlencode defaultBranch=main
-check "org page shows description" 200 "$BASE/demo"
+check "collection page shows description" 200 "$BASE/demo"
 body_has "description updated" 'A refreshed description'
 
 # ---- empty repository README flow ----
@@ -302,7 +302,7 @@ body_has "description updated" 'A refreshed description'
 check "new repo form again" 200 -b "$JAR" "$BASE/new"
 CSRF="$(csrf_of)"
 check "create demo/bare without init" 302 -b "$JAR" "$BASE/new" \
-  --data-urlencode "csrf=$CSRF" --data-urlencode org=demo --data-urlencode name=bare
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=bare
 check "empty repo page" 200 -b "$JAR" "$BASE/demo/bare"
 body_has "create README button" 'Create a README'
 body_has "empty repo keeps clone command" 'git clone'
@@ -322,13 +322,13 @@ CSRF="$(csrf_of)"
 check "create user alice" 200 -b "$JAR" "$BASE/admin/users" \
   --data-urlencode "csrf=$CSRF" --data-urlencode username=alice --data-urlencode "scope=demo/*" \
   --data-urlencode "admin="
-ALICE_TOKEN="$(grep -o 'repos_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+ALICE_TOKEN="$(grep -o 'doqpod_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
 [ -n "$ALICE_TOKEN" ] || { echo "FAIL: no token for alice shown"; exit 1; }
 check "grant to alice" 302 -b "$JAR" "$BASE/admin/users/alice/grant" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "scope=extra/thing" --data-urlencode "admin="
 check "mint token for alice" 200 -b "$JAR" "$BASE/admin/users/alice/token" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "tokenScope="
-body_has "minted token shown" 'repos_'
+body_has "minted token shown" 'doqpod_'
 
 # ---- themes ----
 
@@ -372,27 +372,27 @@ check "alice cannot see admin" 403 -b "$ALICE_JAR" "$BASE/admin/users"
 check "alice can open edit in scope" 200 -b "$ALICE_JAR" "$BASE/demo/proj/edit/main/README.md"
 ALICE_CSRF="$(csrf_of)"
 check "alice cannot create out of scope" 403 -b "$ALICE_JAR" "$BASE/new" \
-  --data-urlencode "csrf=$ALICE_CSRF" --data-urlencode org=other --data-urlencode name=x
+  --data-urlencode "csrf=$ALICE_CSRF" --data-urlencode collection=other --data-urlencode name=x
 check "alice cannot delete repo" 403 -b "$ALICE_JAR" "$BASE/demo/proj/settings/delete" \
   --data-urlencode "csrf=$ALICE_CSRF" --data-urlencode confirm=demo/proj
 check "alice cannot import out of scope" 403 -b "$ALICE_JAR" \
-  --get "$BASE/import" --data-urlencode src=octocat/Hello-World --data-urlencode org=other
+  --get "$BASE/import" --data-urlencode src=octocat/Hello-World --data-urlencode collection=other
 
-# ---- a delegated org admin is an admin, but not for vault-wide settings ----
+# ---- a delegated collection admin is an admin, but not for vault-wide settings ----
 
 check "admin users page for delegation" 200 -b "$JAR" "$BASE/admin/users"
 CSRF="$(csrf_of)"
 check "create delegated admin" 200 -b "$JAR" "$BASE/admin/users" \
-  --data-urlencode "csrf=$CSRF" --data-urlencode username=orgadmin \
+  --data-urlencode "csrf=$CSRF" --data-urlencode username=collectionadmin \
   --data-urlencode "scope=demo/*" --data-urlencode "admin=demo/*"
-ORG_TOKEN="$(grep -o 'repos_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
-[ -n "$ORG_TOKEN" ] || { echo "FAIL: no token for orgadmin"; exit 1; }
-check "orgadmin login" 302 -c "$TMP/orgadmin.jar" "$BASE/login" \
-  --data-urlencode username=orgadmin --data-urlencode "token=$ORG_TOKEN" --data-urlencode next=/
-check "orgadmin reaches admin index" 200 -b "$TMP/orgadmin.jar" "$BASE/admin"
+COLLECTION_TOKEN="$(grep -o 'doqpod_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+[ -n "$COLLECTION_TOKEN" ] || { echo "FAIL: no token for collectionadmin"; exit 1; }
+check "collectionadmin login" 302 -c "$TMP/collectionadmin.jar" "$BASE/login" \
+  --data-urlencode username=collectionadmin --data-urlencode "token=$COLLECTION_TOKEN" --data-urlencode next=/
+check "collectionadmin reaches admin index" 200 -b "$TMP/collectionadmin.jar" "$BASE/admin"
 body_lacks "no appearance card for delegated admin" '/admin/appearance'
-check "orgadmin cannot open appearance" 403 -b "$TMP/orgadmin.jar" "$BASE/admin/appearance"
-check "orgadmin cannot set the theme" 403 -b "$TMP/orgadmin.jar" "$BASE/admin/appearance" \
+check "collectionadmin cannot open appearance" 403 -b "$TMP/collectionadmin.jar" "$BASE/admin/appearance"
+check "collectionadmin cannot set the theme" 403 -b "$TMP/collectionadmin.jar" "$BASE/admin/appearance" \
   --data-urlencode "csrf=$CSRF" --data-urlencode theme=terminal
 
 # ---- anonymous sees no controls ----
@@ -418,7 +418,7 @@ check "api rejects session cookie" 401 -b "$JAR" "$BASE/api/whoami"
 
 # ---- git over HTTP ----
 
-check "push needs auth" 401 "$BASE/neworg/newrepo/info/refs?service=git-receive-pack"
+check "push needs auth" 401 "$BASE/newcollection/newrepo/info/refs?service=git-receive-pack"
 
 git clone -q "$BASE/demo/proj" "$TMP/clone" 2>/dev/null
 grep -q 'Edited via the web interface' "$TMP/clone/README.md" || { echo "FAIL: clone missing web edit"; exit 1; }

@@ -69,7 +69,7 @@ export function createApp(root: string) {
   });
 
   // Registration order matters: the API and the UI-owned top-level paths
-  // (/login, /new, /admin, ...) come before the generic /:org and /:org/:repo
+  // (/login, /new, /admin, ...) come before the generic /:collection and /:collection/:repo
   // browse routes, and more-specific wildcard routes before their prefixes.
   registerApi(app, root);
   registerGitHttp(app, root);

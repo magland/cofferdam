@@ -37,15 +37,15 @@ function tmpFile(prefix: string): string {
   return path.join(os.tmpdir(), `${prefix}-${crypto.randomBytes(8).toString('hex')}`);
 }
 
-export async function createRepo(root: string, org: string, name: string): Promise<GitRepo> {
-  if (!isValidName(org) || !isValidName(name)) throw new OpError('invalid organization or repository name');
-  fs.mkdirSync(path.join(root, org), { recursive: true });
-  const dir = path.join(root, org, `${name}.git`);
+export async function createRepo(root: string, collection: string, name: string): Promise<GitRepo> {
+  if (!isValidName(collection) || !isValidName(name)) throw new OpError('invalid collection or repository name');
+  fs.mkdirSync(path.join(root, collection), { recursive: true });
+  const dir = path.join(root, collection, `${name}.git`);
   await execGit(root, ['init', '--bare', '--initial-branch=main', dir]);
   await execGit(dir, ['config', 'receive.denyNonFastForwards', 'true']);
   await execGit(dir, ['config', 'receive.denyDeletes', 'true']);
   await execGit(dir, ['config', 'receive.maxInputSize', String(2 * 1024 * 1024 * 1024)]);
-  return new GitRepo(dir, org, name);
+  return new GitRepo(dir, collection, name);
 }
 
 async function refTip(repoDir: string, ref: string): Promise<string | null> {
@@ -105,7 +105,7 @@ export async function commitFileChange(repoDir: string, args: FileCommitArgs): P
     throw new OpError('cannot edit or delete a file on a branch that does not exist');
   }
 
-  const indexFile = tmpFile('repos-index');
+  const indexFile = tmpFile('doqpod-index');
   const env = { ...process.env, GIT_INDEX_FILE: indexFile };
   try {
     let baseTree: string | null = null;
@@ -128,7 +128,7 @@ export async function commitFileChange(repoDir: string, args: FileCommitArgs): P
         action.kind === 'edit' && expectedHead !== null
           ? await entryMode(repoDir, expectedHead, filePath)
           : '100644';
-      const contentFile = tmpFile('repos-blob');
+      const contentFile = tmpFile('doqpod-blob');
       let blobSha: string;
       try {
         fs.writeFileSync(contentFile, action.content, { mode: 0o600 });
@@ -224,15 +224,15 @@ function containedIn(rootReal: string, target: string): boolean {
   return real.startsWith(rootReal + path.sep);
 }
 
-export function deleteRepo(root: string, org: string, name: string): void {
-  const repo = findRepo(root, org, name);
-  if (!repo) throw new OpError(`repository ${org}/${name} not found`, 'notfound');
+export function deleteRepo(root: string, collection: string, name: string): void {
+  const repo = findRepo(root, collection, name);
+  if (!repo) throw new OpError(`repository ${collection}/${name} not found`, 'notfound');
   const rootReal = fs.realpathSync(root);
   if (!containedIn(rootReal, repo.dir)) {
     throw new OpError('repository directory is outside the vault; refusing to delete');
   }
   fs.rmSync(repo.dir, { recursive: true, force: true });
-  const pages = pagesDir(root, org, name);
+  const pages = pagesDir(root, collection, name);
   if (pages && containedIn(rootReal, pages)) {
     fs.rmSync(pages, { recursive: true, force: true });
   }

@@ -81,7 +81,7 @@ export function isValidSha(s: string): boolean {
 }
 
 export class GitRepo {
-  constructor(public dir: string, public org: string, public name: string) {}
+  constructor(public dir: string, public collection: string, public name: string) {}
 
   private async lines(args: string[]): Promise<string[]> {
     const out = (await execGit(this.dir, args)).toString('utf8');

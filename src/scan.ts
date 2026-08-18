@@ -3,7 +3,7 @@ import * as path from 'path';
 import { GitRepo } from './git';
 
 // Names the UI owns as top-level path segments, plus vault fixtures. None of
-// these may ever be an org or repo name.
+// these may ever be a collection or repo name.
 const RESERVED_NAMES = new Set([
   'vault.json',
   'config.json',
@@ -38,21 +38,21 @@ export function displayName(dirName: string): string {
   return dirName.replace(/\.git$/, '');
 }
 
-export function listRepoDirs(root: string, org: string): string[] {
-  const orgDir = path.join(root, org);
+export function listRepoDirs(root: string, collection: string): string[] {
+  const collectionDir = path.join(root, collection);
   let entries: fs.Dirent[];
   try {
-    entries = fs.readdirSync(orgDir, { withFileTypes: true });
+    entries = fs.readdirSync(collectionDir, { withFileTypes: true });
   } catch {
     return [];
   }
   return entries
-    .filter((e) => e.isDirectory() && isValidName(e.name) && isBareRepo(path.join(orgDir, e.name)))
+    .filter((e) => e.isDirectory() && isValidName(e.name) && isBareRepo(path.join(collectionDir, e.name)))
     .map((e) => e.name)
     .sort();
 }
 
-export function listOrgs(root: string): { name: string; repoCount: number }[] {
+export function listCollections(root: string): { name: string; repoCount: number }[] {
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(root, { withFileTypes: true });
@@ -65,19 +65,19 @@ export function listOrgs(root: string): { name: string; repoCount: number }[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export function findRepo(root: string, org: string, repoName: string): GitRepo | null {
-  if (!isValidName(org) || !isValidName(repoName)) return null;
+export function findRepo(root: string, collection: string, repoName: string): GitRepo | null {
+  if (!isValidName(collection) || !isValidName(repoName)) return null;
   const base = displayName(repoName);
   for (const cand of [base, base + '.git']) {
-    const dir = path.join(root, org, cand);
-    if (isBareRepo(dir)) return new GitRepo(dir, org, base);
+    const dir = path.join(root, collection, cand);
+    if (isBareRepo(dir)) return new GitRepo(dir, collection, base);
   }
   return null;
 }
 
-export function pagesDir(root: string, org: string, repoName: string): string | null {
-  if (!isValidName(org) || !isValidName(repoName)) return null;
-  const dir = path.join(root, org, `${displayName(repoName)}.pages`);
+export function pagesDir(root: string, collection: string, repoName: string): string | null {
+  if (!isValidName(collection) || !isValidName(repoName)) return null;
+  const dir = path.join(root, collection, `${displayName(repoName)}.pages`);
   try {
     if (fs.statSync(dir).isDirectory()) return dir;
   } catch {
