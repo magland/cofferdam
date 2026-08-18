@@ -5,6 +5,7 @@ import { registerApi } from './api';
 import { registerBrowse } from './browse';
 import { loadConfig } from './config';
 import { registerGitHttp } from './githttp';
+import { faviconSvg } from './logo';
 import { getViewer } from './session';
 import { CSS } from './style';
 import { activeTheme, setActiveTheme, themeVarsCss } from './themes';
@@ -63,6 +64,12 @@ export function createApp(root: string) {
     }
     res.set('Cache-Control', 'public, max-age=31536000, immutable');
     res.sendFile(path.join(katexDir, 'fonts', req.params.file));
+  });
+  // The favicon is the logo mark on a tile coloured from the active theme, so
+  // it changes with the vault's appearance. Browsers that will not take an SVG
+  // icon fall back to /favicon.ico, which stays empty.
+  app.get('/favicon.svg', (_req, res) => {
+    res.type('image/svg+xml').set('Cache-Control', 'no-cache').send(faviconSvg());
   });
   app.get('/favicon.ico', (_req, res) => {
     res.status(204).end();

@@ -18,7 +18,9 @@ code, pre, .mono { font-family: var(--font-mono); }
 .container { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
 .topbar { background: var(--surface); border-bottom: 1px solid var(--border); }
 .topbar .container { display: flex; align-items: center; gap: 12px; height: 52px; }
-.brand { font-family: var(--font-head); font-weight: 700; font-size: 17px; color: var(--fg); }
+/* The brand is the logotype from logo.ts, which inherits the text colour. */
+.brand { display: flex; align-items: center; color: var(--fg); flex: none; }
+.brand svg { display: block; height: 22px; width: auto; }
 .brand:hover { text-decoration: none; }
 .topbar .crumbs { color: var(--fg-muted); }
 .userbox { margin-left: auto; display: flex; align-items: center; gap: 12px; }

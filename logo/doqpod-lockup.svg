@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 964 220" role="img" aria-label="doqpod">
+  <rect width="220" height="220" rx="48.12" fill="currentColor"/>
+  <g fill="none" stroke="var(--logo-bg, #fff)" stroke-width="20.9" stroke-linecap="round"><circle cx="110" cy="110" r="33.09"/><path d="M143.09 36.85V143.09"/><path d="M76.91 76.91V183.15"/></g>
+  <g fill="none" stroke="currentColor" stroke-width="18" stroke-linecap="round"><circle cx="314" cy="110" r="41"/><circle cx="434" cy="110" r="41"/><circle cx="554" cy="110" r="41"/><circle cx="674" cy="110" r="41"/><circle cx="794" cy="110" r="41"/><circle cx="914" cy="110" r="41"/><path d="M355 9V151"/><path d="M595 69V211"/><path d="M633 69V211"/><path d="M955 9V151"/></g>
+</svg>

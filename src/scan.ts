@@ -9,6 +9,8 @@ const RESERVED_NAMES = new Set([
   'config.json',
   'api',
   'assets',
+  'favicon.ico',
+  'favicon.svg',
   'login',
   'logout',
   'new',

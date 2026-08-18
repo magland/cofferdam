@@ -2,6 +2,7 @@ import { CommitDetail, CommitSummary, RefInfo, TreeEntry } from './git';
 import { esc, formatDate, formatSize } from './render';
 import { Viewer, viewerIsAdmin } from './session';
 import { activeTheme } from './themes';
+import { WORDMARK } from './logo';
 
 export interface RepoCtx {
   collection: string;
@@ -70,9 +71,10 @@ export function layout(title: string, content: string, opts: PageOpts = {}): str
 <link rel="stylesheet" href="/assets/style.css?t=${encodeURIComponent(theme)}">
 <link rel="stylesheet" href="/assets/hl.css?t=${encodeURIComponent(theme)}">
 <link rel="stylesheet" href="/assets/katex/katex.css">
+<link rel="icon" href="/favicon.svg?t=${encodeURIComponent(theme)}" type="image/svg+xml">
 </head>
 <body>
-<header class="topbar"><div class="container"><a class="brand" href="/">doqpod</a><span class="crumbs">${
+<header class="topbar"><div class="container"><a class="brand" href="/">${WORDMARK}</a><span class="crumbs">${
     opts.crumbs ?? ''
   }</span><div class="userbox">${userBox(opts)}</div></div></header>
 <main class="container">
