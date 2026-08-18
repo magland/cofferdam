@@ -133,6 +133,20 @@ git push http://127.0.0.1:3000/myorg/myrepo main
 
 Pushing to a repository that does not exist yet creates it, provided the target matches your scope; the org directory is created as needed, and after the first push HEAD points at the pushed branch. Repositories created this way get `receive.denyNonFastForwards`, `receive.denyDeletes`, and a `receive.maxInputSize` limit of 2 GiB. Anonymous fetch stays open; only pushes require authentication.
 
+### Importing an existing repository
+
+Importing runs on your machine, not on the server. Sign in, open **Import** on any organization page (or go to `/import`), give it a GitHub URL or `owner/repo`, and the page writes the exact command:
+
+```bash
+git clone --bare https://github.com/owner/repo.git repo.import.git && \
+  git -C repo.import.git push --mirror https://you@vault.example.com/myorg/repo && \
+  rm -rf repo.import.git
+```
+
+git asks for a password on the push: that is your repos token. The push creates the repository, so the target must not exist yet, and your push scope has to cover it. Branches and tags come across. Issues, pull requests, and git-lfs objects do not, and the description is set afterwards in repository settings.
+
+The clone is `--bare` rather than `--mirror` on purpose: mirroring a GitHub repository also copies `refs/pull/*`, which can be thousands of refs.
+
 ### Users, tokens, and scopes
 
 `vault.json` holds a `users` object. Each user has a list of hashed tokens, a list of push scope globs, and a list of admin scope globs, all matched against `org/repo`, where `*` matches any characters including `/`:

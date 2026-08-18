@@ -2,7 +2,7 @@ import { esc } from './render';
 import { Viewer } from './session';
 import { Theme } from './themes';
 import { UserRecord } from './vault';
-import { PageOpts, RepoCtx, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from './views';
+import { PageOpts, RepoCtx, copyRow, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from './views';
 
 // Form pages for the UI operations. Every mutating form embeds the session's
 // CSRF value and posts back to a handler that re-checks authorization against
@@ -58,6 +58,43 @@ ${csrfField(viewer)}
 </form>
 </div>`;
   return layout('New repository', content, { viewer, path: '/new' });
+}
+
+export function importPage(
+  viewer: Viewer,
+  orgNames: string[],
+  preset: { src?: string; org?: string; name?: string },
+  result: { command: string; org: string; name: string } | null,
+  error?: string
+): string {
+  const datalist = orgNames.map((o) => `<option value="${esc(o)}">`).join('');
+  const command = result
+    ? `<h2>Run this</h2>
+${copyRow(result.command)}
+<p class="muted small">git asks for a password: paste a token with push access to ${esc(result.org)}. The repository is created here by the push, so ${esc(
+        result.org
+      )}/${esc(result.name)} must not exist yet. Branches and tags come across; git-lfs objects, issues, and pull requests do not.</p>`
+    : '';
+  const content = `<div class="form-box wide">
+<h1>Import a repository</h1>
+${errorBanner(error)}
+<p class="muted">Importing runs on your machine rather than on the server: git copies the repository from wherever it lives now and pushes it here, which creates it on arrival. Give the source and this page writes the command.</p>
+<form method="get" action="/import">
+<div class="field"><label for="src">Source repository</label><input type="text" id="src" name="src" value="${esc(
+    preset.src ?? ''
+  )}" placeholder="https://github.com/owner/repo" required>
+<p class="muted small">An https or ssh git URL, or <code>owner/repo</code> for GitHub.</p></div>
+<div class="field"><label for="org">Organization</label><input type="text" id="org" name="org" list="orgs" value="${esc(
+    preset.org ?? ''
+  )}" required><datalist id="orgs">${datalist}</datalist></div>
+<div class="field"><label for="name">Repository name <span class="muted">(optional)</span></label><input type="text" id="name" name="name" value="${esc(
+    preset.name ?? ''
+  )}" placeholder="taken from the source URL"></div>
+<button type="submit" class="btn btn-primary">Write the command</button>
+</form>
+${command}
+</div>`;
+  return layout('Import a repository', content, { viewer, path: '/import' });
 }
 
 function commitFields(viewer: Viewer, expectedHead: string | null, messagePlaceholder: string): string {

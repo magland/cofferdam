@@ -17,7 +17,7 @@ Hosting git repositories usually means one big centralized service (GitHub, GitL
 
 ## 3. Current state
 
-Everything described here is implemented and verified end to end by `scripts/smoke.sh` (167 checks: browsing, sessions, every UI operation, authorization denials, CSRF, themes, the JSON API, git clone/push/push-to-create, pages, repository deletion).
+Everything described here is implemented and verified end to end by `scripts/smoke.sh` (182 checks: browsing, sessions, every UI operation, authorization denials, CSRF, themes, the JSON API, git clone/push/push-to-create, pages, repository deletion).
 
 ### 3.1 Running it
 
@@ -86,6 +86,7 @@ UI operation routes (session + CSRF; all POSTs follow POST-redirect-GET):
 |---|---|---|
 | `GET/POST /login`, `POST /logout` | Sign in with username and token; sign out | nothing / session |
 | `GET/POST /new` (optional `?org=`) | Create a repository, optionally with an initial README | push scope over `org/name` |
+| `GET /import` (optional `?org=`, `?src=`) | Writes the one-line command that imports an existing repository (section 3.10); performs nothing | session, push scope over the target |
 | `GET/POST /:org/:repo/edit/:branch/*path` | Edit a text file (≤ 1 MB), commit to the branch | push scope |
 | `GET/POST /:org/:repo/new/:branch[/*dir]` | Create a file; on an empty repository this creates the branch | push scope |
 | `GET/POST /:org/:repo/delete/:branch/*path` | Delete a file with a confirm step | push scope |
@@ -120,7 +121,7 @@ Server-side commits to a bare repo work with a temporary index: `GIT_INDEX_FILE`
 - Creating a repository in a new org creates the org directory; there is no separate org-creation flow. The "initialize with a README" option makes the first commit on `main` through the ops layer, and the same create-file flow offers to make the first commit on an empty repository.
 - Repository deletion resolves real paths and containment-checks against the vault root before any recursive removal, then removes the repo directory and its `<repo>.pages` sibling.
 - Failed logins get one generic message (no username/token distinction).
-- The collapsible CLI hints of the read-only era are gone entirely. Operations belong to the UI now, and a page full of `<details>` boxes explaining git commands works against that; keep new pages clean rather than reintroducing them. What remains is genuinely about the command line: the clone box in the repository toolbar and the clone/push commands on the empty-repository page (as GitHub also does). Publishing a pages site is documented in the README rather than hinted at in the interface.
+- The collapsible CLI hints of the read-only era are gone entirely. Operations belong to the UI now, and a page full of `<details>` boxes explaining git commands works against that; keep new pages clean rather than reintroducing them. What remains is genuinely about the command line: the clone box in the repository toolbar and the clone/push commands on the empty-repository page (as GitHub also does). Publishing a pages site is documented in the README rather than hinted at in the interface. The import page (3.10) is the third and last such case: an operation the server deliberately does not perform.
 
 ### 3.7 Known limitations and pitfalls for the implementer
 
@@ -157,6 +158,16 @@ Those two properties conflict with the markup we generate ourselves, since highl
 
 Mermaid diagrams are the one notable GitHub feature deliberately left out: they would need a multi-megabyte client-side bundle, which the "server renders HTML" principle rules out for now. ```` ```mermaid ```` blocks render as code, which is a reasonable fallback.
 
+### 3.10 Importing an existing repository
+
+Importing is a client-side operation. `git clone --bare` the source, then `git push --mirror` at a vault URL that does not exist yet; push-to-create makes the repository through `ops.createRepo`, so it arrives with the same `receive.*` protections as any other, HEAD pointed at the right branch, and branches and tags in place. `GET /import` writes that command with the organization, the target name, the vault's own host, and the signed-in username filled in, and performs nothing itself.
+
+The clone is `--bare` rather than `--mirror` on purpose: mirroring a GitHub repository drags in `refs/pull/*`, which for a busy repository is thousands of refs the vault has no use for. A bare clone carries branches and tags, and the mirror push then moves exactly those.
+
+We chose this over a server-side import deliberately, and the reasoning should be revisited rather than assumed. A server that clones on the operator's behalf needs outbound network access, a host allowlist and address checks against SSRF, somewhere to put credentials for private sources, a disk budget, and work that outlives a request, which is machinery this project has none of. Doing it on the operator's machine needs none of that: their existing git credentials read the source, their repos token writes the vault, and progress and cancellation come from the terminal. The cost is that the data passes through their machine and that bulk import is a shell loop rather than a form. Revisit if a job model arrives for another reason, and note that `import` is a reserved name (`src/scan.ts`) reserved for exactly that possibility.
+
+The command line is assembled from an allowlist, not a URL parse: an https or ssh git URL, or `owner/repo` shorthand for GitHub, with a character set that cannot carry spaces, quotes, or shell metacharacters. This matters more than usual, because the output is text a reader will paste into their own shell. The page also refuses targets outside the viewer's push scope and names that already exist, since both would fail at push time anyway.
+
 ## 4. Later phases, sketched
 
 - **Issues.** State must live in the vault. Two candidate designs: a sibling directory (`<repo>.issues/` with one markdown-plus-frontmatter file per issue), which is transparent and greppable; or a hidden git ref inside the repo (as git-bug and similar tools do), which travels with clones. We lean toward the sibling directory for consistency with pages, but this is undecided.
@@ -185,3 +196,4 @@ The verification style is `scripts/smoke.sh` plus manual curl and git against th
 7. Whether `receive.maxInputSize` and the `deny*` configs should be applied retroactively to imported repos by a vault-check command.
 8. User deletion and token revocation in the UI (today the escape hatch is hand-editing `vault.json`).
 9. Whether a visitor should be able to override the vault's theme for themselves (a cookie, or following `prefers-color-scheme` when the vault picks a light theme), versus the current position that the theme belongs to the vault.
+10. Whether a vault should ever import server-side (section 3.10), which is the same question as whether it grows a background-job model.

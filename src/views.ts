@@ -104,7 +104,7 @@ export function repoOpts(ctx: RepoCtx, path?: string): PageOpts {
   return { viewer: ctx.viewer, path };
 }
 
-function copyRow(cmd: string): string {
+export function copyRow(cmd: string): string {
   return `<div class="cmd-row"><code>${esc(cmd)}</code><button class="copy-btn" type="button" onclick="copyCmd(this)">Copy</button></div>`;
 }
 
@@ -206,9 +206,11 @@ export function orgPage(
       ? `<div class="empty-state">No repositories in this organization yet.</div>`
       : `<table class="listing"><tbody>${rows}</tbody></table>`;
   const newBtn = viewer
-    ? `<a class="btn btn-primary" href="/new?org=${encodeURIComponent(org)}">New repository</a>`
+    ? `<a class="btn" href="/import?org=${encodeURIComponent(org)}">Import</a><a class="btn btn-primary" href="/new?org=${encodeURIComponent(
+        org
+      )}">New repository</a>`
     : '';
-  const content = `<div class="page-head"><h1>${esc(org)}</h1>${newBtn}</div>${body}`;
+  const content = `<div class="page-head"><h1>${esc(org)}</h1><span class="right-group">${newBtn}</span></div>${body}`;
   return layout(org, content, {
     crumbs: ` / <a href="/${encodeURIComponent(org)}">${esc(org)}</a>`,
     viewer,

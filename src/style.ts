@@ -219,6 +219,7 @@ pre.codeview { margin: 0; padding: 10px 16px; overflow-x: auto; flex: 1; font-si
 .error-page .code { font-family: var(--font-head); font-size: 48px; font-weight: 700; color: var(--fg); }
 
 .form-box { border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; max-width: 620px; }
+.form-box.wide { max-width: 880px; }
 .form-box h1, .form-box h2 { margin-top: 0; }
 .field { margin-bottom: 14px; }
 .field label { display: block; font-weight: 600; margin-bottom: 4px; }

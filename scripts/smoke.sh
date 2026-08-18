@@ -146,6 +146,29 @@ check "delete the file" 302 -b "$JAR" "$BASE/demo/proj/delete/main/docs/notes.md
   --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" --data-urlencode "message="
 check "deleted file is gone" 404 -b "$JAR" "$BASE/demo/proj/blob/main/docs/notes.md"
 
+# ---- import page ----
+
+check "import page needs a session" 302 "$BASE/import"
+check "import page" 200 -b "$JAR" "$BASE/import"
+body_has "import form" 'name="src"'
+check "import command for a github url" 200 -b "$JAR" \
+  --get "$BASE/import" --data-urlencode "src=https://github.com/octocat/Hello-World" --data-urlencode org=demo
+body_has "clone is bare, not mirror" 'git clone --bare https://github.com/octocat/Hello-World'
+body_has "push is a mirror push" 'push --mirror'
+body_has "destination carries the username" "owner@"
+body_lacks "no mirror clone" 'clone --mirror'
+check "import command from owner/repo shorthand" 200 -b "$JAR" \
+  --get "$BASE/import" --data-urlencode src=octocat/Hello-World --data-urlencode org=demo
+body_has "shorthand expands to github" 'https://github.com/octocat/Hello-World.git'
+check "shell metacharacters refused" 400 -b "$JAR" \
+  --get "$BASE/import" --data-urlencode "src=https://github.com/a/b; rm -rf ~" --data-urlencode org=demo
+check "non-git scheme refused" 400 -b "$JAR" \
+  --get "$BASE/import" --data-urlencode "src=file:///etc/passwd" --data-urlencode org=demo
+check "existing repo refused" 409 -b "$JAR" \
+  --get "$BASE/import" --data-urlencode src=octocat/proj --data-urlencode org=demo
+check "import is a reserved repo name" 400 -b "$JAR" "$BASE/new" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode org=demo --data-urlencode name=import
+
 # ---- markdown rendering ----
 
 MD_DOC="$(cat <<'EOF'
@@ -352,6 +375,8 @@ check "alice cannot create out of scope" 403 -b "$ALICE_JAR" "$BASE/new" \
   --data-urlencode "csrf=$ALICE_CSRF" --data-urlencode org=other --data-urlencode name=x
 check "alice cannot delete repo" 403 -b "$ALICE_JAR" "$BASE/demo/proj/settings/delete" \
   --data-urlencode "csrf=$ALICE_CSRF" --data-urlencode confirm=demo/proj
+check "alice cannot import out of scope" 403 -b "$ALICE_JAR" \
+  --get "$BASE/import" --data-urlencode src=octocat/Hello-World --data-urlencode org=other
 
 # ---- a delegated org admin is an admin, but not for vault-wide settings ----
 

@@ -21,6 +21,22 @@ import { isBinary } from './render';
 
 const MAX_EDIT_SIZE = 1024 * 1024;
 
+// The parsed source is pasted into a command the reader runs in their own
+// shell, so the accepted shapes are an allowlist of harmless characters rather
+// than a general URL parse: no spaces, quotes, or shell metacharacters can
+// survive it.
+const HTTPS_SOURCE = /^https:\/\/[A-Za-z0-9.-]+(?::\d+)?\/[A-Za-z0-9._/-]+$/;
+const SSH_SOURCE = /^git@[A-Za-z0-9.-]+:[A-Za-z0-9._/-]+$/;
+const GITHUB_SHORTHAND = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function parseSource(input: string): { url: string; name: string } | null {
+  const url = GITHUB_SHORTHAND.test(input) ? `https://github.com/${input}.git` : input;
+  if (!HTTPS_SOURCE.test(url) && !SSH_SOURCE.test(url)) return null;
+  const tail = url.split(/[/:]/).pop() ?? '';
+  const name = tail.replace(/\.git$/i, '');
+  return name === '' ? null : { url, name };
+}
+
 function urlOf(repo: { org: string; name: string }): string {
   return repoUrl({ org: repo.org, repo: repo.name });
 }
@@ -127,6 +143,60 @@ export function registerWebOps(app: Express, root: string): void {
   });
 
   // ---- new repository ----
+
+  // The clone is --bare rather than --mirror: mirroring a GitHub repository
+  // drags in refs/pull/*, thousands of refs the vault has no use for. A bare
+  // clone carries branches and tags, which is what the push then mirrors.
+  // Importing is a client-side operation: git copies the repository from its
+  // current home and pushes it here, where push-to-create makes it. The server
+  // never fetches from another host, so it needs no outbound access, no stored
+  // credentials for other services, and no work that outlives a request. This
+  // page only writes the command.
+  app.get('/import', (req, res) => {
+    const viewer = requireViewerPage(req, res);
+    if (!viewer) return;
+    const orgs = listOrgs(root).map((o) => o.name);
+    const src = typeof req.query.src === 'string' ? req.query.src.trim() : '';
+    const org = typeof req.query.org === 'string' ? req.query.org.trim() : '';
+    const wanted = typeof req.query.name === 'string' ? req.query.name.trim() : '';
+    const preset = { src, org, name: wanted };
+    const fail = (status: number, error: string) => {
+      res.status(status).type('html').send(forms.importPage(viewer, orgs, preset, null, error));
+    };
+    if (src === '') {
+      res.type('html').send(forms.importPage(viewer, orgs, preset, null));
+      return;
+    }
+    const source = parseSource(src);
+    if (!source) {
+      fail(400, 'The source must be an https or ssh git URL, or owner/repo for GitHub.');
+      return;
+    }
+    const name = wanted === '' ? source.name : wanted;
+    if (!isValidName(org) || !isValidName(name)) {
+      fail(400, 'Organization and repository names may use letters, digits, dot, underscore, and dash, and must not be reserved words.');
+      return;
+    }
+    if (!canPush(viewer.auth, org, name)) {
+      fail(403, `Your push scope does not cover ${org}/${name}, so the push would be refused.`);
+      return;
+    }
+    if (findRepo(root, org, name)) {
+      fail(409, `Repository ${org}/${name} already exists; a mirror push would overwrite it.`);
+      return;
+    }
+    const host = req.get('host') ?? '';
+    if (!/^[A-Za-z0-9.:_-]+$/.test(host)) {
+      fail(400, 'This vault is being served under a host name we will not put on a command line.');
+      return;
+    }
+    const dest = `${req.protocol}://${encodeURIComponent(viewer.auth.username)}@${host}/${encodeURIComponent(
+      org
+    )}/${encodeURIComponent(name)}`;
+    const tmp = `${name}.import.git`;
+    const command = `git clone --bare ${source.url} ${tmp} && git -C ${tmp} push --mirror ${dest} && rm -rf ${tmp}`;
+    res.type('html').send(forms.importPage(viewer, orgs, preset, { command, org, name }));
+  });
 
   app.get('/new', (req, res) => {
     const viewer = requireViewerPage(req, res);

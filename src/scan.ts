@@ -12,6 +12,7 @@ const RESERVED_NAMES = new Set([
   'login',
   'logout',
   'new',
+  'import',
   'admin',
   'settings',
 ]);
