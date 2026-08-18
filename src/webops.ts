@@ -196,7 +196,13 @@ export function registerWebOps(app: Express, root: string, lfs: LfsContext | nul
       collection
     )}/${encodeURIComponent(name)}`;
     const tmp = `${name}.import.git`;
-    const command = `git clone --bare ${source.url} ${tmp} && git -C ${tmp} push --mirror ${dest} && rm -rf ${tmp}`;
+    // GIT_ASKPASS= on the push keeps the password prompt in the terminal the
+    // command was pasted into. Editors that set GIT_ASKPASS (VS Code does for
+    // its integrated terminal) otherwise redirect it to a dialog elsewhere in
+    // the window, and an unanswered dialog looks exactly like a hang: git
+    // prints nothing after the clone and waits. Credential helpers are
+    // consulted before askpass, so a stored credential still works.
+    const command = `git clone --bare ${source.url} ${tmp} && GIT_ASKPASS= git -C ${tmp} push --mirror ${dest} && rm -rf ${tmp}`;
     res.type('html').send(forms.importPage(viewer, collections, preset, { command, collection, name }));
   });
 

@@ -1,6 +1,15 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  CredentialTarget,
+  approveCredential,
+  configuredHelper,
+  credentialTarget,
+  readCredential,
+  rejectCredential,
+  setHelper,
+} from './credentials';
 import { createApp } from './server';
 import { isValidName } from './scan';
 import { DEFAULT_THEME, themeNames } from './themes';
@@ -31,6 +40,18 @@ function usage(code = 0): never {
 
   hubbit whoami
       Show the user, scopes, and token restriction for the current token.
+
+  hubbit login [--helper <name>]
+      Hand the token to git's credential store, so that clone, fetch, push,
+      and git lfs against this vault stop asking for a password. The token is
+      verified first, and read back afterwards to confirm it was really kept.
+      --helper picks where it lives (store, cache, libsecret, osxkeychain)
+      and is recorded for this vault's host alone; without it, whatever git
+      is already configured to use for that host is used, and login refuses
+      rather than storing nothing when that is nothing.
+
+  hubbit logout
+      Remove this vault's stored credential again.
 
 User commands talk to a running hubbit server:
   HUBBIT_HOST    server URL, e.g. http://127.0.0.1:3000   (or --host <url>)
@@ -261,6 +282,158 @@ async function whoamiCmd(args: string[]) {
   if (data.tokenScope) console.log(`  this token is restricted to: ${(data.tokenScope as string[]).join(', ')}`);
 }
 
+interface LoginArgs {
+  host: string | null;
+  token: string | null;
+  helper: string | null;
+}
+
+function parseLoginArgs(args: string[]): LoginArgs {
+  const out: LoginArgs = { host: null, token: null, helper: null };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '-h' || a === '--help') usage();
+    else if (a === '--host') out.host = args[++i];
+    else if (a === '--token') out.token = args[++i];
+    else if (a === '--helper') out.helper = args[++i];
+    else {
+      console.error(`Unexpected argument: ${a}`);
+      process.exit(1);
+    }
+  }
+  return out;
+}
+
+function loginTarget(args: LoginArgs): { host: string; target: CredentialTarget } {
+  const host = (args.host ?? process.env.HUBBIT_HOST ?? '').replace(/\/+$/, '');
+  if (!host) {
+    console.error('No server configured. Set HUBBIT_HOST (e.g. https://vault.example.com) or pass --host <url>.');
+    process.exit(1);
+  }
+  try {
+    return { host, target: credentialTarget(host) };
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  }
+}
+
+// A token is a credential and a terminal keeps scrollback, so it is read
+// without echo. Passing --token instead would leave it in shell history.
+// Raw mode rather than readline: readline redraws its line through cursor
+// control that bypasses any echo suppression, which erases the prompt.
+function promptToken(prompt: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const input = process.stdin;
+    if (!input.isTTY) {
+      reject(new Error('No token given and no terminal to ask on. Set HUBBIT_TOKEN or pass --token <t>.'));
+      return;
+    }
+    process.stdout.write(prompt);
+    input.setRawMode(true);
+    input.resume();
+    input.setEncoding('utf8');
+    let value = '';
+    const finish = (err: Error | null) => {
+      input.removeListener('data', onData);
+      input.setRawMode(false);
+      input.pause();
+      process.stdout.write('\n');
+      if (err) reject(err);
+      else resolve(value.trim());
+    };
+    // Raw mode delivers ^C as a byte rather than as SIGINT, so cancelling has
+    // to be handled here or it would be pasted into the token.
+    const onData = (chunk: string) => {
+      for (const ch of chunk) {
+        if (ch === '\r' || ch === '\n' || ch === '\u0004') return finish(null);
+        if (ch === '\u0003') return finish(new Error('Cancelled.'));
+        if (ch === '\u007f' || ch === '\b') value = value.slice(0, -1);
+        else if (ch >= ' ') value += ch;
+      }
+    };
+    input.on('data', onData);
+  });
+}
+
+async function loginCmd(args: string[]) {
+  const a = parseLoginArgs(args);
+  const { host, target } = loginTarget(a);
+
+  // Settle where the token would go before asking for one: being prompted for
+  // a token and only then told there is nowhere to put it is the wrong order.
+  if (a.helper) await setHelper(target.url, a.helper);
+  const helper = await configuredHelper(target.url);
+  if (!helper) {
+    console.error(`No credential helper is configured for ${target.url}, so git has nowhere to keep a token.`);
+    console.error('Storing one would silently do nothing, so this is refused rather than reported as success.');
+    console.error('');
+    console.error('Choose where the token should live and run login again:');
+    console.error('  hubbit login --helper store        a file at ~/.git-credentials, mode 0600, in plain text');
+    console.error('  hubbit login --helper cache        memory only, forgotten after 15 minutes');
+    console.error('  hubbit login --helper libsecret    the desktop keyring, on Linux');
+    console.error('  hubbit login --helper osxkeychain  the login keychain, on macOS');
+    console.error('');
+    console.error(`The choice is recorded for ${target.url} alone; other remotes keep whatever they use now.`);
+    process.exit(1);
+  }
+
+  const token = a.token ?? process.env.HUBBIT_TOKEN ?? (await promptToken(`Token for ${target.url}: `));
+  if (!token) {
+    console.error('No token given.');
+    process.exit(1);
+  }
+
+  // Verified before it is stored. A token that does not work is worse stored
+  // than absent: git would then fail with it instead of asking for a better one.
+  const who = await api({ host, token }, 'GET', '/api/whoami');
+  const username = String(who.username ?? '');
+  if (!username) {
+    console.error(`${host} did not say who this token belongs to.`);
+    process.exit(1);
+  }
+
+  await approveCredential(target, username, token);
+
+  // Read back rather than trusting the exit code: approve succeeds whether or
+  // not the helper kept anything, and a helper that is configured but not
+  // installed fails only here.
+  const stored = await readCredential(target);
+  if (!stored || stored.username !== username || stored.password !== token) {
+    console.error(`The credential helper '${helper}' did not keep the token for ${target.url}.`);
+    console.error(`Check that git credential-${helper} is installed and working.`);
+    process.exit(1);
+  }
+
+  console.log(`Stored the token for '${username}' at ${target.url} (helper: ${helper}).`);
+  console.log(`  ${formatScopes(who as { scope: string[]; admin: string[] })}`);
+  if (who.tokenScope) console.log(`  this token is restricted to: ${(who.tokenScope as string[]).join(', ')}`);
+  console.log('');
+  console.log('git clone, fetch, push, and git lfs against this vault will no longer ask for a password.');
+  console.log('Run `hubbit logout` to remove it again.');
+}
+
+async function logoutCmd(args: string[]) {
+  const a = parseLoginArgs(args);
+  if (a.token || a.helper) {
+    console.error('logout takes only --host: it removes a stored credential rather than making one.');
+    process.exit(1);
+  }
+  const { target } = loginTarget(a);
+  const stored = await readCredential(target);
+  if (!stored) {
+    console.log(`No stored credential for ${target.url}.`);
+    return;
+  }
+  await rejectCredential(target, stored.username);
+  const after = await readCredential(target);
+  if (after) {
+    console.error(`The credential for '${after.username}' at ${target.url} is still there: the helper did not erase it.`);
+    process.exit(1);
+  }
+  console.log(`Removed the stored credential for '${stored.username}' at ${target.url}.`);
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const cmd = args[0];
@@ -270,6 +443,8 @@ async function main() {
   else if (cmd === 'user' && args[1] === 'grant') await userGrantCmd(args.slice(2));
   else if (cmd === 'user' && args[1] === 'list') await userListCmd(args.slice(2));
   else if (cmd === 'whoami') await whoamiCmd(args.slice(1));
+  else if (cmd === 'login') await loginCmd(args.slice(1));
+  else if (cmd === 'logout') await logoutCmd(args.slice(1));
   else if (cmd === 'user') {
     console.error('Usage: hubbit user <add|grant|list> ... (see hubbit --help)');
     process.exit(1);

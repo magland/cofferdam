@@ -155,6 +155,9 @@ check "import command for a github url" 200 -b "$JAR" \
   --get "$BASE/import" --data-urlencode "src=https://github.com/octocat/Hello-World" --data-urlencode collection=demo
 body_has "clone is bare, not mirror" 'git clone --bare https://github.com/octocat/Hello-World'
 body_has "push is a mirror push" 'push --mirror'
+# Without this the prompt goes to an editor's askpass dialog, and an unanswered
+# dialog looks like a hang: git prints nothing after the clone and waits.
+body_has "push prompts in the terminal" 'GIT_ASKPASS= git -C'
 body_has "destination carries the username" "owner@"
 body_lacks "no mirror clone" 'clone --mirror'
 check "import command from owner/repo shorthand" 200 -b "$JAR" \
@@ -415,6 +418,77 @@ PASS=$((PASS+2)); echo "ok: raw CSP and content-type"
 check "api whoami" 200 -H "Authorization: Bearer $OWNER_TOKEN" "$BASE/api/whoami"
 body_has "whoami username" '"username":"owner"'
 check "api rejects session cookie" 401 -b "$JAR" "$BASE/api/whoami"
+
+# ---- hubbit login: the token in git's credential store ----
+
+# An isolated HOME so this never touches the developer's own git configuration,
+# and an askpass that trips a wire rather than answering, standing in for an
+# editor's credential dialog. Nothing in this section may ask for a credential,
+# and a tripwire says so immediately where a dialog would simply wait.
+CRED_HOME="$TMP/credhome"
+TRIPPED="$TMP/askpass-was-called"
+mkdir -p "$CRED_HOME"
+cat > "$TMP/askpass" <<ASKPASS
+#!/bin/sh
+touch "$TRIPPED"
+exit 1
+ASKPASS
+chmod +x "$TMP/askpass"
+cred_env() { env HOME="$CRED_HOME" GIT_ASKPASS="$TMP/askpass" SSH_ASKPASS="$TMP/askpass" "$@"; }
+cli() { cred_env node dist/index.js "$@"; }
+
+run_ok() {
+  local desc="$1"; shift
+  if ! "$@" > "$BODY" 2>&1; then echo "FAIL: $desc"; head -c 2000 "$BODY"; echo; exit 1; fi
+  PASS=$((PASS+1)); echo "ok: $desc"
+}
+run_fails() {
+  local desc="$1"; shift
+  if "$@" > "$BODY" 2>&1; then echo "FAIL: $desc (expected a non-zero exit)"; head -c 2000 "$BODY"; echo; exit 1; fi
+  PASS=$((PASS+1)); echo "ok: $desc"
+}
+no_prompt() {
+  local desc="$1"
+  if [ -e "$TRIPPED" ]; then echo "FAIL: $desc (git asked for a credential)"; exit 1; fi
+  PASS=$((PASS+1)); echo "ok: $desc"
+}
+
+# `git credential approve` with no helper configured stores nothing and still
+# exits zero, so login has to refuse rather than report success.
+run_fails "login refuses when no credential helper is configured" \
+  cli login --host "$BASE" --token "$OWNER_TOKEN"
+body_has "login names the helpers it could use" 'hubbit login --helper store'
+
+run_fails "login refuses a bad token before storing it" \
+  cli login --host "$BASE" --token hubbit_not_a_real_token --helper store
+if [ -e "$CRED_HOME/.git-credentials" ]; then echo "FAIL: a rejected token was stored anyway"; exit 1; fi
+PASS=$((PASS+1)); echo "ok: nothing stored for a rejected token"
+
+run_ok "login stores the token" cli login --host "$BASE" --token "$OWNER_TOKEN" --helper store
+grep -q "$OWNER_TOKEN" "$CRED_HOME/.git-credentials" || { echo "FAIL: token not in the credential store"; exit 1; }
+PASS=$((PASS+1)); echo "ok: token is in the credential store"
+CRED_MODE="$(stat -c '%a' "$CRED_HOME/.git-credentials" 2>/dev/null || stat -f '%Lp' "$CRED_HOME/.git-credentials")"
+[ "$CRED_MODE" = 600 ] || { echo "FAIL: credential file is mode $CRED_MODE, not 0600"; exit 1; }
+PASS=$((PASS+1)); echo "ok: credential file is mode 0600"
+# Recorded for this host alone, so other remotes keep whatever they use now.
+HOME="$CRED_HOME" git config --global --get-regexp '^credential\.' | grep -q "credential.$BASE.helper store" \
+  || { echo "FAIL: helper not recorded for this host alone"; exit 1; }
+PASS=$((PASS+1)); echo "ok: helper recorded for this host alone"
+
+# The point of all of it: clone and push that ask nothing, with no token in the
+# environment. git-lfs is covered further down, through the same store.
+rm -rf "$TMP/credclone"
+run_ok "clone with only a stored credential" cred_env git clone -q "$BASE/demo/proj" "$TMP/credclone"
+git -C "$TMP/credclone" commit -q --allow-empty -m "pushed with a stored credential"
+run_ok "push with only a stored credential" cred_env git -C "$TMP/credclone" push -q origin HEAD:main
+no_prompt "neither clone nor push asked for a credential"
+
+run_ok "logout removes it" cli logout --host "$BASE"
+if [ -s "$CRED_HOME/.git-credentials" ]; then echo "FAIL: credential still stored after logout"; exit 1; fi
+PASS=$((PASS+1)); echo "ok: credential file is empty after logout"
+run_ok "logout again is not an error" cli logout --host "$BASE"
+body_has "logout says there was nothing stored" 'No stored credential'
+no_prompt "reading the store back never prompts"
 
 # ---- git over HTTP ----
 

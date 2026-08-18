@@ -18,9 +18,10 @@ code, pre, .mono { font-family: var(--font-mono); }
 .container { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
 .topbar { background: var(--surface); border-bottom: 1px solid var(--border); }
 .topbar .container { display: flex; align-items: center; gap: 12px; height: 52px; }
-/* The brand is the logotype from logo.ts, which inherits the text colour. The
-   wordmark's box is ascender to baseline with nothing below, so 16px here puts
-   the x-height at 10px. */
+/* The brand is the logotype from logo.ts, which inherits the text colour. Its
+   243 x 60 box runs ascender to baseline with nothing below, and the x-height
+   fills the lower two thirds, so 16px here puts the x-height at 10.7px and the
+   word at 65px wide. */
 .brand { display: flex; align-items: center; color: var(--fg); flex: none; }
 .brand svg { display: block; height: 16px; width: auto; }
 .brand:hover { text-decoration: none; }

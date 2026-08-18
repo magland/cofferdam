@@ -71,7 +71,7 @@ export function importPage(
   const command = result
     ? `<h2>Run this</h2>
 ${copyRow(result.command)}
-<p class="muted small">git asks for a password: paste a token with push access to ${esc(result.collection)}. The repository is created here by the push, so ${esc(
+<p class="muted small">Run <code>hubbit login</code> once and git takes the token from its credential store, so this push, and every later clone, push, and <code>git lfs</code> against this vault, asks for nothing. Without it git asks for a password in the terminal: paste a token with push access to ${esc(result.collection)}. The <code>GIT_ASKPASS=</code> prefix is what keeps that prompt in the terminal; without it an editor such as VS Code answers it with a dialog box elsewhere in the window, and if that goes unnoticed the command appears to hang after the clone. The repository is created here by the push, so ${esc(
         result.collection
       )}/${esc(result.name)} must not exist yet. Branches and tags come across; issues and pull requests do not. A repository using Git LFS arrives with its pointer files but not the objects behind them; run <code>git lfs fetch --all &lt;source&gt;</code> and then <code>git lfs push --all &lt;this vault&gt;</code> inside the bare clone before removing it.</p>`
     : '';

@@ -34,7 +34,7 @@ The `.git` suffix on repository directory names is optional; it is stripped for 
 - Anonymous `git clone http://host:port/collection/repo` over smart HTTP
 - Authenticated `git push`, including push-to-create for new repositories
 - Git LFS, with objects in an S3-compatible bucket or inside the vault (see below)
-- A JSON API and a `hubbit` CLI for user management
+- A JSON API and a `hubbit` CLI for user management, including `hubbit login` to hand the token to git so pushing stops asking for it
 - Per-repository pages sites served from a sibling `<repo>.pages` directory
 
 There is no database and no build step for the frontend: all state lives in the vault directory, and the server renders plain HTML.
@@ -116,6 +116,8 @@ hubbit whoami
 hubbit user list
 ```
 
+`hubbit login` and `hubbit logout` are the exception to that: they call the server once to check who the token belongs to, then write to git's credential store on the machine they run on (see [Not typing the token every time](#not-typing-the-token-every-time)).
+
 `--host <url>` and `--token <t>` override the environment per command. By default the server binds 127.0.0.1. Use `--host 0.0.0.0` on `serve` to expose it on the network; note that this exposes read access to every repository in the vault, and that tokens then travel over plain HTTP unless you put TLS in front. The first line of the `description` file inside a bare repository is shown in listings, as with classic git hosting.
 
 ## Pushing
@@ -135,25 +137,58 @@ git push http://127.0.0.1:3000/mycollection/myrepo main
 
 Pushing to a repository that does not exist yet creates it, provided the target matches your scope; the collection directory is created as needed, and after the first push HEAD points at the pushed branch. Repositories created this way get `receive.denyNonFastForwards`, `receive.denyDeletes`, and a `receive.maxInputSize` limit of 2 GiB. Anonymous fetch stays open; only pushes require authentication.
 
+### Not typing the token every time
+
+Being asked for the token on every push is the wrong default for a vault you use daily. A token is the password git sends over Basic auth, so the place to keep it is git's own credential store, which `git clone`, `git fetch`, `git push`, and `git lfs` all consult through the same plumbing. `hubbit login` puts it there:
+
+```bash
+export HUBBIT_HOST=https://vault.example.com
+hubbit login --helper store        # asks for the token, without echo
+```
+
+Afterwards nothing about this vault prompts again. `hubbit logout` removes the credential.
+
+`--helper` says where the token lives, and is recorded for this vault's host alone, so other remotes keep whatever they already use:
+
+| Helper | Where the token goes |
+| --- | --- |
+| `store` | `~/.git-credentials`, mode 0600, in plain text, the same posture as a GitHub token |
+| `cache` | memory only, forgotten after 15 minutes |
+| `libsecret` | the desktop keyring, on Linux |
+| `osxkeychain` | the login keychain, on macOS |
+
+Pass `--helper` once; later runs of `hubbit login` reuse whatever is already configured for the host. If nothing is, the command refuses rather than reporting success, because `git credential approve` with no helper configured stores nothing and still exits zero. The token is checked against `/api/whoami` before being stored, so a mistyped one fails immediately rather than at the next push, and it is read back afterwards, which is what catches a helper that is configured but not installed.
+
+Note that this is a client-side arrangement: the vault has no notion of a login, holds no session for git, and is unaware that a credential was stored. Revoking access is still a matter of removing the token from `vault.json`.
+
+If you already export `HUBBIT_TOKEN` for the CLI, a credential helper reading it directly is a reasonable alternative, and keeps the token out of any file git writes:
+
+```bash
+git config --global 'credential.https://vault.example.com.helper' \
+  '!f(){ echo username=jeremy; echo "password=$HUBBIT_TOKEN"; }; f'
+```
+
+The trade-off is that this works only where the variable is exported, so editors, GUI git clients, and cron jobs see no credential at all.
+
 ### Importing an existing repository
 
 Importing runs on your machine, not on the server. Sign in, open **Import** on any collection page (or go to `/import`), give it a GitHub URL or `owner/repo`, and the page writes the exact command:
 
 ```bash
 git clone --bare https://github.com/owner/repo.git repo.import.git && \
-  git -C repo.import.git push --mirror https://you@vault.example.com/mycollection/repo && \
+  GIT_ASKPASS= git -C repo.import.git push --mirror https://you@vault.example.com/mycollection/repo && \
   rm -rf repo.import.git
 ```
 
-git asks for a password on the push: that is your hubbit token. The push creates the repository, so the target must not exist yet, and your push scope has to cover it. Branches and tags come across. Issues and pull requests do not, and the description is set afterwards in repository settings.
+If you have run `hubbit login`, the push takes the token from git's credential store and asks nothing. Otherwise git asks for a password on the push: that is your hubbit token. The `GIT_ASKPASS=` prefix keeps that prompt in the terminal you pasted the command into. Without it, an editor that sets `GIT_ASKPASS` for its integrated terminal, as VS Code does, answers the prompt with a dialog box elsewhere in the window instead; if that dialog goes unnoticed, git prints nothing after the clone and waits, which reads as a hang. The push creates the repository, so the target must not exist yet, and your push scope has to cover it. Branches and tags come across. Issues and pull requests do not, and the description is set afterwards in repository settings.
 
 If the repository uses Git LFS, the mirror push carries the pointer files but not the objects behind them, and the imported files will show as missing until you bring those over too. Do it from inside the bare clone, before deleting it:
 
 ```bash
 git clone --bare https://github.com/owner/repo.git repo.import.git
-git -C repo.import.git push --mirror https://you@vault.example.com/mycollection/repo
+GIT_ASKPASS= git -C repo.import.git push --mirror https://you@vault.example.com/mycollection/repo
 git -C repo.import.git lfs fetch --all https://github.com/owner/repo.git
-git -C repo.import.git lfs push --all https://you@vault.example.com/mycollection/repo
+GIT_ASKPASS= git -C repo.import.git lfs push --all https://you@vault.example.com/mycollection/repo
 rm -rf repo.import.git
 ```
 
