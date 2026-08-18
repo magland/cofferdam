@@ -158,6 +158,7 @@ body_has "push is a mirror push" 'push --mirror'
 # Without this the prompt goes to an editor's askpass dialog, and an unanswered
 # dialog looks like a hang: git prints nothing after the clone and waits.
 body_has "push prompts in the terminal" 'GIT_ASKPASS= git -C'
+body_has "a way back to the collection" 'href="/demo">Back to demo'
 body_has "destination carries the username" "owner@"
 body_lacks "no mirror clone" 'clone --mirror'
 check "import command from owner/repo shorthand" 200 -b "$JAR" \
