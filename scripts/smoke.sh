@@ -445,6 +445,265 @@ echo '<h1>pages ok</h1>' > "$VAULT/pushed/created.pages/index.html"
 check "pages site served" 200 "$BASE/pushed/created/pages/"
 body_has "pages content" 'pages ok'
 
+# ---- Git LFS: batch API and local transfer routes ----
+# All of this runs against the local backend, so the suite needs no bucket
+# credentials.
+
+check "new repo form for lfs" 200 -b "$JAR" "$BASE/new"
+CSRF="$(csrf_of)"
+check "create demo/lfsdemo" 302 -b "$JAR" "$BASE/new" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=lfsdemo \
+  --data-urlencode init=1
+
+LFS_BATCH="$BASE/demo/lfsdemo/info/lfs/objects/batch"
+LFS_VERIFY="$BASE/demo/lfsdemo/info/lfs/objects/verify"
+LFS_CT='Content-Type: application/vnd.git-lfs+json'
+printf 'hello lfs content' > "$TMP/lfs-obj"
+LFS_OID="$(sha256sum "$TMP/lfs-obj" | cut -d' ' -f1)"
+LFS_SIZE="$(wc -c < "$TMP/lfs-obj" | tr -d ' ')"
+
+check "batch download of an absent object" 200 -X POST "$LFS_BATCH" -H "$LFS_CT" \
+  -d '{"operation":"download","transfers":["basic"],"objects":[{"oid":"'"$LFS_OID"'","size":'"$LFS_SIZE"'}]}'
+body_has "absent object carries a per-object 404" '"code":404'
+body_lacks "absent object gets no download action" '"actions"'
+
+# git-lfs derives its endpoint by appending .git/info/lfs to the remote URL,
+# so the .git-suffixed path must resolve to the same repository.
+check "batch endpoint resolves under the .git suffix" 200 -X POST \
+  "$BASE/demo/lfsdemo.git/info/lfs/objects/batch" -H "$LFS_CT" \
+  -d '{"operation":"download","objects":[]}'
+body_has "empty batch is valid" '"objects":\[\]'
+
+check "anonymous batch upload is 401" 401 -D "$TMP/lfs-headers" -X POST "$LFS_BATCH" -H "$LFS_CT" \
+  -d '{"operation":"upload","objects":[{"oid":"'"$LFS_OID"'","size":'"$LFS_SIZE"'}]}'
+grep -qi 'lfs-authenticate: basic' "$TMP/lfs-headers" || { echo "FAIL: 401 without LFS-Authenticate"; exit 1; }
+PASS=$((PASS+1)); echo "ok: 401 carries LFS-Authenticate"
+
+check "batch upload without push scope is 403" 403 -u "alice:$ALICE_TOKEN" -X POST \
+  "$BASE/pushed/created/info/lfs/objects/batch" -H "$LFS_CT" \
+  -d '{"operation":"upload","objects":[{"oid":"'"$LFS_OID"'","size":'"$LFS_SIZE"'}]}'
+
+check "malformed object id is 422" 422 -u "owner:$OWNER_TOKEN" -X POST "$LFS_BATCH" -H "$LFS_CT" \
+  -d '{"operation":"upload","objects":[{"oid":"not-an-oid","size":3}]}'
+
+check "unsupported transfer adapter is 422" 422 -X POST "$LFS_BATCH" -H "$LFS_CT" \
+  -d '{"operation":"download","transfers":["custom"],"objects":[]}'
+
+LFS_BIG_OID="$(printf 'oversize' | sha256sum | cut -d' ' -f1)"
+check "oversize upload gets a per-object 422" 200 -u "owner:$OWNER_TOKEN" -X POST "$LFS_BATCH" -H "$LFS_CT" \
+  -d '{"operation":"upload","objects":[{"oid":"'"$LFS_BIG_OID"'","size":6000000000}]}'
+body_has "per-object size error" '"code":422'
+body_has "size error names the limit" '5000000000'
+
+check "batch upload offers actions" 200 -u "owner:$OWNER_TOKEN" -X POST "$LFS_BATCH" -H "$LFS_CT" \
+  -d '{"operation":"upload","objects":[{"oid":"'"$LFS_OID"'","size":'"$LFS_SIZE"'}]}'
+body_has "upload action offered" '"upload":{"href"'
+body_has "verify action offered" '"verify":{"href"'
+LFS_UPLOAD_URL="$({ grep -o '"href":"[^"]*"' "$BODY" || true; } | head -1 | sed 's/^"href":"//;s/"$//')"
+[ -n "$LFS_UPLOAD_URL" ] || { echo "FAIL: no upload href in the batch response"; exit 1; }
+
+check "tampered transfer signature is 403" 403 -X PUT --data-binary "@$TMP/lfs-obj" "${LFS_UPLOAD_URL}Zm9v"
+LFS_EXPIRED_URL="$(printf '%s' "$LFS_UPLOAD_URL" | sed 's/exp=[0-9]*/exp=1000000000/')"
+check "expired transfer URL is 403" 403 -X PUT --data-binary "@$TMP/lfs-obj" "$LFS_EXPIRED_URL"
+# Every byte in the URL must be covered by the signature, so an exp that only
+# survives a lenient parse has to be refused rather than truncated.
+check "trailing junk on exp is 403" 403 -X PUT --data-binary "@$TMP/lfs-obj" \
+  "$(printf '%s' "$LFS_UPLOAD_URL" | sed 's/\(exp=[0-9]*\)/\1zzz/')"
+
+LFS_STORED="$VAULT/demo/lfsdemo.lfs/${LFS_OID:0:2}/${LFS_OID:2:2}/$LFS_OID"
+check "upload with mismatched content is 422" 422 -X PUT --data-binary 'not the content' "$LFS_UPLOAD_URL"
+[ ! -e "$LFS_STORED" ] || { echo "FAIL: mismatched upload left an object behind"; exit 1; }
+PASS=$((PASS+1)); echo "ok: mismatched upload leaves no object"
+
+check "upload the object" 200 -X PUT --data-binary "@$TMP/lfs-obj" "$LFS_UPLOAD_URL"
+[ -e "$LFS_STORED" ] || { echo "FAIL: uploaded object not stored in the vault"; exit 1; }
+PASS=$((PASS+1)); echo "ok: object stored under <repo>.lfs"
+
+check "verify a correct upload" 200 -u "owner:$OWNER_TOKEN" -X POST "$LFS_VERIFY" -H "$LFS_CT" \
+  -d '{"oid":"'"$LFS_OID"'","size":'"$LFS_SIZE"'}'
+check "verify with a size mismatch is 422" 422 -u "owner:$OWNER_TOKEN" -X POST "$LFS_VERIFY" -H "$LFS_CT" \
+  -d '{"oid":"'"$LFS_OID"'","size":9999}'
+LFS_ABSENT_OID="$(printf 'never uploaded' | sha256sum | cut -d' ' -f1)"
+check "verify of an absent object is 404" 404 -u "owner:$OWNER_TOKEN" -X POST "$LFS_VERIFY" -H "$LFS_CT" \
+  -d '{"oid":"'"$LFS_ABSENT_OID"'","size":14}'
+
+check "second identical upload batch deduplicates" 200 -u "owner:$OWNER_TOKEN" -X POST "$LFS_BATCH" -H "$LFS_CT" \
+  -d '{"operation":"upload","objects":[{"oid":"'"$LFS_OID"'","size":'"$LFS_SIZE"'}]}'
+body_lacks "no actions on an already-stored object" '"actions"'
+
+check "batch download of the stored object" 200 -X POST "$LFS_BATCH" -H "$LFS_CT" \
+  -d '{"operation":"download","objects":[{"oid":"'"$LFS_OID"'","size":'"$LFS_SIZE"'}]}'
+body_has "download action offered" '"download":{"href"'
+# Repeated object ids share one storage lookup but must still be answered one
+# for one, so an anonymous request cannot fan out to the bucket.
+check "a repeated object id is answered once per request entry" 200 -X POST "$LFS_BATCH" -H "$LFS_CT" \
+  -d '{"operation":"download","objects":[{"oid":"'"$LFS_OID"'","size":'"$LFS_SIZE"'},{"oid":"'"$LFS_OID"'","size":'"$LFS_SIZE"'},{"oid":"'"$LFS_OID"'","size":'"$LFS_SIZE"'}]}'
+[ "$(grep -o '"oid"' "$BODY" | wc -l)" = 3 ] || { echo "FAIL: repeated oids not answered one for one"; head -c 500 "$BODY"; exit 1; }
+PASS=$((PASS+1)); echo "ok: three repeated oids yield three response objects"
+LFS_DL_URL="$({ grep -o '"href":"[^"]*"' "$BODY" || true; } | head -1 | sed 's/^"href":"//;s/"$//')"
+curl -sS -o "$TMP/lfs-roundtrip" "$LFS_DL_URL"
+cmp -s "$TMP/lfs-obj" "$TMP/lfs-roundtrip" || { echo "FAIL: downloaded object differs from the upload"; exit 1; }
+PASS=$((PASS+1)); echo "ok: object bytes round-trip through the transfer routes"
+
+# Push-to-create has to survive LFS. git fetches the remote's refs before
+# running the pre-push hook that uploads objects, and that advertisement is
+# what creates the repository, so the batch call that follows must find it.
+check "batch upload 404s before the repository exists" 404 -u "owner:$OWNER_TOKEN" -X POST \
+  "$BASE/fresh/lfsrepo.git/info/lfs/objects/batch" -H "$LFS_CT" \
+  -d '{"operation":"upload","objects":[{"oid":"'"$LFS_OID"'","size":'"$LFS_SIZE"'}]}'
+check "the receive-pack advertisement creates it" 200 -u "owner:$OWNER_TOKEN" \
+  "$BASE/fresh/lfsrepo.git/info/refs?service=git-receive-pack"
+[ -d "$VAULT/fresh/lfsrepo.git" ] || { echo "FAIL: advertisement did not create the repository"; exit 1; }
+PASS=$((PASS+1)); echo "ok: advertisement created the repository"
+check "batch upload then succeeds, as it does mid-push" 200 -u "owner:$OWNER_TOKEN" -X POST \
+  "$BASE/fresh/lfsrepo.git/info/lfs/objects/batch" -H "$LFS_CT" \
+  -d '{"operation":"upload","objects":[{"oid":"'"$LFS_OID"'","size":'"$LFS_SIZE"'}]}'
+body_has "upload offered on the freshly created repo" '"upload":{"href"'
+
+# ---- Git LFS: web interface ----
+# A pointer file committed through the web form stands in for a git-lfs push,
+# so these checks need no LFS client.
+
+check "new pointer file form" 200 -b "$JAR" "$BASE/demo/lfsdemo/new/main"
+CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
+check "commit a pointer file" 302 -b "$JAR" "$BASE/demo/lfsdemo/new/main" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
+  --data-urlencode filename=data.bin \
+  --data-urlencode "content=version https://git-lfs.github.com/spec/v1
+oid sha256:$LFS_OID
+size $LFS_SIZE
+" --data-urlencode "message=Add LFS pointer"
+
+check "blob page shows the download card" 200 "$BASE/demo/lfsdemo/blob/main/data.bin"
+body_has "card names Git LFS" 'Stored with Git LFS'
+body_has "card shows the true size" "$LFS_SIZE B"
+body_has "card shows the object id" "sha256:$LFS_OID"
+body_lacks "pointer text not rendered as content" 'class="gutter"'
+check "plain view shows the pointer source" 200 "$BASE/demo/lfsdemo/blob/main/data.bin?plain=1"
+body_has "pointer source visible" 'version https://git-lfs.github.com/spec/v1'
+
+check "malformed JSON body is 422 in the LFS error shape" 422 -X POST "$LFS_BATCH" -H "$LFS_CT" -d 'not json'
+body_has "parse failure uses the LFS message shape" '"message"'
+
+# An LFS-tracked file whose name suggests an image must still show the card,
+# and ?plain=1 must reach the pointer source rather than rendering an image.
+check "new pointer image form" 200 -b "$JAR" "$BASE/demo/lfsdemo/new/main"
+CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
+check "commit an LFS-tracked .png pointer" 302 -b "$JAR" "$BASE/demo/lfsdemo/new/main" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
+  --data-urlencode filename=picture.png \
+  --data-urlencode "content=version https://git-lfs.github.com/spec/v1
+oid sha256:$LFS_OID
+size $LFS_SIZE
+" --data-urlencode "message=Add LFS-tracked image"
+check "tracked image shows the card, not an img tag" 200 "$BASE/demo/lfsdemo/blob/main/picture.png"
+body_has "image card names Git LFS" 'Stored with Git LFS'
+body_lacks "pointer not rendered as an image" '<div class="blob-image">'
+check "tracked image plain view" 200 "$BASE/demo/lfsdemo/blob/main/picture.png?plain=1"
+body_has "plain view of a tracked image shows the pointer" 'oid sha256:'
+body_lacks "plain view of a tracked image is not an image" '<div class="blob-image">'
+
+check "raw route redirects to the object" 302 "$BASE/demo/lfsdemo/raw/main/data.bin"
+curl -sSL -o "$TMP/lfs-raw" -D "$TMP/lfs-dl-headers" "$BASE/demo/lfsdemo/raw/main/data.bin"
+cmp -s "$TMP/lfs-obj" "$TMP/lfs-raw" || { echo "FAIL: raw download differs from the stored object"; exit 1; }
+PASS=$((PASS+1)); echo "ok: raw route serves the stored bytes"
+# LFS objects are repository content on this origin, so they carry the same
+# sandbox CSP and attachment disposition the raw route uses for everything
+# else; an uploaded HTML or SVG payload must never run as script here.
+grep -qi 'content-security-policy: sandbox' "$TMP/lfs-dl-headers" || { echo "FAIL: LFS download lacks the sandbox CSP"; exit 1; }
+grep -qi 'content-disposition: attachment' "$TMP/lfs-dl-headers" || { echo "FAIL: LFS download is not an attachment"; exit 1; }
+PASS=$((PASS+2)); echo "ok: LFS download carries the sandbox CSP and attachment disposition"
+curl -sS -o /dev/null -D "$TMP/lfs-batch-headers" "$LFS_DL_URL"
+grep -qi 'content-security-policy: sandbox' "$TMP/lfs-batch-headers" || { echo "FAIL: batch-issued download lacks the sandbox CSP"; exit 1; }
+grep -qi 'content-disposition: attachment' "$TMP/lfs-batch-headers" || { echo "FAIL: batch-issued download is not an attachment"; exit 1; }
+PASS=$((PASS+2)); echo "ok: batch-issued download is sandboxed too"
+
+check "editing a pointer file is refused" 400 -b "$JAR" "$BASE/demo/lfsdemo/edit/main/data.bin"
+body_has "refusal names Git LFS" 'stored with Git LFS'
+CSRF="$(csrf_of)"
+check "posting an edit to a pointer file is refused too" 400 -b "$JAR" "$BASE/demo/lfsdemo/edit/main/data.bin" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$(git -C "$VAULT/demo/lfsdemo.git" rev-parse main)" \
+  --data-urlencode "content=clobbered" --data-urlencode "message=clobber"
+check "delete form for a pointer file is offered" 200 -b "$JAR" "$BASE/demo/lfsdemo/delete/main/data.bin"
+
+# The real pointer format allows extension lines, which the strict parser
+# rejects on purpose. The edit refusal must still cover them, or the browser
+# editor could commit text over such a file.
+check "new extension-pointer form" 200 -b "$JAR" "$BASE/demo/lfsdemo/new/main"
+CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
+check "commit a pointer carrying an extension line" 302 -b "$JAR" "$BASE/demo/lfsdemo/new/main" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
+  --data-urlencode filename=ext.bin \
+  --data-urlencode "content=version https://git-lfs.github.com/spec/v1
+ext-0-foo sha256:$LFS_OID
+oid sha256:$LFS_OID
+size $LFS_SIZE
+" --data-urlencode "message=Pointer with an extension"
+check "editing an extension pointer is refused" 400 -b "$JAR" "$BASE/demo/lfsdemo/edit/main/ext.bin"
+body_has "extension refusal names Git LFS" 'stored with Git LFS'
+
+# A pointer whose object was never uploaded 404s on the raw route.
+check "new missing-pointer form" 200 -b "$JAR" "$BASE/demo/lfsdemo/new/main"
+CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
+check "commit a pointer to a missing object" 302 -b "$JAR" "$BASE/demo/lfsdemo/new/main" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
+  --data-urlencode filename=gone.bin \
+  --data-urlencode "content=version https://git-lfs.github.com/spec/v1
+oid sha256:$LFS_ABSENT_OID
+size 14
+" --data-urlencode "message=Pointer without an object"
+check "raw route 404s when the object is missing" 404 "$BASE/demo/lfsdemo/raw/main/gone.bin"
+body_has "missing-object message" 'missing from storage'
+
+# ---- Git LFS: real client round trip (skipped without git-lfs) ----
+
+if git lfs version >/dev/null 2>&1; then
+  LFS_CLONE="$TMP/lfs-clone"
+  git clone -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/demo/lfsdemo" "$LFS_CLONE" 2>/dev/null
+  (
+    cd "$LFS_CLONE"
+    git config user.name "Smoke Test"
+    git config user.email smoke@example.org
+    # --local, so the checks work whether or not `git lfs install` has been
+    # run for the user running the suite.
+    git lfs install --local >/dev/null
+    git lfs track '*.dat' >/dev/null
+    head -c 300 /dev/urandom > big.dat
+    git add .gitattributes big.dat
+    git commit -qm "Add an LFS-tracked file"
+    git push -q origin main 2>/dev/null
+  )
+  PASS=$((PASS+1)); echo "ok: git lfs push"
+  git -C "$VAULT/demo/lfsdemo.git" cat-file blob main:big.dat | head -1 \
+    | grep -q '^version https://git-lfs' || { echo "FAIL: pushed blob is not an LFS pointer"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: repository blob is a pointer"
+  # No credentials on this clone: it is the check that catches an
+  # over-tightened batch endpoint. Whether the objects arrive through the
+  # clone's smudge filter or through the explicit pull, both go through the
+  # anonymous download path.
+  git clone -q "$BASE/demo/lfsdemo" "$TMP/lfs-anon" 2>/dev/null
+  (cd "$TMP/lfs-anon" && git lfs install --local >/dev/null && git lfs pull)
+  cmp -s "$LFS_CLONE/big.dat" "$TMP/lfs-anon/big.dat" || { echo "FAIL: anonymous git lfs pull did not round-trip"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: anonymous clone and git lfs pull round-trip"
+  check "client-pushed file shows the card" 200 "$BASE/demo/lfsdemo/blob/main/big.dat"
+  body_has "client-pushed file true size" '300 B'
+  curl -sSL -o "$TMP/lfs-client-raw" "$BASE/demo/lfsdemo/raw/main/big.dat"
+  cmp -s "$LFS_CLONE/big.dat" "$TMP/lfs-client-raw" || { echo "FAIL: raw of client-pushed file differs"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: raw route serves the client-pushed bytes"
+  check "editing the client-pushed file is refused" 400 -b "$JAR" "$BASE/demo/lfsdemo/edit/main/big.dat"
+else
+  echo "skip: git lfs is not installed; skipping the LFS client checks"
+fi
+
+# ---- Git LFS: repository deletion removes stored objects ----
+
+check "settings for lfs repo deletion" 200 -b "$JAR" "$BASE/demo/lfsdemo/settings"
+CSRF="$(csrf_of)"
+check "delete the lfs repo" 302 -b "$JAR" "$BASE/demo/lfsdemo/settings/delete" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode confirm=demo/lfsdemo
+[ ! -e "$VAULT/demo/lfsdemo.lfs" ] || { echo "FAIL: .lfs directory survived repository deletion"; exit 1; }
+PASS=$((PASS+1)); echo "ok: repository deletion removed its LFS objects"
+
 # ---- repository deletion ----
 
 check "settings for deletion" 200 -b "$JAR" "$BASE/demo/proj/settings"

@@ -23,7 +23,7 @@ function gitEnv(req: Request): NodeJS.ProcessEnv {
   return env;
 }
 
-function parseBasicAuth(req: Request): { username: string; password: string } | null {
+export function parseBasicAuth(req: Request): { username: string; password: string } | null {
   const h = req.get('authorization');
   if (!h || !/^basic /i.test(h)) return null;
   let decoded: string;
@@ -37,6 +37,48 @@ function parseBasicAuth(req: Request): { username: string; password: string } | 
   return { username: decoded.slice(0, i), password: decoded.slice(i + 1) };
 }
 
+// The push-authorization decision, shared with the LFS endpoints. The caller
+// renders a denial in its own content type (plain text for git, LFS JSON for
+// the batch API), so this returns a result rather than writing the response.
+export type PushAuthCheck =
+  | { ok: true; auth: AuthResult }
+  | { ok: false; status: 401 | 403 | 500; message: string };
+
+export function checkPushAuth(
+  root: string,
+  req: Request,
+  collection: string,
+  repoName: string
+): PushAuthCheck {
+  const state = loadVault(root);
+  if (state.status === 'missing') {
+    return {
+      ok: false,
+      status: 401,
+      message: 'push denied: no vault.json in this vault; restart the server to initialize one',
+    };
+  }
+  if (state.status === 'error') {
+    return { ok: false, status: 500, message: `push denied: vault.json could not be read: ${state.message}` };
+  }
+  const creds = parseBasicAuth(req);
+  if (!creds) {
+    return { ok: false, status: 401, message: 'authentication required to push' };
+  }
+  const auth = authenticate(state.vault, creds.username, creds.password);
+  if (!auth) {
+    return { ok: false, status: 401, message: 'invalid username or token' };
+  }
+  if (!canPush(auth, collection, repoName)) {
+    return {
+      ok: false,
+      status: 403,
+      message: `user ${creds.username} is not allowed to push to ${collection}/${repoName}`,
+    };
+  }
+  return { ok: true, auth };
+}
+
 export function registerGitHttp(app: Express, root: string): void {
   function denyPush(res: Response, status: number, message: string) {
     if (status === 401) res.setHeader('WWW-Authenticate', 'Basic realm="doqpod"');
@@ -44,30 +86,12 @@ export function registerGitHttp(app: Express, root: string): void {
   }
 
   function requirePushAuth(req: Request, res: Response, collection: string, repoName: string): AuthResult | null {
-    const state = loadVault(root);
-    if (state.status === 'missing') {
-      denyPush(res, 401, 'push denied: no vault.json in this vault; restart the server to initialize one');
+    const check = checkPushAuth(root, req, collection, repoName);
+    if (!check.ok) {
+      denyPush(res, check.status, check.message);
       return null;
     }
-    if (state.status === 'error') {
-      denyPush(res, 500, `push denied: vault.json could not be read: ${state.message}`);
-      return null;
-    }
-    const creds = parseBasicAuth(req);
-    if (!creds) {
-      denyPush(res, 401, 'authentication required to push');
-      return null;
-    }
-    const auth = authenticate(state.vault, creds.username, creds.password);
-    if (!auth) {
-      denyPush(res, 401, 'invalid username or token');
-      return null;
-    }
-    if (!canPush(auth, collection, repoName)) {
-      denyPush(res, 403, `user ${creds.username} is not allowed to push to ${collection}/${repoName}`);
-      return null;
-    }
-    return auth;
+    return check.auth;
   }
 
   async function ensureHead(repo: GitRepo): Promise<void> {

@@ -5,6 +5,8 @@ import { registerApi } from './api';
 import { registerBrowse } from './browse';
 import { loadConfig } from './config';
 import { registerGitHttp } from './githttp';
+import { registerLfs } from './lfs';
+import { createLfsStore } from './lfsstore';
 import { faviconSvg } from './logo';
 import { getViewer } from './session';
 import { CSS } from './style';
@@ -75,13 +77,22 @@ export function createApp(root: string) {
     res.status(204).end();
   });
 
+  // The LFS store is built from the environment once at startup; a partial
+  // bucket configuration throws here, which the CLI turns into a non-zero
+  // exit naming the missing variables.
+  const lfs = createLfsStore(root);
+  console.log(`Git LFS storage backend: ${lfs.label}`);
+
   // Registration order matters: the API and the UI-owned top-level paths
   // (/login, /new, /admin, ...) come before the generic /:collection and /:collection/:repo
   // browse routes, and more-specific wildcard routes before their prefixes.
+  // LFS registers before git HTTP so its /info/lfs/* routes are matched ahead
+  // of any /info/refs handling.
   registerApi(app, root);
+  registerLfs(app, root, lfs);
   registerGitHttp(app, root);
-  registerWebOps(app, root);
-  registerBrowse(app, root);
+  registerWebOps(app, root, lfs);
+  registerBrowse(app, root, lfs);
 
   app.use((req, res) => {
     res.status(404).type('html').send(views.errorPage(404, 'Page not found', { viewer: getViewer(req, root) }));

@@ -17,7 +17,7 @@ Hosting git repositories usually means one big centralized service (GitHub, GitL
 
 ## 3. Current state
 
-Everything described here is implemented and verified end to end by `scripts/smoke.sh` (182 checks: browsing, sessions, every UI operation, authorization denials, CSRF, themes, the JSON API, git clone/push/push-to-create, pages, repository deletion).
+Everything described here is implemented and verified end to end by `scripts/smoke.sh` (262 checks: browsing, sessions, every UI operation, authorization denials, CSRF, themes, the JSON API, git clone/push/push-to-create, pages, Git LFS, repository deletion). The LFS checks run against the local backend, so the suite stays credential-free; the handful that need a real `git lfs` on the host skip with a message when it is absent, and have been run against git-lfs 3.6.1 (push, anonymous clone and pull, the blob card, the raw route, and the edit refusal, all passing). Note that git-lfs derives its endpoint as `<remote>.git/info/lfs`, which is why the `.git`-suffix stripping in `findRepo` is load-bearing here rather than cosmetic.
 
 ### 3.1 Running it
 
@@ -42,7 +42,10 @@ First start against a directory with no `vault.json` initializes one and prints 
 | `src/server.ts` | App assembly: static assets, module registration order, 404 and error handlers |
 | `src/browse.ts` | Read-only HTML routes: home, collection, tree, blob, raw, commits, commit, branches, tags, pages |
 | `src/webops.ts` | UI operations: login/logout, new repo, file edit/create/delete, branch and tag ops, settings, user admin |
-| `src/githttp.ts` | git smart HTTP: info/refs, upload-pack, receive-pack, push-to-create, HEAD repointing |
+| `src/githttp.ts` | git smart HTTP: info/refs, upload-pack, receive-pack, push-to-create, HEAD repointing; `checkPushAuth` shared with LFS |
+| `src/lfs.ts` | Git LFS (section 3.11): the Batch API, the verify endpoint, and the local backend's transfer routes |
+| `src/lfsstore.ts` | LFS object storage: the interface, the local and s3 backends, transfer-URL signing, backend selection from the environment |
+| `src/pointer.ts` | Strict LFS pointer-file parser, used by the browse and write-operation routes |
 | `src/api.ts` | Bearer-token JSON API used by the CLI |
 | `src/ops.ts` | The shared write-operations layer (section 3.5); enforces no authorization itself |
 | `src/session.ts` | Signed-cookie sessions, `.secret` management, `Viewer`, CSRF check |
@@ -62,7 +65,7 @@ First start against a directory with no `vault.json` initializes one and prints 
 | `scripts/smoke.sh` | The end-to-end smoke test |
 | `scripts/deploy-fly.sh` | Idempotent create-app/create-volume/deploy/print-token for Fly |
 
-Route registration order in `server.ts` matters: assets, then the API, then git HTTP, then the UI-owned paths (`/login`, `/new`, `/admin/users`, and the repo-level operation routes), then the generic browse routes, then the 404 handler. More-specific wildcard routes are registered before their prefix routes.
+Route registration order in `server.ts` matters: assets, then the API, then LFS, then git HTTP, then the UI-owned paths (`/login`, `/new`, `/admin/users`, and the repo-level operation routes), then the generic browse routes, then the 404 handler. More-specific wildcard routes are registered before their prefix routes. LFS comes before git HTTP because its paths are more specific than `/:collection/:repo/info/refs`; they do not actually collide, but 3.7 records a past redirect loop caused by Express 4 route ordering, and this removes the question.
 
 ### 3.3 HTTP surface
 
@@ -78,6 +81,10 @@ Read routes (anonymous):
 | `GET /:collection/:repo/branches` `tags` | Ref listings (with operation forms when the session allows) |
 | `GET /:collection/:repo/pages/*` | Static site from the sibling `<repo>.pages` directory (index.html, optional 404.html) |
 | `GET /:collection/:repo/info/refs` + POST endpoints | git smart HTTP; upload-pack anonymous, receive-pack behind HTTP Basic (401 + WWW-Authenticate), push-to-create |
+| `POST /:collection/:repo/info/lfs/objects/batch` | The LFS Batch API; download anonymous, upload behind push scope (401 + `LFS-Authenticate`) |
+| `POST /:collection/:repo/info/lfs/objects/verify` | Post-upload integrity check; same authorization as upload |
+| `GET/PUT /:collection/:repo/info/lfs/objects/:oid` | Transfer routes for the local backend only, behind an HMAC-signed `exp`/`sig` (400 when the backend is s3) |
+| `/:collection/:repo/info/lfs/locks…` | Always 404; file locking is deliberately unimplemented |
 | `GET /api/whoami`, `GET/POST /api/users`, `POST /api/users/:name/grant` | Bearer-token JSON API used by the CLI |
 
 UI operation routes (session + CSRF; all POSTs follow POST-redirect-GET):
@@ -98,7 +105,7 @@ UI operation routes (session + CSRF; all POSTs follow POST-redirect-GET):
 | `GET /admin/users`, `POST /admin/users`, `POST /admin/users/:name/grant`, `POST /admin/users/:name/token` | User administration; authorization mirrors the API exactly | admin scope |
 | `GET/POST /admin/appearance` | Choose the vault's theme (section 3.8) | admin scope over `*` |
 
-Reserved names (never valid as collection or repo): `vault.json`, `config.json`, `api`, `assets`, `login`, `logout`, `new`, `admin`, `settings`. Anything that becomes a top-level path segment the UI owns must be added here. Repo directories may be named `name` or `name.git`; the suffix is stripped for display and both resolve.
+Reserved names (never valid as collection or repo): `vault.json`, `config.json`, `api`, `assets`, `login`, `logout`, `new`, `admin`, `settings`. Anything that becomes a top-level path segment the UI owns must be added here. The LFS routes added nothing, since they are sub-paths of an existing repository route rather than new top-level segments. Repo directories may be named `name` or `name.git`; the suffix is stripped for display and both resolve, which is what lets git-lfs reach the Batch API at the `.git/info/lfs` endpoint it derives on its own.
 
 ### 3.4 Web authentication: sessions on top of tokens
 
@@ -134,6 +141,8 @@ Server-side commits to a bare repo work with a temporary index: `GIT_INDEX_FILE`
 - `isValidRepoPath` rejects control characters, so files whose names contain them cannot be browsed or edited; this is a deliberate trade against the newline-delimited git plumbing formats.
 - Markdown rendering is the one place where repository content becomes markup on this origin, and it rests on the sanitizer allowlist in `src/markdown.ts`. Treat changes to that allowlist as security changes, and never render a document with the sanitizer disabled.
 - Rate limiting and abuse controls for public vaults are unaddressed and acceptable to defer, but say so in the README of any public deployment.
+- Git LFS (3.11) carries five limitations worth stating plainly rather than leaving to be discovered. Files already committed as ordinary blobs are unaffected and stay in the packfiles; moving them requires `git lfs migrate import` on a client, which rewrites history. Tree listings show pointer sizes of roughly 130 bytes, since they come from `git ls-tree -l`; correcting this would mean reading every pointer blob in the directory, and the blob page already shows the true size. Commit diffs show pointer diffs, which is git's own behavior without the LFS diff driver. Orphaned objects leak. Object size is capped by `DOQPOD_LFS_MAX_SIZE`, but the cap means different things per backend and the difference is worth knowing before anyone relies on it: the local PUT route enforces it on the bytes as they stream, while in bucket mode the upload never touches this process, so only the size declared in the batch request can be checked. A pusher who understates the size uploads whatever they like, and `verify` catches the mismatch only after the bytes are in the bucket, where they become orphans. Binding `content-length` into the presigned signature would close it, at the risk of refusing uploads from any client that frames the body differently; that trade was not taken here and wants a real bucket to test against. In bucket mode, treat the cap as advisory and put real limits on the bucket. The same asymmetry applies to content: the local route rejects a body that does not hash to the object id, while in bucket mode nothing verifies content, so a pusher can store arbitrary bytes under any object id within a repository they can already push to. Note that push-to-create does survive LFS, though the reason is worth recording since it is not obvious: the batch endpoint 404s for a repository that does not exist, but git fetches the remote's refs before running the pre-push hook that uploads objects, and that advertisement request is what creates the repository (3.3), so by the time the batch call arrives the repository is there. Anything that changes when repositories are created on push must keep this ordering in mind.
+- Editing a pointer file through the web interface is refused in both the GET form and the POST handler. This is a correctness requirement rather than a refinement: without it, the in-browser editor lets someone commit ordinary text over a pointer and silently corrupt the repository's LFS state. Deleting a pointer file stays allowed, and the resulting orphan falls under the leak above.
 
 ### 3.8 Themes
 
@@ -168,6 +177,30 @@ We chose this over a server-side import deliberately, and the reasoning should b
 
 The command line is assembled from an allowlist, not a URL parse: an https or ssh git URL, or `owner/repo` shorthand for GitHub, with a character set that cannot carry spaces, quotes, or shell metacharacters. This matters more than usual, because the output is text a reader will paste into their own shell. The page also refuses targets outside the viewer's push scope and names that already exist, since both would fail at push time anyway.
 
+### 3.11 Git LFS
+
+A vault keeps every byte ever committed, which is fine for source code and expensive for large binary files: they grow the vault without bound and cannot be pruned without rewriting history. On a deployment with a small attached volume, a single repository holding a few large datasets can dominate the cost of the whole vault. Git LFS replaces those files in the repository with pointer files and stores the bytes elsewhere. The trade-off is latency, since fetching an object is a separate HTTP request rather than bytes already present in a packfile the client just downloaded; that is the intended trade rather than a defect.
+
+We implement the server side of the LFS Batch API. Because the protocol lets the server return an arbitrary URL per object transfer, the s3 backend returns presigned bucket URLs and clients transfer bytes directly to and from the bucket, so large-file content never passes through this process.
+
+**LFS adds no vault state.** Whether a blob is a pointer is determined entirely by reading the blob, so there is no per-repository flag, no marker file, and no probing on the repository page. This is deliberate: it avoids the per-request lookup `hasPages` performs in `src/web.ts`. Do not add a marker file.
+
+Two storage backends sit behind one interface in `src/lfsstore.ts`, constructed once at startup from the environment and threaded through the `register*` functions the way `root` already is. The **s3** backend presigns SigV4 query URLs against any S3-compatible bucket (`aws4fetch`, chosen over hand-rolled SigV4 because canonical-request construction fails silently and is unpleasant to debug). The **local** backend stores objects inside the vault and issues URLs pointing back at doqpod's own transfer routes, so LFS works in `npm run dev`, is covered by the smoke test without credentials, and remains usable on a laptop vault. Object keys and paths are identical in both (`<collection>/<repo>.lfs/<oid[0:2]>/<oid[2:4]>/<oid>`, the sharding git-lfs itself uses on the client), so moving a vault between backends is `rclone copy` and nothing else. The `.lfs` sibling follows the convention `<repo>.pages` set; `listRepoDirs` filters candidates through `isBareRepo`, so such a directory is never mistaken for a repository.
+
+Credentials come from the environment only and must never be written into `config.json` or `vault.json`: the vault is the backup unit and stays portable between deployments with different buckets. Backend selection is `DOQPOD_LFS=off` first, then all four bucket variables present, then none present; **some but not all present is a fatal startup error** that names the missing variables, because a partially configured deployment silently storing large objects on the volume is the exact failure the feature exists to prevent. The README documents the variables and the provider matrix (R2 recommended, Tigris convenient on Fly, S3 with an explicit region).
+
+The local backend's transfer URLs carry `exp` and `sig`, an HMAC-SHA256 over a NUL-delimited payload with an explicit `lfs` domain prefix, keyed by the same `<vault>/.secret` that signs session cookies. The domain prefix is required: it guarantees an LFS href can never be replayed as a session token. Every value that appears in the URL is inside the signed payload, so the download filename cannot be altered, and signatures are compared with `timingSafeEqual` on equal-length buffers. The PUT route streams to a temporary file and renames into place, so an interrupted upload never leaves a corrupt object at the final path, and it rejects content that does not hash to the object id in the path. That validation is available only in the local backend and is worth having where it is cheap; in the bucket configuration the verify endpoint is the only integrity check, since upload bytes bypass the server entirely.
+
+Authorization reuses the existing model exactly: download is anonymous, matching anonymous clone (a public repository must support `git clone` followed by `git lfs pull` with no credentials), and upload goes through the same `checkPushAuth` the git receive-pack path uses, hoisted out of `registerGitHttp` for the purpose. A 401 carries `LFS-Authenticate`, the header git-lfs looks for. No new scope was added.
+
+**Object id validation is the security boundary of `src/lfs.ts`**, playing the same role for object ids that `isValidName` plays for collection and repository names: every oid must match `/^[0-9a-f]{64}$/` before it is used to build a key or a path. `src/lfsstore.ts` re-checks the same things where they become a path or a key, so a future caller that forgets cannot escape the vault or widen a delete prefix.
+
+Two properties of the local transfer route are load-bearing and easy to lose in a refactor. The GET route serves repository bytes from the vault's own origin, so it carries the sandbox CSP and the attachment disposition that 3.7 requires of all raw serving; without them an uploaded HTML or SVG object would be same-origin active content, reachable through an anonymous batch download. And the batch handler collapses repeated object ids to one storage lookup before fanning out: download needs no credentials, so a request repeating one id up to the 1000-object limit would otherwise multiply into that many bucket operations.
+
+Deliberate non-goals, recorded so a later implementer does not read them as omissions: the file locking API (404 by design, which git-lfs reads as unsupported), orphan garbage collection (documented as a leak; a real collector must enumerate every pointer blob reachable from every ref across all history, which is expensive and error-prone), multipart upload (the `basic` adapter does a single PUT, hence the size cap), server-side conversion of existing files (that is `git lfs migrate import` on a client, which rewrites history), transfer adapters other than `basic`, true file sizes in tree listings, and bucket storage for pages sites or repository data. The storage module is meant to be reusable for that last one, but the pages implementation was left alone.
+
+Repository deletion removes stored objects too. `deleteRepo` is async for it, and the removal is best-effort: by the time it runs the repository directory is already gone and the objects are unreachable garbage, so a storage failure is logged rather than allowed to fail the deletion.
+
 ## 4. Later phases, sketched
 
 - **Issues.** State must live in the vault. Two candidate designs: a sibling directory (`<repo>.issues/` with one markdown-plus-frontmatter file per issue), which is transparent and greppable; or a hidden git ref inside the repo (as git-bug and similar tools do), which travels with clones. We lean toward the sibling directory for consistency with pages, but this is undecided.
@@ -179,7 +212,7 @@ The command line is assembled from an allowlist, not a URL parse: an https or ss
 
 ## 5. Security notes for the next implementer
 
-Escaping is manual (`esc()` in views); every new interpolation into HTML must go through it, and command arguments must keep using `execFile` arrays, never a shell. Validate every collection/repo/ref/path from a URL or form with the existing validators before it reaches git; ref names additionally must not start with `-`. The raw-serving content-type policy (3.7) must survive any refactor. So must the markdown sanitizer (3.9): rendered documents are attacker-controlled markup on the site's origin, and an escape there hands a repository writer any reader's session. Session cookies must never be accepted for the git or Bearer API endpoints, and tokens never grant UI sessions implicitly; the two credential presentations stay distinct. Deletion paths (`deleteRepo`) must resolve and containment-check against the vault root before any recursive removal. Every mutating route re-derives abilities from live `vault.json` and checks CSRF; keep both properties when adding routes.
+Escaping is manual (`esc()` in views); every new interpolation into HTML must go through it, and command arguments must keep using `execFile` arrays, never a shell. Validate every collection/repo/ref/path from a URL or form with the existing validators before it reaches git; ref names additionally must not start with `-`. LFS object ids are the same kind of boundary and get the same treatment (3.11): validate against `/^[0-9a-f]{64}$/` before building any key or path from one, and keep the `lfs` domain prefix on transfer signatures, since `.secret` also signs session cookies. The raw-serving content-type policy (3.7) must survive any refactor. So must the markdown sanitizer (3.9): rendered documents are attacker-controlled markup on the site's origin, and an escape there hands a repository writer any reader's session. Session cookies must never be accepted for the git or Bearer API endpoints, and tokens never grant UI sessions implicitly; the two credential presentations stay distinct. Deletion paths (`deleteRepo`) must resolve and containment-check against the vault root before any recursive removal. Every mutating route re-derives abilities from live `vault.json` and checks CSRF; keep both properties when adding routes.
 
 ## 6. Housekeeping
 

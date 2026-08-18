@@ -1,6 +1,8 @@
 import express, { Express, Request, Response } from 'express';
 import { loadConfig, saveConfig } from './config';
 import { isValidRefName, isValidRepoPath, isValidSha } from './git';
+import { LfsContext } from './lfsstore';
+import { looksLikePointer } from './pointer';
 import { THEMES, findTheme, setActiveTheme } from './themes';
 import * as forms from './forms';
 import * as ops from './ops';
@@ -68,7 +70,7 @@ function globsField(req: Request, name: string): string[] | null {
   return parts;
 }
 
-export function registerWebOps(app: Express, root: string): void {
+export function registerWebOps(app: Express, root: string, lfs: LfsContext | null = null): void {
   function fail(
     res: Response,
     status: number,
@@ -331,6 +333,18 @@ export function registerWebOps(app: Express, root: string): void {
         return;
       }
       const buf = await loaded.repo.catBlob(branch, filePath);
+      // Editing a pointer as text would silently corrupt the repository's
+      // LFS state, so it is refused outright (deletion remains allowed).
+      if (looksLikePointer(buf)) {
+        fail(
+          res,
+          400,
+          'This file is stored with Git LFS; the repository holds only a pointer to it. Change the file with a git client instead.',
+          viewer,
+          urlOf(loaded.repo)
+        );
+        return;
+      }
       if (isBinary(buf) || buf.length > MAX_EDIT_SIZE) {
         fail(res, 400, 'Only text files up to 1 MB can be edited in the browser.', viewer, urlOf(loaded.repo));
         return;
@@ -352,6 +366,24 @@ export function registerWebOps(app: Express, root: string): void {
       const expected = field(req, 'expected');
       if (!isValidSha(expected)) {
         fail(res, 400, 'The form is missing its base commit; reload and try again.', viewer);
+        return;
+      }
+      // The GET form refuses pointer files; re-check here so the refusal
+      // cannot be bypassed by posting directly.
+      let current: Buffer | null = null;
+      try {
+        current = await loaded.repo.catBlob(branch, filePath);
+      } catch {
+        current = null; // missing file surfaces as notfound from the commit below
+      }
+      if (current && looksLikePointer(current)) {
+        fail(
+          res,
+          400,
+          'This file is stored with Git LFS; the repository holds only a pointer to it. Change the file with a git client instead.',
+          viewer,
+          urlOf(loaded.repo)
+        );
         return;
       }
       const content = normalizeContent(field(req, 'content'));
@@ -651,7 +683,7 @@ export function registerWebOps(app: Express, root: string): void {
         fail(res, 400, `Type ${target} exactly to confirm deletion.`, viewer, backUrl);
         return;
       }
-      ops.deleteRepo(root, loaded.repo.collection, loaded.repo.name);
+      await ops.deleteRepo(root, loaded.repo.collection, loaded.repo.name, lfs?.store);
       res.redirect(`/${encodeURIComponent(loaded.repo.collection)}`);
     })
   );

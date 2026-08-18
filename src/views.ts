@@ -302,7 +302,8 @@ export function blobPage(
     | { kind: 'markdown'; html: string; size: number; editable: boolean }
     | { kind: 'image'; rawUrl: string; size: number }
     | { kind: 'binary'; rawUrl: string; size: number }
-    | { kind: 'too-large'; rawUrl: string; size: number },
+    | { kind: 'too-large'; rawUrl: string; size: number }
+    | { kind: 'lfs'; rawUrl: string; size: number; oid: string },
   isMarkdown = false
 ): string {
   const base = repoUrl(ctx);
@@ -338,6 +339,15 @@ export function blobPage(
     body = `${meta(esc(formatSize(view.size)))}<div class="blob-image"><img src="${rawUrl}" alt="${esc(path)}"></div>`;
   } else if (view.kind === 'too-large') {
     body = `${meta(esc(formatSize(view.size)))}<div class="blob-binary">File is too large to display. <a href="${rawUrl}">View raw</a></div>`;
+  } else if (view.kind === 'lfs') {
+    // The size comes from the pointer, so no storage request is needed to
+    // render this card.
+    body = `${meta(esc(formatSize(view.size)))}<div class="blob-binary">
+<p><b>Stored with Git LFS</b></p>
+<p>This file is ${esc(formatSize(view.size))}; the repository holds a pointer to it.</p>
+<p class="muted small mono">sha256:${esc(view.oid)}</p>
+<p><a class="btn btn-primary" href="${rawUrl}">Download</a></p>
+</div>`;
   } else {
     body = `${meta(esc(formatSize(view.size)))}<div class="blob-binary">Binary file. <a href="${rawUrl}">View raw</a></div>`;
   }

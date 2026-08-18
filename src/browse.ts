@@ -2,7 +2,9 @@ import { Express, Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { GitRepo, isValidRefName, isValidRepoPath } from './git';
+import { LfsContext } from './lfsstore';
 import { isMarkdownFile, renderMarkdown } from './markdown';
+import { parsePointer } from './pointer';
 import { esc, highlightCode, isBinary } from './render';
 import { renderDiff } from './diff';
 import { displayName, isValidName, listCollections, listRepoDirs, pagesDir, repoDescription } from './scan';
@@ -25,7 +27,7 @@ export const IMAGE_TYPES: Record<string, string> = {
   svg: 'image/svg+xml',
 };
 
-export function registerBrowse(app: Express, root: string): void {
+export function registerBrowse(app: Express, root: string, lfs: LfsContext | null = null): void {
   app.get('/', (req, res) => {
     res.type('html').send(views.homePage(root, listCollections(root), getViewer(req, root)));
   });
@@ -155,6 +157,41 @@ export function registerBrowse(app: Express, root: string): void {
       const buf = await loaded.repo.catBlob(ref, filePath);
       const ext = (filePath.split('.').pop() ?? '').toLowerCase();
       const rawUrl = `${repoUrl(ctx)}/raw/${encPath(ref)}/${encPath(filePath)}`;
+      // LFS pointer detection precedes every content branch: an LFS-tracked
+      // .md or .png must render as a download card, not as its pointer text.
+      // ?plain=1 falls through to the source view, as on GitHub, keeping the
+      // underlying pointer inspectable.
+      const pointer = parsePointer(buf);
+      if (pointer) {
+        if (req.query.plain !== '1') {
+          res
+            .type('html')
+            .send(
+              views.blobPage(ctx, filePath, { kind: 'lfs', rawUrl, size: pointer.size, oid: pointer.oid }, true)
+            );
+          return;
+        }
+        // ?plain=1 shows the pointer itself, whatever the file is named: an
+        // LFS-tracked .png must not be rendered from its pointer text as an
+        // image, or the source view would be unreachable for it. Pointers are
+        // never editable, so no edit controls here.
+        const src = buf.toString('utf8');
+        res.type('html').send(
+          views.blobPage(
+            ctx,
+            filePath,
+            {
+              kind: 'code',
+              html: esc(src),
+              lineCount: src.replace(/\n$/, '').split('\n').length,
+              size: buf.length,
+              editable: false,
+            },
+            true
+          )
+        );
+        return;
+      }
       if (IMAGE_TYPES[ext]) {
         res.type('html').send(views.blobPage(ctx, filePath, { kind: 'image', rawUrl, size: buf.length }));
         return;
@@ -208,6 +245,26 @@ export function registerBrowse(app: Express, root: string): void {
         return;
       }
       const buf = await loaded.repo.catBlob(ref, filePath);
+      // A pointer blob redirects to the stored object; the filename gives the
+      // browser something better to save than a 64-character object id.
+      const pointer = parsePointer(buf);
+      if (pointer && lfs) {
+        const info = await lfs.store.head(loaded.repo.collection, loaded.repo.name, pointer.oid);
+        if (!info) {
+          res
+            .status(404)
+            .type('text/plain')
+            .send(
+              'This file is stored with Git LFS, but its object is missing from storage (the commits were pushed without pushing the LFS objects).\n'
+            );
+          return;
+        }
+        const dl = await lfs.store.signDownload(loaded.repo.collection, loaded.repo.name, pointer.oid, {
+          filename: filePath.split('/').pop(),
+        });
+        res.redirect(302, dl.href);
+        return;
+      }
       const ext = (filePath.split('.').pop() ?? '').toLowerCase();
       // Repository content must never be able to inject HTML into this
       // origin: non-image types are served as text/plain in a sandbox.

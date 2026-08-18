@@ -73,7 +73,7 @@ export function importPage(
 ${copyRow(result.command)}
 <p class="muted small">git asks for a password: paste a token with push access to ${esc(result.collection)}. The repository is created here by the push, so ${esc(
         result.collection
-      )}/${esc(result.name)} must not exist yet. Branches and tags come across; git-lfs objects, issues, and pull requests do not.</p>`
+      )}/${esc(result.name)} must not exist yet. Branches and tags come across; issues and pull requests do not. A repository using Git LFS arrives with its pointer files but not the objects behind them; run <code>git lfs fetch --all &lt;source&gt;</code> and then <code>git lfs push --all &lt;this vault&gt;</code> inside the bare clone before removing it.</p>`
     : '';
   const content = `<div class="form-box wide">
 <h1>Import a repository</h1>

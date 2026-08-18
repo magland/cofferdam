@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { GitRepo, execGit, isValidRefName, isValidRepoPath, isValidSha } from './git';
+import type { LfsStore } from './lfsstore';
 import { findRepo, isValidName, pagesDir } from './scan';
 
 // The shared write-operations layer. Every function takes explicit arguments
@@ -214,7 +215,7 @@ export function setDescription(repoDir: string, text: string): void {
   fs.writeFileSync(path.join(repoDir, 'description'), line === '' ? '' : line + '\n');
 }
 
-function containedIn(rootReal: string, target: string): boolean {
+export function containedIn(rootReal: string, target: string): boolean {
   let real: string;
   try {
     real = fs.realpathSync(target);
@@ -224,7 +225,12 @@ function containedIn(rootReal: string, target: string): boolean {
   return real.startsWith(rootReal + path.sep);
 }
 
-export function deleteRepo(root: string, collection: string, name: string): void {
+export async function deleteRepo(
+  root: string,
+  collection: string,
+  name: string,
+  lfs?: LfsStore | null
+): Promise<void> {
   const repo = findRepo(root, collection, name);
   if (!repo) throw new OpError(`repository ${collection}/${name} not found`, 'notfound');
   const rootReal = fs.realpathSync(root);
@@ -235,5 +241,17 @@ export function deleteRepo(root: string, collection: string, name: string): void
   const pages = pagesDir(root, collection, name);
   if (pages && containedIn(rootReal, pages)) {
     fs.rmSync(pages, { recursive: true, force: true });
+  }
+  // Stored LFS objects go too, best-effort: by this point the repository is
+  // gone and the objects are unreachable garbage, so a storage failure is
+  // logged rather than allowed to fail the deletion.
+  if (lfs) {
+    try {
+      await lfs.deleteRepo(collection, name);
+    } catch (e) {
+      console.error(
+        `LFS cleanup for ${collection}/${name} failed: ${e instanceof Error ? e.message : e}`
+      );
+    }
   }
 }

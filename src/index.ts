@@ -39,6 +39,7 @@ User commands talk to a running doqpod server:
 Vault layout:
   <vault>/<collection>/<repo>.git    bare repositories (the .git suffix is optional)
   <vault>/<collection>/<repo>.pages  optional static pages site for a repo
+  <vault>/<collection>/<repo>.lfs    Git LFS objects, when no bucket is configured
   <vault>/vault.json                 users and hashed tokens (server-managed)
   <vault>/config.json                vault settings, currently {"theme": "<name>"}
   <vault>/.secret                    session-cookie signing key (server-managed)
