@@ -154,6 +154,10 @@ body_has "import form" 'name="src"'
 check "import command for a github url" 200 -b "$JAR" \
   --get "$BASE/import" --data-urlencode "src=https://github.com/octocat/Hello-World" --data-urlencode collection=demo
 body_has "clone is bare, not mirror" 'git clone --bare https://github.com/octocat/Hello-World'
+# The clone is scratch: it must not land in whatever directory the command is
+# pasted into, which is how a failed attempt leaves a bare repo in a work tree.
+body_has "clone goes to a temporary directory" 'mktemp -d /tmp/import'
+body_lacks "nothing is cloned into the current directory" 'Hello-World.import.git'
 body_has "push is a mirror push" 'push --mirror'
 # Without this the prompt goes to an editor's askpass dialog, and an unanswered
 # dialog looks like a hang: git prints nothing after the clone and waits.
@@ -778,6 +782,338 @@ check "delete the lfs repo" 302 -b "$JAR" "$BASE/demo/lfsdemo/settings/delete" \
   --data-urlencode "csrf=$CSRF" --data-urlencode confirm=demo/lfsdemo
 [ ! -e "$VAULT/demo/lfsdemo.lfs" ] || { echo "FAIL: .lfs directory survived repository deletion"; exit 1; }
 PASS=$((PASS+1)); echo "ok: repository deletion removed its LFS objects"
+
+# ---- Actions: planning, the runner protocol, and the UI ----
+#
+# Planning, dispatch, cancellation, and the runner API are checked without
+# Docker; actually executing a job needs it, so those checks skip when it is
+# absent, as the git-lfs client checks do above.
+
+CI_REPO="$TMP/cirepo"
+git init -q -b main "$CI_REPO"
+mkdir -p "$CI_REPO/.github/workflows" "$CI_REPO/.hubbit/workflows"
+
+cat > "$CI_REPO/.github/workflows/build.yml" <<'YML'
+name: Build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      greeting:
+        description: What to say
+        default: hello
+env:
+  GREETING: from-workflow
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Say hello
+        run: echo "greeting=$GREETING repo=$GITHUB_REPOSITORY"
+      - name: Set an output
+        id: meta
+        run: echo "version=1.2.3" >> "$GITHUB_OUTPUT"
+      - name: Use the output
+        run: echo "version is ${{ steps.meta.outputs.version }}"
+  fan:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        n: [1, 2]
+    steps:
+      - run: echo "n=${{ matrix.n }} version=${{ needs.build.outputs.version }}"
+      - name: Fail on two
+        if: matrix.n == 2
+        run: exit 3
+YML
+
+# Shadowed by name: this .github copy must never run, because a file with the
+# same basename exists under .hubbit/workflows.
+cat > "$CI_REPO/.github/workflows/shadowed.yml" <<'YML'
+name: Shadowed by hubbit
+on: [push]
+jobs:
+  ghost:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "this must not run"
+YML
+cat > "$CI_REPO/.hubbit/workflows/shadowed.yml" <<'YML'
+name: Hubbit override
+on: [push]
+jobs:
+  real:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "the hubbit copy runs"
+YML
+
+cat > "$CI_REPO/.github/workflows/tagsonly.yml" <<'YML'
+name: Tags only
+on:
+  push:
+    tags: ['v*']
+jobs:
+  never:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "not on a branch push"
+YML
+
+cat > "$CI_REPO/.github/workflows/broken.yml" <<'YML'
+name: Broken
+on: [push]
+jobs:
+  oops:
+    runs-on: ubuntu-latest
+YML
+
+cat > "$CI_REPO/.github/workflows/usesaction.yml" <<'YML'
+name: Uses an action
+on: workflow_dispatch
+jobs:
+  act:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+YML
+
+echo "# ci" > "$CI_REPO/README.md"
+git -C "$CI_REPO" add -A
+git -C "$CI_REPO" -c user.email=ci@example.com -c user.name=ci commit -qm "Add workflows"
+git -C "$CI_REPO" push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/demo/ci" main
+sleep 1
+
+RUNS="$VAULT/demo/ci.runs"
+[ -d "$RUNS" ] || { echo "FAIL: no .runs directory after a push"; exit 1; }
+PASS=$((PASS+1)); echo "ok: push created run state in the vault"
+
+run_field() { python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2],''))" "$1" "$2"; }
+job_field() { python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2],''))" "$1" "$2"; }
+runs_named() {
+  python3 - "$RUNS" "$1" <<'PY'
+import json, os, sys
+base, name = sys.argv[1], sys.argv[2]
+out = []
+for e in sorted(os.listdir(base)):
+    f = os.path.join(base, e, 'run.json')
+    if os.path.exists(f):
+        r = json.load(open(f))
+        if r['workflowName'] == name: out.append(e)
+print(' '.join(out))
+PY
+}
+
+[ -n "$(runs_named 'Build')" ] || { echo "FAIL: the push did not plan the Build workflow"; exit 1; }
+PASS=$((PASS+1)); echo "ok: a matching push trigger plans a run"
+[ -n "$(runs_named 'Hubbit override')" ] || { echo "FAIL: .hubbit/workflows copy did not run"; exit 1; }
+PASS=$((PASS+1)); echo "ok: .hubbit/workflows shadows .github/workflows by basename"
+[ -z "$(runs_named 'Shadowed by hubbit')" ] || { echo "FAIL: the shadowed .github copy ran"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the shadowed .github copy does not run"
+[ -z "$(runs_named 'Tags only')" ] || { echo "FAIL: a tags-only workflow ran on a branch push"; exit 1; }
+PASS=$((PASS+1)); echo "ok: branch push does not fire a tags-only trigger"
+[ -n "$(runs_named 'broken.yml')" ] || { echo "FAIL: the broken workflow produced no visible run"; exit 1; }
+PASS=$((PASS+1)); echo "ok: an unparseable workflow file produces a failed run rather than silence"
+
+BUILD_RUN="$(runs_named 'Build' | awk '{print $1}')"
+[ -f "$RUNS/$BUILD_RUN/jobs/build.json" ] || { echo "FAIL: no build job planned"; exit 1; }
+[ -f "$RUNS/$BUILD_RUN/jobs/fan-1.json" ] && [ -f "$RUNS/$BUILD_RUN/jobs/fan-2.json" ] || {
+  echo "FAIL: the matrix did not expand into two jobs"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the matrix expands into one job per combination"
+
+cat > "$CI_REPO/.github/workflows/badjobid.yml" <<'YML'
+name: Bad job id
+on: [push]
+jobs:
+  "../../escape":
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "a job id must never become a path"
+YML
+git -C "$CI_REPO" add -A
+git -C "$CI_REPO" -c user.email=ci@example.com -c user.name=ci commit -qm "A workflow with a job id shaped like a path"
+git -C "$CI_REPO" push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/demo/ci" main
+sleep 1
+[ -z "$(runs_named 'Bad job id')" ] || { echo "FAIL: a path-shaped job id was accepted"; exit 1; }
+PASS=$((PASS+1)); echo "ok: a job id shaped like a path is refused rather than written"
+[ ! -e "$VAULT/demo/escape.json" ] && [ ! -e "$VAULT/escape.json" ] || {
+  echo "FAIL: a job record escaped the runs directory"; exit 1; }
+PASS=$((PASS+1)); echo "ok: nothing was written outside the runs directory"
+[ -n "$(runs_named 'badjobid.yml')" ] || { echo "FAIL: the rejected workflow produced no visible run"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the rejection is visible as a failed run, not silence"
+
+# ---- the Actions UI ----
+
+check "actions tab on the repo page" 200 "$BASE/demo/ci"
+body_has "Actions tab present" 'href="/demo/ci/actions"'
+check "runs list renders" 200 "$BASE/demo/ci/actions"
+body_has "the run is listed" 'Add workflows'
+body_has "workflow filter present" 'Build'
+check "run page renders" 200 "$BASE/demo/ci/actions/runs/$BUILD_RUN"
+body_has "jobs listed on the run page" 'job-item'
+check "log tail endpoint" 200 "$BASE/demo/ci/actions/runs/$BUILD_RUN/log/build?offset=0"
+body_has "log tail is json" '"offset"'
+check "unknown run is 404" 404 "$BASE/demo/ci/actions/runs/9999"
+check "anonymous cancel is refused" 403 -X POST "$BASE/demo/ci/actions/runs/$BUILD_RUN/cancel"
+
+# ---- workflow_dispatch from the UI ----
+
+check "actions page for csrf" 200 -b "$JAR" "$BASE/demo/ci/actions"
+CSRF="$(csrf_of)"
+[ -n "$CSRF" ] || { echo "FAIL: no dispatch form for a user with push scope"; exit 1; }
+check "dispatch a workflow" 302 -b "$JAR" "$BASE/demo/ci/actions/dispatch" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "workflow=.github/workflows/build.yml" \
+  --data-urlencode ref=main --data-urlencode "input.greeting=hi"
+check "dispatching a workflow without the trigger is refused" 400 -b "$JAR" "$BASE/demo/ci/actions/dispatch" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "workflow=.github/workflows/tagsonly.yml" \
+  --data-urlencode ref=main
+
+# ---- runner registration and the runner API ----
+
+check "runners admin page" 200 -b "$JAR" "$BASE/admin/runners"
+body_has "runner registration form" 'Register a runner'
+CSRF="$(csrf_of)"
+check "a runner needs an allow list" 400 -b "$JAR" "$BASE/admin/runners" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode name=norunner --data-urlencode labels=ubuntu-latest \
+  --data-urlencode allow=
+check "register a runner" 200 -b "$JAR" "$BASE/admin/runners" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode name=smoke --data-urlencode labels=ubuntu-latest \
+  --data-urlencode "allow=demo/*"
+RUNNER_TOKEN="$({ grep -o 'hubbit_runner_[0-9a-f]\{64\}' "$BODY" || true; } | head -1)"
+[ -n "$RUNNER_TOKEN" ] || { echo "FAIL: no runner token shown after registration"; exit 1; }
+PASS=$((PASS+1)); echo "ok: registering a runner shows its token once"
+[ -f "$VAULT/runners.json" ] || { echo "FAIL: runners.json not written"; exit 1; }
+grep -q "$RUNNER_TOKEN" "$VAULT/runners.json" && { echo "FAIL: the runner token was stored in the clear"; exit 1; }
+PASS=$((PASS+1)); echo "ok: only the runner token's hash is stored"
+
+check "runner whoami" 200 -H "Authorization: Bearer $RUNNER_TOKEN" "$BASE/api/runner/whoami"
+body_has "runner identity" '"smoke"'
+check "a user token is not a runner token" 401 -H "Authorization: Bearer $OWNER_TOKEN" "$BASE/api/runner/whoami"
+check "a runner token is not a user token" 401 -H "Authorization: Bearer $RUNNER_TOKEN" "$BASE/api/whoami"
+check "a runner token cannot register runners" 401 -X POST -H "Authorization: Bearer $RUNNER_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"name":"x","allow":["*"]}' "$BASE/api/runners"
+check "runner list over the API" 200 -H "Authorization: Bearer $OWNER_TOKEN" "$BASE/api/runners"
+body_has "the registered runner is listed" '"smoke"'
+
+# A job acquired with a bogus lease may not be reported on.
+check "acquire with an unmatched label yields nothing" 204 -X POST \
+  -H "Authorization: Bearer $RUNNER_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"labels":["windows-latest"]}' "$BASE/api/runner/acquire"
+check "status with a bogus lease is refused" 409 -X POST \
+  -H "Authorization: Bearer $RUNNER_TOKEN" -H 'Content-Type: application/json' \
+  -H 'X-Hubbit-Lease: nonsense' -d '{"lease":"nonsense","status":"completed","conclusion":"success"}' \
+  "$BASE/api/runner/jobs/demo/ci/$BUILD_RUN/build/status"
+
+# ---- cancelling a run ----
+
+check "run page for csrf" 200 -b "$JAR" "$BASE/demo/ci/actions/runs/$BUILD_RUN"
+CSRF="$(csrf_of)"
+check "cancel the run" 302 -b "$JAR" "$BASE/demo/ci/actions/runs/$BUILD_RUN/cancel" \
+  --data-urlencode "csrf=$CSRF"
+sleep 0.5
+[ "$(run_field "$RUNS/$BUILD_RUN/run.json" conclusion)" = "cancelled" ] || {
+  echo "FAIL: cancelling did not conclude the run as cancelled"
+  run_field "$RUNS/$BUILD_RUN/run.json" status; exit 1; }
+PASS=$((PASS+1)); echo "ok: cancelling a queued run concludes it as cancelled"
+
+# ---- executing a job (needs Docker) ----
+
+if command -v docker > /dev/null 2>&1 && docker version --format '{{.Server.Version}}' > /dev/null 2>&1; then
+  CI_IMAGE="${SMOKE_CI_IMAGE:-ubuntu:24.04}"
+  check "actions page for a fresh dispatch" 200 -b "$JAR" "$BASE/demo/ci/actions"
+  CSRF="$(csrf_of)"
+  check "dispatch the build workflow to run for real" 302 -b "$JAR" "$BASE/demo/ci/actions/dispatch" \
+    --data-urlencode "csrf=$CSRF" --data-urlencode "workflow=.github/workflows/build.yml" \
+    --data-urlencode ref=main
+  EXEC_RUN="$(runs_named 'Build' | awk '{print $NF}')"
+  node dist/index.js runner run --host "$BASE" --runner-token "$RUNNER_TOKEN" \
+    --image "ubuntu-latest=$CI_IMAGE" > "$TMP/runner.log" 2>&1 &
+  RUNNER_PID=$!
+  for _ in $(seq 1 120); do
+    [ "$(run_field "$RUNS/$EXEC_RUN/run.json" status)" = "completed" ] && break
+    sleep 1
+  done
+  kill "$RUNNER_PID" 2>/dev/null || true
+  wait "$RUNNER_PID" 2>/dev/null || true
+  [ "$(run_field "$RUNS/$EXEC_RUN/run.json" status)" = "completed" ] || {
+    echo "FAIL: the dispatched run never completed"; cat "$TMP/runner.log"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: a runner executed the run to completion"
+  [ "$(job_field "$RUNS/$EXEC_RUN/jobs/build.json" conclusion)" = "success" ] || {
+    echo "FAIL: the build job did not succeed"; cat "$RUNS/$EXEC_RUN/jobs/build.log"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: run: steps execute in a container and succeed"
+  grep -q '"version": "1.2.3"' "$RUNS/$EXEC_RUN/jobs/build.json" || {
+    echo "FAIL: the job output was not captured from GITHUB_OUTPUT"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: GITHUB_OUTPUT feeds step and job outputs"
+  grep -q 'version is 1.2.3' "$RUNS/$EXEC_RUN/jobs/build.log" || {
+    echo "FAIL: a step did not see an earlier step's output"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: steps.<id>.outputs resolves in a later step"
+  grep -q 'greeting=from-workflow' "$RUNS/$EXEC_RUN/jobs/build.log" || {
+    echo "FAIL: workflow env did not reach the step"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: workflow-level env reaches a step"
+  [ "$(job_field "$RUNS/$EXEC_RUN/jobs/fan-1.json" conclusion)" = "success" ] || {
+    echo "FAIL: fan-1 did not succeed"; exit 1; }
+  [ "$(job_field "$RUNS/$EXEC_RUN/jobs/fan-2.json" conclusion)" = "failure" ] || {
+    echo "FAIL: fan-2 did not fail as its workflow says it should"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: matrix jobs run independently and fail independently"
+  grep -q 'n=1 version=1.2.3' "$RUNS/$EXEC_RUN/jobs/fan-1.log" || {
+    echo "FAIL: needs.<job>.outputs did not reach the dependent job"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: needs outputs reach a dependent job"
+  [ "$(run_field "$RUNS/$EXEC_RUN/run.json" conclusion)" = "failure" ] || {
+    echo "FAIL: a run with a failed job did not conclude as failure"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: one failed job fails the run"
+
+  check "run page shows step logs" 200 "$BASE/demo/ci/actions/runs/$EXEC_RUN?job=build"
+  body_has "step names on the run page" 'Use the output'
+  body_has "step output in the rendered log" 'version is 1.2.3'
+  check "the run page defaults to the failed job" 200 "$BASE/demo/ci/actions/runs/$EXEC_RUN"
+  body_has "matrix job name resolved" 'fan (2)'
+
+  # A step that uses an action must fail loudly rather than appear to pass.
+  check "actions page for the uses dispatch" 200 -b "$JAR" "$BASE/demo/ci/actions"
+  CSRF="$(csrf_of)"
+  check "dispatch the workflow with a uses: step" 302 -b "$JAR" "$BASE/demo/ci/actions/dispatch" \
+    --data-urlencode "csrf=$CSRF" --data-urlencode "workflow=.github/workflows/usesaction.yml" \
+    --data-urlencode ref=main
+  USES_RUN="$(runs_named 'Uses an action' | awk '{print $NF}')"
+  node dist/index.js runner run --host "$BASE" --runner-token "$RUNNER_TOKEN" \
+    --image "ubuntu-latest=$CI_IMAGE" >> "$TMP/runner.log" 2>&1 &
+  RUNNER_PID=$!
+  for _ in $(seq 1 90); do
+    [ "$(run_field "$RUNS/$USES_RUN/run.json" status)" = "completed" ] && break
+    sleep 1
+  done
+  kill "$RUNNER_PID" 2>/dev/null || true
+  wait "$RUNNER_PID" 2>/dev/null || true
+  [ "$(job_field "$RUNS/$USES_RUN/jobs/act.json" conclusion)" = "failure" ] || {
+    echo "FAIL: a uses: step did not fail the job"; exit 1; }
+  grep -q 'not supported yet' "$RUNS/$USES_RUN/jobs/act.log" || {
+    echo "FAIL: a uses: step failed without saying why"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: a uses: step fails with a clear message rather than passing silently"
+else
+  echo "skip: docker is not available; skipping the job-execution checks"
+fi
+
+# ---- removing a runner ----
+
+check "runners page for removal" 200 -b "$JAR" "$BASE/admin/runners"
+CSRF="$(csrf_of)"
+check "remove the runner" 302 -b "$JAR" "$BASE/admin/runners/smoke/remove" --data-urlencode "csrf=$CSRF"
+check "the removed runner's token stops working" 401 -H "Authorization: Bearer $RUNNER_TOKEN" \
+  "$BASE/api/runner/whoami"
+
+# ---- deleting a repository takes its run history with it ----
+
+check "settings for the ci repo" 200 -b "$JAR" "$BASE/demo/ci/settings"
+CSRF="$(csrf_of)"
+check "delete the ci repo" 302 -b "$JAR" "$BASE/demo/ci/settings/delete" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode confirm=demo/ci
+[ ! -e "$VAULT/demo/ci.runs" ] || { echo "FAIL: .runs directory survived repository deletion"; exit 1; }
+PASS=$((PASS+1)); echo "ok: repository deletion removed its run history"
 
 # ---- repository deletion ----
 

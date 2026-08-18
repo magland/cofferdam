@@ -8,7 +8,7 @@ Hosting git repositories usually means one big centralized service (GitHub, GitL
 
 ## 2. Principles (do not break these)
 
-- **The filesystem is the database.** All state lives in the vault directory: repositories are bare git repositories, users and token hashes live in `vault.json`, vault settings in `config.json`, the session signing key is `.secret`, pages sites are sibling directories. Backing up a vault is copying a directory; moving it between machines is the same. No SQLite, no Postgres, no hidden state elsewhere. Future features (issues, pull requests) must also store their state in the vault, either as files or inside git itself.
+- **The filesystem is the database.** All state lives in the vault directory: repositories are bare git repositories, users and token hashes live in `vault.json`, vault settings in `config.json`, the session signing key is `.secret`, pages sites are sibling directories, and workflow runs and their logs live in `<repo>.runs/`. Backing up a vault is copying a directory; moving it between machines is the same. No SQLite, no Postgres, no hidden state elsewhere. Future features (issues, pull requests) must also store their state in the vault, either as files or inside git itself.
 - **One vault, one machine, one process.** Concurrent writes are mediated by the filesystem and by git's own locking. This is a deliberate trade-off: scaling a vault means a bigger machine, never more of them (the Fly config enforces `--ha=false` for this reason).
 - **Anonymous read, token write.** Browsing and cloning require nothing. Every write (git push, API call, UI operation) is authorized by a token whose SHA-256 hash is stored in `vault.json`. Tokens are shown once at minting and never stored in the clear. Web sessions are a convenience layer on top of tokens, not a second credential system.
 - **Scopes are globs over `collection/repo`.** A user has push scope (where they may write) and admin scope (where they may manage users and perform destructive administration such as repository deletion). `*` matches everything including `/`. Per-token scopes further restrict a token, and restricted tokens carry no admin rights.
@@ -17,7 +17,7 @@ Hosting git repositories usually means one big centralized service (GitHub, GitL
 
 ## 3. Current state
 
-Everything described here is implemented and verified end to end by `scripts/smoke.sh` (262 checks: browsing, sessions, every UI operation, authorization denials, CSRF, themes, the JSON API, git clone/push/push-to-create, pages, Git LFS, repository deletion). The LFS checks run against the local backend, so the suite stays credential-free; the handful that need a real `git lfs` on the host skip with a message when it is absent, and have been run against git-lfs 3.6.1 (push, anonymous clone and pull, the blob card, the raw route, and the edit refusal, all passing). Note that git-lfs derives its endpoint as `<remote>.git/info/lfs`, which is why the `.git`-suffix stripping in `findRepo` is load-bearing here rather than cosmetic.
+Everything described here is implemented and verified end to end by `scripts/smoke.sh` (355 checks: browsing, sessions, every UI operation, authorization denials, CSRF, themes, the JSON API, git clone/push/push-to-create, pages, Git LFS, workflow planning and execution, repository deletion). The LFS checks run against the local backend, so the suite stays credential-free; the handful that need a real `git lfs` on the host skip with a message when it is absent, and have been run against git-lfs 3.6.1 (push, anonymous clone and pull, the blob card, the raw route, and the edit refusal, all passing). Note that git-lfs derives its endpoint as `<remote>.git/info/lfs`, which is why the `.git`-suffix stripping in `findRepo` is load-bearing here rather than cosmetic.
 
 ### 3.1 Running it
 
@@ -38,7 +38,7 @@ First start against a directory with no `vault.json` initializes one and prints 
 
 | File | Contents |
 |---|---|
-| `src/index.ts` | CLI: `serve`, `user add`, `user grant`, `user list`, `whoami`; remote API client using fetch |
+| `src/index.ts` | CLI: `serve`, `user …`, `runner …`, `whoami`, `login`/`logout`; remote API client using fetch |
 | `src/server.ts` | App assembly: static assets, module registration order, 404 and error handlers |
 | `src/browse.ts` | Read-only HTML routes: home, collection, tree, blob, raw, commits, commit, branches, tags, pages |
 | `src/webops.ts` | UI operations: login/logout, new repo, file edit/create/delete, branch and tag ops, settings, user admin |
@@ -47,10 +47,24 @@ First start against a directory with no `vault.json` initializes one and prints 
 | `src/lfsstore.ts` | LFS object storage: the interface, the local and s3 backends, transfer-URL signing, backend selection from the environment |
 | `src/pointer.ts` | Strict LFS pointer-file parser, used by the browse and write-operation routes |
 | `src/api.ts` | Bearer-token JSON API used by the CLI |
+| `src/ci/expr.ts` | The `${{ }}` expression language; used by the server and the runner alike |
+| `src/ci/workflow.ts` | Workflow-file parsing and normalization, and the branch/tag/path filter matcher |
+| `src/ci/engine.ts` | The CI planner and scheduler (3.12): discovery, matrix, `needs`, concurrency, leases |
+| `src/ci/runs.ts` | Run state on disk under `<repo>.runs/`, and retention |
+| `src/ci/runners.ts` | The runner registry in `runners.json` and runner authentication |
+| `src/ci/protocol.ts` | The runner protocol's wire types, shared by both sides |
+| `src/ci/api.ts` | The runner-facing API and runner registration |
+| `src/ci/web.ts` | The Actions pages and their operations |
+| `src/ci/views.ts` | Actions page templates |
+| `src/ci/present.ts` | The memoized check behind showing the Actions tab |
+| `src/runner/client.ts` | `hubbit runner run`: the poll loop, log shipping, and status reporting |
+| `src/runner/docker.ts` | Container lifecycle and exec, as thin wrappers over the `docker` CLI |
+| `src/runner/job.ts` | Executing one job: steps, workflow commands, file commands, conclusions |
+| `src/runner-cli.ts` | The `hubbit runner` subcommands |
 | `src/ops.ts` | The shared write-operations layer (section 3.5); enforces no authorization itself |
 | `src/session.ts` | Signed-cookie sessions, `.secret` management, `Viewer`, CSRF check |
 | `src/vault.ts` | `vault.json` load with mtime+size stat cache, token hashing/minting, glob matching, authenticate, `canPush`, `canAdmin`, bootstrap |
-| `src/config.ts` | `config.json` load/save (vault settings; currently the theme) |
+| `src/config.ts` | `config.json` load/save (vault settings: the theme, and CI run retention) |
 | `src/themes.ts` | The theme set, the active-theme state, and the custom-property block each theme emits |
 | `src/scan.ts` | Vault directory scanning, collection/repo name validation, reserved names, pages dir lookup |
 | `src/web.ts` | Helpers shared by the HTML modules: `loadRepo`, `makeCtx`, wildcard/404 utilities |
@@ -65,7 +79,7 @@ First start against a directory with no `vault.json` initializes one and prints 
 | `scripts/smoke.sh` | The end-to-end smoke test |
 | `scripts/deploy-fly.sh` | Idempotent create-app/create-volume/deploy/print-token for Fly |
 
-Route registration order in `server.ts` matters: assets, then the API, then LFS, then git HTTP, then the UI-owned paths (`/login`, `/new`, `/admin/users`, and the repo-level operation routes), then the generic browse routes, then the 404 handler. More-specific wildcard routes are registered before their prefix routes. LFS comes before git HTTP because its paths are more specific than `/:collection/:repo/info/refs`; they do not actually collide, but 3.7 records a past redirect loop caused by Express 4 route ordering, and this removes the question.
+Route registration order in `server.ts` matters: assets, then the API (including the CI and runner API), then LFS, then git HTTP, then the CI web routes, then the UI-owned paths (`/login`, `/new`, `/admin/users`, and the repo-level operation routes), then the generic browse routes, then the 404 handler. More-specific wildcard routes are registered before their prefix routes. LFS comes before git HTTP because its paths are more specific than `/:collection/:repo/info/refs`; they do not actually collide, but 3.7 records a past redirect loop caused by Express 4 route ordering, and this removes the question.
 
 ### 3.3 HTTP surface
 
@@ -85,7 +99,12 @@ Read routes (anonymous):
 | `POST /:collection/:repo/info/lfs/objects/verify` | Post-upload integrity check; same authorization as upload |
 | `GET/PUT /:collection/:repo/info/lfs/objects/:oid` | Transfer routes for the local backend only, behind an HMAC-signed `exp`/`sig` (400 when the backend is s3) |
 | `/:collection/:repo/info/lfs/locks…` | Always 404; file locking is deliberately unimplemented |
+| `GET /:collection/:repo/actions` | Workflow runs, the workflow filter, and the dispatch form |
+| `GET /:collection/:repo/actions/runs/:n` | One run: its jobs, steps, and logs (`?job=` selects a job) |
+| `GET /:collection/:repo/actions/runs/:n/log/:job` | JSON log tail from a byte offset, used by the live tailer |
 | `GET /api/whoami`, `GET/POST /api/users`, `POST /api/users/:name/grant` | Bearer-token JSON API used by the CLI |
+| `GET/POST /api/runners`, `DELETE /api/runners/:name` | Runner registration; user token with admin scope |
+| `POST /api/runner/acquire`, `.../jobs/:c/:r/:n/:job/{heartbeat,logs,status}`, `GET /api/runner/whoami` | The runner protocol; runner token plus a lease (3.12) |
 
 UI operation routes (session + CSRF; all POSTs follow POST-redirect-GET):
 
@@ -104,8 +123,11 @@ UI operation routes (session + CSRF; all POSTs follow POST-redirect-GET):
 | `GET /admin` | Administration index | admin scope |
 | `GET /admin/users`, `POST /admin/users`, `POST /admin/users/:name/grant`, `POST /admin/users/:name/token` | User administration; authorization mirrors the API exactly | admin scope |
 | `GET/POST /admin/appearance` | Choose the vault's theme (section 3.8) | admin scope over `*` |
+| `POST /:collection/:repo/actions/dispatch` | Start a `workflow_dispatch` run | push scope |
+| `POST /:collection/:repo/actions/runs/:n/{cancel,rerun}` | Cancel or re-run | push scope |
+| `GET/POST /admin/runners`, `POST /admin/runners/:name/remove` | Register and remove runners (section 3.12) | admin scope |
 
-Reserved names (never valid as collection or repo): `vault.json`, `config.json`, `api`, `assets`, `login`, `logout`, `new`, `admin`, `settings`. Anything that becomes a top-level path segment the UI owns must be added here. The LFS routes added nothing, since they are sub-paths of an existing repository route rather than new top-level segments. Repo directories may be named `name` or `name.git`; the suffix is stripped for display and both resolve, which is what lets git-lfs reach the Batch API at the `.git/info/lfs` endpoint it derives on its own.
+Reserved names (never valid as collection or repo): `vault.json`, `config.json`, `runners.json`, `api`, `assets`, `login`, `logout`, `new`, `import`, `admin`, `settings`. Anything that becomes a top-level path segment the UI owns must be added here. The LFS routes added nothing, since they are sub-paths of an existing repository route rather than new top-level segments. Repo directories may be named `name` or `name.git`; the suffix is stripped for display and both resolve, which is what lets git-lfs reach the Batch API at the `.git/info/lfs` endpoint it derives on its own.
 
 ### 3.4 Web authentication: sessions on top of tokens
 
@@ -126,7 +148,7 @@ Server-side commits to a bare repo work with a temporary index: `GIT_INDEX_FILE`
 - Branch deletion: `receive.denyDeletes` still blocks deletion over git push, while the UI allows it after confirmation; `update-ref -d` bypasses receive hooks, which is exactly what we want. The receive config guards against accidental `push --delete`; the UI is explicit intent. The default branch is never deletable from the UI (change the default first in settings).
 - File editing is offered only when the viewed ref is a branch, the viewer has push scope, and the blob is text up to 1 MB. Commits land directly on the branch, GitHub's "commit directly to main" mode; a branch-and-PR flow is a later phase.
 - Creating a repository in a new collection creates the collection directory; there is no separate collection-creation flow. The "initialize with a README" option makes the first commit on `main` through the ops layer, and the same create-file flow offers to make the first commit on an empty repository.
-- Repository deletion resolves real paths and containment-checks against the vault root before any recursive removal, then removes the repo directory and its `<repo>.pages` sibling.
+- Repository deletion resolves real paths and containment-checks against the vault root before any recursive removal, then removes the repo directory and its `<repo>.pages` and `<repo>.runs` siblings, along with any stored LFS objects. The route also calls `engine.forgetRepo` first, so nothing is dispatched for a repository whose files are about to disappear. Any new sibling directory convention must be added here, or deleting a repository will orphan it and a repository later created under the same name will inherit it.
 - Failed logins get one generic message (no username/token distinction).
 - The collapsible CLI hints of the read-only era are gone entirely. Operations belong to the UI now, and a page full of `<details>` boxes explaining git commands works against that; keep new pages clean rather than reintroducing them. What remains is genuinely about the command line: the clone box in the repository toolbar and the clone/push commands on the empty-repository page (as GitHub also does). Publishing a pages site is documented in the README rather than hinted at in the interface. The import page (3.10) is the third and last such case: an operation the server deliberately does not perform.
 
@@ -201,11 +223,36 @@ Deliberate non-goals, recorded so a later implementer does not read them as omis
 
 Repository deletion removes stored objects too. `deleteRepo` is async for it, and the removal is best-effort: by the time it runs the repository directory is already gone and the objects are unreachable garbage, so a storage failure is logged rather than allowed to fail the deletion.
 
+### 3.12 Workflows
+
+A vault runs GitHub Actions workflows, and the shape of that support is a deliberate departure from how GitHub does it: **the server plans runs and never executes them**. Execution belongs to a *runner*, a `hubbit runner run` process started by an operator on a machine with Docker. The reason is the principle in section 2 rather than convenience: one vault is one small process on one machine, and handing that process a container runtime plus the right to execute pushed code would change what a vault is. It also means a vault on a 256 MB Fly machine can host CI for repositories whose builds need far more than that.
+
+Workflows are read from `.hubbit/workflows/*.yml` and `.github/workflows/*.yml`. Both are collected; a file in `.hubbit/workflows` shadows one with the same basename under `.github/workflows`, which lets a repository adapt one workflow without forking the others. The workflow language, the `github` context, and the `GITHUB_*` environment are GitHub's, unchanged, because compatibility is the point of the layer; there is deliberately no `hubbit` alias for the context, since two names for one thing invites confusion.
+
+**Source layout.** `src/ci/expr.ts` is the `${{ }}` language (tokenizer, parser, evaluator, `format`/`contains`/`fromJSON`/… and the `if:` semantics including the mixed-string case); it is used by *both* the server and the runner, which is why it lives in `ci/` rather than in either. `src/ci/workflow.ts` parses and normalizes a workflow file and holds the filter-pattern matcher. `src/ci/engine.ts` is the planner and scheduler: workflow discovery, matrix expansion, the `needs` graph, job conditions, concurrency groups, leases, and folding runner reports back into run state. `src/ci/runs.ts` is the on-disk format. `src/ci/runners.ts` is the runner registry. `src/ci/api.ts` and `src/ci/web.ts` are the two route modules, `src/ci/views.ts` the pages, `src/ci/present.ts` the memoized "does this repository have workflows" check behind the Actions tab. On the runner side, `src/runner/client.ts` is the poll loop and reporting, `src/runner/docker.ts` the container wrappers, `src/runner/job.ts` the step executor, and `src/runner-cli.ts` the subcommands.
+
+**Where the boundary falls.** The server evaluates everything it can decide without watching a job run: job-level `if` (against `needs` results), `runs-on`, matrix expansion, job names, concurrency groups, `timeout-minutes`. The runner evaluates everything that depends on step outputs: step `if`, step `env`, the `run` body, step names, `continue-on-error`. This split is what lets the UI show a complete job graph before any runner exists, and what lets the server cancel or requeue without one.
+
+**Run state** lives in `<vault>/<collection>/<repo>.runs/<n>/`, holding `run.json`, `jobs/<id>.json` per job, and `jobs/<id>.log` as newline-delimited JSON (`{s, t, l}`: step index, time, line). Matrix jobs get ids `<key>-<i>`; `needs` refers to the workflow's job key and takes the worst result across that key's members. Step index `-1` is the runner's own setup and cleanup output and is rendered as its own block, not as a step. The engine keeps an in-memory index of active runs, rebuilt from these files at startup, but the files remain the durable state; a restart resumes queued runs and, once their leases expire, requeues jobs that were running.
+
+**The runner protocol** is plain HTTP JSON with a long poll (25 s), so a runner needs no inbound connectivity and works through any proxy that passes ordinary requests. `POST /api/runner/acquire` returns a `JobSpec` (the shared type in `src/ci/protocol.ts`) or 204; the job-scoped endpoints (`heartbeat`, `logs`, `status`) are authorized by the runner token *and* by an `X-Hubbit-Lease` header carrying the lease minted at acquire, so a runner can only touch the job it currently holds. Leases last 90 s and are renewed by heartbeats and log posts; the engine sweeps expired ones every 30 s and requeues, failing the job after three attempts.
+
+One pitfall is recorded because it cost a debugging session and would recur: the acquire handler must detect a disconnected runner by listening on `res`, not `req`. A request whose body has been fully read emits `close` on `req` immediately, long before the client goes away, so `req.on('close')` cancelled every job at the moment it was leased.
+
+**Runners are not users.** They live in `<vault>/runners.json` with a hashed token, a label list, and an `allow` list of globs over `collection/repo`. A runner token is rejected by every user endpoint and a user token by every runner endpoint; the two credential presentations stay distinct, as git's and the API's do (3.4). An empty `allow` list means nothing rather than everything. Registering a runner requires admin scope over exactly the globs granted, and the reason is worth stating plainly in any UI that grows around this: a runner executes repository-controlled code on the machine it runs on, so `--allow` is a grant of that machine to those repositories. Docker is a guard against accidents, not against a hostile workflow.
+
+**Execution.** One container per job, started with a sleeping entrypoint, with steps run through `docker exec`, matching how container jobs behave on GitHub: steps share a filesystem and anything one installs is there for the next. Three host directories are bind-mounted: the workspace, `RUNNER_TEMP`, and a directory for the file commands. The runner clones the repository into the workspace *before* the job starts, which is a deliberate divergence from GitHub's empty workspace (see the note in the README); it makes `run:` steps useful before action support exists and means `actions/checkout` becomes a re-sync rather than the first clone when actions land. `runs-on` labels map to images through a table the operator can override.
+
+**What is not implemented, and how it fails.** A `uses:` step fails the job with a message naming the action; a reusable workflow, `container:` job, or `services:` block fails at plan time with a message; a dynamic (expression) matrix likewise. All of these fail loudly rather than skipping, because a build step that silently did nothing and reported success is the worst possible outcome. Artifacts, caching, secrets, `hashFiles()`, and the object-filter (`*`) expression syntax are absent. `::add-mask::` masking *is* implemented despite the absence of secrets, since steps derive tokens at runtime.
+
+The next phase is actions, and the design is settled even though the code is not: resolve `uses:` from github.com into a local action cache, execute JS actions with a node binary the runner provides and bind-mounts (rather than requiring one in every image), expand composite actions natively, and override by `uses:` string the handful of actions that talk to GitHub-only services (`actions/checkout`, `upload-artifact`, `download-artifact`, `cache`, `configure-pages`, `upload-pages-artifact`, `deploy-pages`). Overriding is the recommendation over implementing the artifact v4 twirp protocol and an OIDC issuer: perhaps a tenth of the work, at the cost of tracking a handful of action interfaces. Note when that lands that `deploy-pages` writes to `<repo>.pages`, and that actions which guess their own base path guess GitHub's shape (`/<repo>/`) while hubbit serves `/<collection>/<repo>/pages/`; `configure-pages` should report the real base path, and workflows whose generators compute their own will need it passed explicitly.
+
 ## 4. Later phases, sketched
 
 - **Issues.** State must live in the vault. Two candidate designs: a sibling directory (`<repo>.issues/` with one markdown-plus-frontmatter file per issue), which is transparent and greppable; or a hidden git ref inside the repo (as git-bug and similar tools do), which travels with clones. We lean toward the sibling directory for consistency with pages, but this is undecided.
 - **Pull requests.** Within a vault, a PR can be branch-to-branch with a merge button (server-side `git merge-tree`/`merge` in a temp worktree or index). Across vaults is the federation question below.
-- **Pages build hook.** A post-receive hook (or an in-server hook after receive-pack completes, which we already have a hook point for) that builds `<repo>.pages` from the repo, growing into general CI later.
+- **Actions in workflows** (3.12), then artifacts, then deploying an artifact to `<repo>.pages`, which is what turns the workflow engine into a way to publish a site. The design is recorded at the end of 3.12; the code is not written.
+- **Secrets and a run token.** Neither exists yet. A run token minted per job from the workflow's `permissions:` block, revoked when the job ends, is what would let a workflow push back to its own repository. Secrets storage was deliberately deferred rather than designed badly: the question of whether a vault backup should carry live secrets is unresolved (7.11).
 - **JSON everywhere.** Content negotiation on the read routes, the ops layer exposed through the API for CLI parity, `--json` on the CLI, and a raw `hubbit api` passthrough command.
 - **Federation.** The distinctive long-term idea: vault-to-vault interaction (forking a repo from another vault, cross-vault pull requests, identity assertions between vaults). Nothing is designed yet; do not let near-term features paint this into a corner (for example, keep repository identity as `host/collection/repo`-shaped in any stored references).
 - **Published container images and CI for hubbit itself**, once the project is hosted somewhere with CI.
@@ -214,9 +261,11 @@ Repository deletion removes stored objects too. `deleteRepo` is async for it, an
 
 Escaping is manual (`esc()` in views); every new interpolation into HTML must go through it, and command arguments must keep using `execFile` arrays, never a shell. Validate every collection/repo/ref/path from a URL or form with the existing validators before it reaches git; ref names additionally must not start with `-`. LFS object ids are the same kind of boundary and get the same treatment (3.11): validate against `/^[0-9a-f]{64}$/` before building any key or path from one, and keep the `lfs` domain prefix on transfer signatures, since `.secret` also signs session cookies. The raw-serving content-type policy (3.7) must survive any refactor. So must the markdown sanitizer (3.9): rendered documents are attacker-controlled markup on the site's origin, and an escape there hands a repository writer any reader's session. Session cookies must never be accepted for the git or Bearer API endpoints, and tokens never grant UI sessions implicitly; the two credential presentations stay distinct. Deletion paths (`deleteRepo`) must resolve and containment-check against the vault root before any recursive removal. Every mutating route re-derives abilities from live `vault.json` and checks CSRF; keep both properties when adding routes.
 
+Workflows (3.12) add a category of risk the rest of the system does not have, because they execute repository-controlled code. Three properties hold it together and must survive any change. Jobs never run in the server process or on its machine. A runner's `allow` list is the whole of its authority, an empty one grants nothing, and registering a runner demands admin scope over exactly the globs granted, since the grant is really a grant of that machine. And the job-scoped runner endpoints check the per-job lease in addition to the runner token, so a runner allowed to serve a collection still cannot write to a job it does not hold. Note also that `::add-mask::` masking runs on the runner before lines are shipped, so an unmasked value never reaches the vault; keep it there rather than moving it server-side.
+
 ## 6. Housekeeping
 
-The verification style is `scripts/smoke.sh` plus manual curl and git against the example vault; extend the smoke test with each new feature, since it is the only automated check. The dev loop is `npm run dev` against `example-root`; regenerate it any time with `rm -rf example-root && npm run example` (the example vault's `vault.json`, with its fixed dev token, is recreated by the script). `npm link` is set up for the `hubbit` binary. Self-hosting the project in a vault would be fitting once a public vault exists.
+The verification style is `scripts/smoke.sh` plus manual curl and git against the example vault; extend the smoke test with each new feature, since it is the only automated check. The CI checks there follow the pattern the LFS checks established: everything that does not need Docker runs always, and the job-execution checks skip with a message when `docker` is absent (`SMOKE_CI_IMAGE` picks the image; it defaults to `ubuntu:24.04` because it is small, at the cost of containing almost no tooling). The dev loop is `npm run dev` against `example-root`; regenerate it any time with `rm -rf example-root && npm run example` (the example vault's `vault.json`, with its fixed dev token, is recreated by the script). `npm link` is set up for the `hubbit` binary. Self-hosting the project in a vault would be fitting once a public vault exists.
 
 ## 7. Open questions
 
@@ -229,4 +278,6 @@ The verification style is `scripts/smoke.sh` plus manual curl and git against th
 7. Whether `receive.maxInputSize` and the `deny*` configs should be applied retroactively to imported repositories by a vault-check command.
 8. User deletion and token revocation in the UI (today the escape hatch is hand-editing `vault.json`).
 9. Whether a visitor should be able to override the vault's theme for themselves (a cookie, or following `prefers-color-scheme` when the vault picks a light theme), versus the current position that the theme belongs to the vault.
-10. Whether a vault should ever import server-side (section 3.10), which is the same question as whether it grows a background-job model.
+10. Whether a vault should ever import server-side (section 3.10), which is the same question as whether it grows a background-job model. Note that 3.12 answers a neighboring question in the negative: work that runs code goes to a runner, not to the server.
+11. Where workflow secrets live. A file in the vault is consistent with everything else but puts live secrets in the backup unit; encrypting them under a key from the environment keeps a copied vault inert but adds deployment state that must be backed up separately or the secrets are lost. Deferred rather than decided.
+12. Whether runners should report themselves (last seen, current job) and where that would live, given that `runners.json` is static registration and per-process liveness is not vault state.

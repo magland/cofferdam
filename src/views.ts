@@ -14,6 +14,7 @@ export interface RepoCtx {
   tags: RefInfo[];
   cloneUrl: string;
   hasPages: boolean;
+  hasCi: boolean;
   viewer: Viewer | null;
   canPush: boolean;
   canAdmin: boolean;
@@ -125,7 +126,7 @@ function refSelector(ctx: RepoCtx, urlForRef: (ref: string) => string): string {
 
 export function repoHeader(
   ctx: RepoCtx,
-  active: 'code' | 'commits' | 'branches' | 'tags' | 'settings'
+  active: 'code' | 'commits' | 'actions' | 'branches' | 'tags' | 'settings'
 ): string {
   const base = repoUrl(ctx);
   const tab = (id: string, label: string, href: string, count?: number) =>
@@ -138,6 +139,7 @@ export function repoHeader(
 <nav class="tabs">
 ${tab('code', 'Code', base)}
 ${tab('commits', 'Commits', `${base}/commits/${encPath(ctx.ref)}`)}
+${ctx.hasCi || active === 'actions' ? tab('actions', 'Actions', `${base}/actions`) : ''}
 ${tab('branches', 'Branches', `${base}/branches`, ctx.branches.length)}
 ${tab('tags', 'Tags', `${base}/tags`, ctx.tags.length)}
 ${ctx.hasPages ? tab('pages', 'Pages', `${base}/pages/`) : ''}

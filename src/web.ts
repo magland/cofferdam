@@ -1,4 +1,5 @@
 import { NextFunction, Request, Response } from 'express';
+import { hasCiState } from './ci/present';
 import { GitRepo, RefInfo } from './git';
 import { findRepo, pagesDir } from './scan';
 import { Viewer } from './session';
@@ -52,13 +53,13 @@ export async function loadRepo(
   };
 }
 
-export function makeCtx(
+export async function makeCtx(
   root: string,
   req: Request,
   loaded: LoadedRepo,
   ref: string,
   viewer: Viewer | null
-): RepoCtx {
+): Promise<RepoCtx> {
   const cloneUrl = `${req.protocol}://${req.get('host')}/${encodeURIComponent(loaded.repo.collection)}/${encodeURIComponent(
     loaded.repo.name
   )}`;
@@ -72,6 +73,7 @@ export function makeCtx(
     tags: loaded.tags,
     cloneUrl,
     hasPages: pagesDir(root, loaded.repo.collection, loaded.repo.name) !== null,
+    hasCi: await hasCiState(root, loaded.repo, loaded.defaultBranch, loaded.branches),
     viewer,
     canPush: viewer !== null && canPush(viewer.auth, loaded.repo.collection, loaded.repo.name),
     canAdmin: viewer !== null && canAdmin(viewer.auth, [`${loaded.repo.collection}/${loaded.repo.name}`]),

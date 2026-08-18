@@ -8,15 +8,23 @@ import { DEFAULT_THEME, findTheme } from './themes';
 
 export const CONFIG_FILE = 'config.json';
 
+export interface CiConfig {
+  /** How many completed runs to keep per repository. */
+  runs: number;
+  /** Also drop completed runs older than this many days; 0 disables. */
+  days: number;
+}
+
 export interface VaultConfig {
   theme: string;
+  ci: CiConfig;
 }
 
 export function configFilePath(root: string): string {
   return path.join(root, CONFIG_FILE);
 }
 
-const DEFAULTS: VaultConfig = { theme: DEFAULT_THEME };
+const DEFAULTS: VaultConfig = { theme: DEFAULT_THEME, ci: { runs: 100, days: 0 } };
 
 let cache: { file: string; mtimeMs: number; size: number; config: VaultConfig } | null = null;
 
@@ -32,14 +40,22 @@ export function loadConfig(root: string): VaultConfig {
   if (cache && cache.file === file && cache.mtimeMs === st.mtimeMs && cache.size === st.size) {
     return cache.config;
   }
-  let config: VaultConfig = { ...DEFAULTS };
+  let config: VaultConfig = { ...DEFAULTS, ci: { ...DEFAULTS.ci } };
   try {
     const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
     // An unknown theme name falls back to the default rather than failing the
     // request: a typo in config.json should not take the site down.
     if (typeof parsed.theme === 'string' && findTheme(parsed.theme)) config.theme = parsed.theme;
+    // Run retention: a vault's run history is the one part of its state that
+    // grows without bound, so it is bounded by default and tunable here.
+    if (typeof parsed.ci === 'object' && parsed.ci !== null) {
+      const ci = parsed.ci as Record<string, unknown>;
+      const runs = typeof ci.runs === 'number' && ci.runs >= 0 ? Math.floor(ci.runs) : DEFAULTS.ci.runs;
+      const days = typeof ci.days === 'number' && ci.days >= 0 ? Math.floor(ci.days) : DEFAULTS.ci.days;
+      config.ci = { runs, days };
+    }
   } catch {
-    config = { ...DEFAULTS };
+    config = { ...DEFAULTS, ci: { ...DEFAULTS.ci } };
   }
   cache = { file, mtimeMs: st.mtimeMs, size: st.size, config };
   return config;

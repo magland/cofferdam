@@ -3,6 +3,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { registerApi } from './api';
 import { registerBrowse } from './browse';
+import { registerCiApi } from './ci/api';
+import { CiEngine } from './ci/engine';
+import { registerCiWeb } from './ci/web';
 import { loadConfig } from './config';
 import { registerGitHttp } from './githttp';
 import { registerLfs } from './lfs';
@@ -83,15 +86,21 @@ export function createApp(root: string) {
   const lfs = createLfsStore(root);
   console.log(`Git LFS storage backend: ${lfs.label}`);
 
+  // The CI engine plans and schedules workflow runs; jobs execute on runners
+  // elsewhere (hubbit runner run), never in this process.
+  const engine = new CiEngine(root, () => loadConfig(root).ci);
+
   // Registration order matters: the API and the UI-owned top-level paths
   // (/login, /new, /admin, ...) come before the generic /:collection and /:collection/:repo
   // browse routes, and more-specific wildcard routes before their prefixes.
   // LFS registers before git HTTP so its /info/lfs/* routes are matched ahead
   // of any /info/refs handling.
   registerApi(app, root);
+  registerCiApi(app, root, engine);
   registerLfs(app, root, lfs);
-  registerGitHttp(app, root);
-  registerWebOps(app, root, lfs);
+  registerGitHttp(app, root, engine);
+  registerCiWeb(app, root, engine);
+  registerWebOps(app, root, lfs, engine);
   registerBrowse(app, root, lfs);
 
   app.use((req, res) => {

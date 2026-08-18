@@ -64,7 +64,7 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
 
   async function renderTree(req: Request, res: Response, loaded: LoadedRepo, ref: string, treePath: string) {
     const viewer = getViewer(req, root);
-    const ctx = makeCtx(root, req, loaded, ref, viewer);
+    const ctx = await makeCtx(root, req, loaded, ref, viewer);
     let entries;
     try {
       entries = await loaded.repo.listTree(ref, treePath);
@@ -104,7 +104,7 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
       const loaded = await loadRepo(root, req, res, viewer);
       if (!loaded) return;
       if (!loaded.defaultBranch) {
-        res.type('html').send(views.emptyRepoPage(makeCtx(root, req, loaded, '', viewer)));
+        res.type('html').send(views.emptyRepoPage(await makeCtx(root, req, loaded, '', viewer)));
         return;
       }
       await renderTree(req, res, loaded, loaded.defaultBranch, '');
@@ -125,7 +125,7 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
       if (treePath !== '') {
         const type = await loaded.repo.entryType(ref, treePath);
         if (type === 'blob') {
-          res.redirect(`${repoUrl(makeCtx(root, req, loaded, ref, viewer))}/blob/${encPath(ref)}/${encPath(treePath)}`);
+          res.redirect(`${repoUrl(await makeCtx(root, req, loaded, ref, viewer))}/blob/${encPath(ref)}/${encPath(treePath)}`);
           return;
         }
       }
@@ -144,7 +144,7 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
         send404(res, 'Not found', viewer);
         return;
       }
-      const ctx = makeCtx(root, req, loaded, ref, viewer);
+      const ctx = await makeCtx(root, req, loaded, ref, viewer);
       const type = await loaded.repo.entryType(ref, filePath);
       if (type === 'tree') {
         res.redirect(`${repoUrl(ctx)}/tree/${encPath(ref)}/${encPath(filePath)}`);
@@ -308,7 +308,7 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
       const commits = await loaded.repo.log(ref, (page - 1) * COMMITS_PER_PAGE, COMMITS_PER_PAGE);
       res
         .type('html')
-        .send(views.commitsPage(makeCtx(root, req, loaded, ref, viewer), commits, page, totalPages, total));
+        .send(views.commitsPage(await makeCtx(root, req, loaded, ref, viewer), commits, page, totalPages, total));
     })
   );
 
@@ -329,7 +329,7 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
         return;
       }
       const patch = await loaded.repo.commitPatch(detail.sha);
-      const ctx = makeCtx(root, req, loaded, loaded.defaultBranch ?? detail.sha, viewer);
+      const ctx = await makeCtx(root, req, loaded, loaded.defaultBranch ?? detail.sha, viewer);
       res.type('html').send(views.commitPage(ctx, detail, renderDiff(patch)));
     })
   );
@@ -340,7 +340,7 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
       const viewer = getViewer(req, root);
       const loaded = await loadRepo(root, req, res, viewer);
       if (!loaded) return;
-      const ctx = makeCtx(root, req, loaded, loaded.defaultBranch ?? '', viewer);
+      const ctx = await makeCtx(root, req, loaded, loaded.defaultBranch ?? '', viewer);
       res.type('html').send(views.refListPage(ctx, 'branches'));
     })
   );
@@ -351,7 +351,7 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
       const viewer = getViewer(req, root);
       const loaded = await loadRepo(root, req, res, viewer);
       if (!loaded) return;
-      const ctx = makeCtx(root, req, loaded, loaded.defaultBranch ?? '', viewer);
+      const ctx = await makeCtx(root, req, loaded, loaded.defaultBranch ?? '', viewer);
       res.type('html').send(views.refListPage(ctx, 'tags'));
     })
   );

@@ -107,6 +107,50 @@ test:
 EOF
 git -C "$T" add -A
 git -C "$T" commit -q -m "Add Makefile"
+mkdir -p "$T/.github/workflows"
+cat > "$T/.github/workflows/ci.yml" <<'EOF'
+name: CI
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      note:
+        description: Something to print in the log
+        default: hello from the dispatch form
+env:
+  PROJECT: hello-numerics
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      files: ${{ steps.count.outputs.files }}
+    steps:
+      - name: Describe the checkout
+        run: |
+          echo "$PROJECT at ${GITHUB_SHA:0:8} on $GITHUB_REF_NAME"
+          echo "event: $GITHUB_EVENT_NAME"
+      - name: Count the sources
+        id: count
+        run: echo "files=$(ls src/*.py | wc -l)" >> "$GITHUB_OUTPUT"
+      - name: Say what was dispatched
+        if: github.event_name == 'workflow_dispatch'
+        run: echo "${{ inputs.note }}"
+  report:
+    needs: check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        style: [short, long]
+    steps:
+      - name: Report
+        run: |
+          echo "style=${{ matrix.style }}"
+          echo "the check job found ${{ needs.check.outputs.files }} python files"
+EOF
+git -C "$T" add -A
+git -C "$T" commit -q -m "Add a CI workflow"
+
 git -C "$T" tag v0.2.0
 
 publish "$T" alice hello-numerics "Small numerical routines (example repository)"

@@ -1,6 +1,7 @@
 import { Express, Request, Response } from 'express';
 import { spawn } from 'child_process';
 import * as zlib from 'zlib';
+import { CiEngine } from './ci/engine';
 import { GitRepo, execGit } from './git';
 import { createRepo } from './ops';
 import { displayName, findRepo, isValidName } from './scan';
@@ -79,7 +80,30 @@ export function checkPushAuth(
   return { ok: true, auth };
 }
 
-export function registerGitHttp(app: Express, root: string): void {
+// The refs a push may have changed, read before and after receive-pack. A
+// snapshot diff rather than a post-receive hook script: it needs no hook
+// installed in each repository, so it works for repositories imported by
+// `git clone --bare` as well as ones this server created.
+async function refSnapshot(repo: GitRepo): Promise<Map<string, string>> {
+  const snap = new Map<string, string>();
+  try {
+    const out = (
+      await execGit(repo.dir, ['for-each-ref', '--format=%(refname)%00%(objectname)', 'refs/heads', 'refs/tags'])
+    ).toString('utf8');
+    for (const line of out.split('\n')) {
+      if (!line) continue;
+      const [name, sha] = line.split('\0');
+      if (name && sha) snap.set(name, sha);
+    }
+  } catch {
+    // an unreadable ref list yields no events rather than failing the push
+  }
+  return snap;
+}
+
+const ZERO = '0'.repeat(40);
+
+export function registerGitHttp(app: Express, root: string, engine?: CiEngine): void {
   function denyPush(res: Response, status: number, message: string) {
     if (status === 401) res.setHeader('WWW-Authenticate', 'Basic realm="hubbit"');
     res.status(status).type('text/plain').send(message + '\n');
@@ -193,9 +217,31 @@ export function registerGitHttp(app: Express, root: string): void {
       let repo = findRepo(root, collectionName, req.params.repo);
       if (!repo) repo = await createRepo(root, collectionName, repoName);
       const target = repo;
+      const actor = auth.username;
+      const before = await refSnapshot(target);
       runService(req, res, 'git-receive-pack', repo.dir, (code) => {
-        if (code === 0) ensureHead(target).catch(() => {});
+        if (code !== 0) return;
+        ensureHead(target)
+          .then(() => (engine ? firePushEvents(engine, target, before, actor) : undefined))
+          .catch((e) => console.error(`post-receive handling failed: ${e instanceof Error ? e.message : e}`));
       });
     })
   );
+}
+
+// Turn a before/after ref snapshot into push events for the CI engine. Ref
+// deletions are reported (with an all-zero "after") and ignored downstream;
+// a workflow file that fails to parse still produces a visible failed run,
+// which is why nothing here filters on content.
+async function firePushEvents(
+  engine: CiEngine,
+  repo: GitRepo,
+  before: Map<string, string>,
+  actor: string
+): Promise<void> {
+  const after = await refSnapshot(repo);
+  for (const [ref, sha] of after) {
+    if (before.get(ref) === sha) continue;
+    await engine.handlePush(repo, { ref, before: before.get(ref) ?? ZERO, after: sha, actor });
+  }
 }

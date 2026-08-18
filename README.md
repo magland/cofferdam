@@ -6,8 +6,10 @@ Hosting git repositories usually means running a service with a database (GitHub
 <vault>/
   vault.json              (users and hashed tokens; created on first start)
   .secret                 (session-cookie signing key; created on first need)
+  runners.json            (registered workflow runners; created when you add one)
   alice/
     hello-numerics.git/   (bare repository)
+    hello-numerics.runs/  (its workflow runs and logs)
     webapp.git/
     webapp.pages/         (static pages site for webapp)
     webapp.lfs/           (its Git LFS objects, when no bucket is configured)
@@ -34,6 +36,7 @@ The `.git` suffix on repository directory names is optional; it is stripped for 
 - Anonymous `git clone http://host:port/collection/repo` over smart HTTP
 - Authenticated `git push`, including push-to-create for new repositories
 - Git LFS, with objects in an S3-compatible bucket or inside the vault (see below)
+- GitHub Actions workflows from `.hubbit/workflows` or `.github/workflows`, planned by the server and executed by a runner you start elsewhere with Docker (see below), with live logs in the interface
 - A JSON API and a `hubbit` CLI for user management, including `hubbit login` to hand the token to git so pushing stops asking for it
 - Per-repository pages sites served from a sibling `<repo>.pages` directory
 
@@ -116,7 +119,7 @@ hubbit whoami
 hubbit user list
 ```
 
-`hubbit login` and `hubbit logout` are the exception to that: they call the server once to check who the token belongs to, then write to git's credential store on the machine they run on (see [Not typing the token every time](#not-typing-the-token-every-time)).
+`hubbit login` and `hubbit logout` are the exception to that: they call the server once to check who the token belongs to, then write to git's credential store on the machine they run on (see [Not typing the token every time](#not-typing-the-token-every-time)). `hubbit runner run` is the other exception, and the larger one: it is a long-running process that takes workflow jobs from a vault and executes them locally in Docker (see [Workflows](#workflows)).
 
 `--host <url>` and `--token <t>` override the environment per command. By default the server binds 127.0.0.1. Use `--host 0.0.0.0` on `serve` to expose it on the network; note that this exposes read access to every repository in the vault, and that tokens then travel over plain HTTP unless you put TLS in front. The first line of the `description` file inside a bare repository is shown in listings, as with classic git hosting.
 
@@ -175,21 +178,25 @@ The trade-off is that this works only where the variable is exported, so editors
 Importing runs on your machine, not on the server. Sign in, open **Import** on any collection page (or go to `/import`), give it a GitHub URL or `owner/repo`, and the page writes the exact command:
 
 ```bash
-git clone --bare https://github.com/owner/repo.git repo.import.git && \
-  GIT_ASKPASS= git -C repo.import.git push --mirror https://you@vault.example.com/mycollection/repo && \
-  rm -rf repo.import.git
+tmp="$(mktemp -d /tmp/import.XXXXXX)" && \
+  git clone --bare https://github.com/owner/repo.git "$tmp" && \
+  GIT_ASKPASS= git -C "$tmp" push --mirror https://you@vault.example.com/mycollection/repo && \
+  rm -rf "$tmp"
 ```
+
+The clone is a scratch copy, so it goes to a temporary directory rather than to whatever directory you happen to be standing in, and a fresh one each time means a failed attempt never blocks the next.
 
 If you have run `hubbit login`, the push takes the token from git's credential store and asks nothing. Otherwise git asks for a password on the push: that is your hubbit token. The `GIT_ASKPASS=` prefix keeps that prompt in the terminal you pasted the command into. Without it, an editor that sets `GIT_ASKPASS` for its integrated terminal, as VS Code does, answers the prompt with a dialog box elsewhere in the window instead; if that dialog goes unnoticed, git prints nothing after the clone and waits, which reads as a hang. The push creates the repository, so the target must not exist yet, and your push scope has to cover it. Branches and tags come across. Issues and pull requests do not, and the description is set afterwards in repository settings.
 
 If the repository uses Git LFS, the mirror push carries the pointer files but not the objects behind them, and the imported files will show as missing until you bring those over too. Do it from inside the bare clone, before deleting it:
 
 ```bash
-git clone --bare https://github.com/owner/repo.git repo.import.git
-GIT_ASKPASS= git -C repo.import.git push --mirror https://you@vault.example.com/mycollection/repo
-git -C repo.import.git lfs fetch --all https://github.com/owner/repo.git
-GIT_ASKPASS= git -C repo.import.git lfs push --all https://you@vault.example.com/mycollection/repo
-rm -rf repo.import.git
+tmp="$(mktemp -d /tmp/import.XXXXXX)"
+git clone --bare https://github.com/owner/repo.git "$tmp"
+GIT_ASKPASS= git -C "$tmp" push --mirror https://you@vault.example.com/mycollection/repo
+git -C "$tmp" lfs fetch --all https://github.com/owner/repo.git
+GIT_ASKPASS= git -C "$tmp" lfs push --all https://you@vault.example.com/mycollection/repo
+rm -rf "$tmp"
 ```
 
 `--all` copies every version of every tracked file rather than only the tips, so the history stays checkoutable.
@@ -248,6 +255,87 @@ A repository can have a static site, served at `/<collection>/<repo>/pages/`. Th
 ```
 
 Anything that can write files can publish: a manual copy, a build script, later CI. Directory requests serve `index.html`, and a `404.html` at the site root, if present, is used for missing paths. When the pages directory exists, a Pages tab appears on the repository's web pages.
+
+## Workflows
+
+A vault runs GitHub Actions workflows, with one deliberate difference: **jobs never execute on the machine serving the vault**. That machine holds repositories and answers HTTP; giving it a container runtime and letting pushed code run on it is the wrong shape for a small server, and worse for a shared one. Instead the server plans runs and hands them out, and a *runner* you start somewhere with Docker takes them:
+
+```bash
+hubbit runner add laptop --allow 'mycollection/*'    # on any machine, with an admin token
+hubbit runner run --host https://vault.example.com --runner-token hubbit_runner_...
+```
+
+A vault with no runner is not broken; its runs queue and wait, and the Actions tab says so. Start a runner and they go.
+
+Workflows are read from two directories:
+
+```
+.hubbit/workflows/*.yml     preferred
+.github/workflows/*.yml     also read, so repositories work unchanged
+```
+
+Both are collected. A file in `.hubbit/workflows` shadows one with the same basename in `.github/workflows`, which is how a repository adapts a single workflow for hubbit without forking the rest of them. The workflow syntax is GitHub's, the context is spelled `github`, and the environment variables are the `GITHUB_*` ones, because compatibility is the whole point of the layer.
+
+### What runs today
+
+Triggers are `push` (with `branches`, `tags`, and `paths` filters, plus their `-ignore` forms) and `workflow_dispatch` with typed inputs, which the Actions tab renders as a form. A commit made in the web interface is a push like any other and fires the same workflows.
+
+Within a run: the `${{ }}` expression language, `needs` between jobs, `strategy.matrix` with `include`, `exclude`, and `fail-fast`, `if` on jobs and steps (including `always()`, `failure()`, and `cancelled()`), `env` at workflow, job, and step level, `concurrency` groups with `cancel-in-progress`, `continue-on-error`, `timeout-minutes`, job `outputs`, and `defaults.run`.
+
+Within a step: `run` with `shell` and `working-directory`, the file commands (`GITHUB_OUTPUT`, `GITHUB_ENV`, `GITHUB_PATH`, `GITHUB_STEP_SUMMARY`), and the stdout commands (`::group::`, `::error::`, `::add-mask::` and friends). Values passed to `::add-mask::` are redacted from every later log line.
+
+**Steps that use an action do not run yet.** A `uses:` step fails the job with a message saying so, rather than being skipped, because a workflow whose build step quietly did nothing and then reported success is worse than one that fails. Artifacts, caching, secrets, service containers, `container:` jobs, and reusable workflows are likewise not implemented. The roadmap below says where they sit.
+
+### One divergence worth knowing
+
+hubbit checks the repository out into the workspace before the job starts. On GitHub the workspace begins empty and `actions/checkout` fills it. Pre-cloning is what makes `run:` steps useful before action support exists, and it means nothing changes under you when actions arrive, since `checkout` will then be a re-sync rather than the first clone. A workflow that deliberately wants an empty workspace will be surprised.
+
+### Runners
+
+A runner is registered against the vault and holds a token of its own, distinct from any user's:
+
+```bash
+export HUBBIT_HOST=https://vault.example.com
+export HUBBIT_TOKEN=<a token with admin scope>
+hubbit runner add laptop --allow 'mycollection/*' --labels ubuntu-latest
+```
+
+`--allow` takes globs over `collection/repo` and is the security boundary that matters: **a runner executes whatever those repositories' workflows contain, on the machine you start it on.** Registering one requires admin scope over exactly the globs being granted, the same rule that governs handing out push access. Grant a runner the repositories you would let run code on that machine, and no more. Docker is isolation against accidents, not against someone who wants your laptop.
+
+The token is shown once, and only its hash is stored, as with user tokens. `--save` writes it to `~/.config/hubbit/runner.json` (mode 0600) so later runs need no arguments. Registration is also available under **Admin > Runners** in the web interface.
+
+Running one:
+
+```bash
+hubbit runner run                        # using the saved configuration
+hubbit runner run --labels ubuntu-latest --image ubuntu-latest=ghcr.io/me/ci:latest
+```
+
+The runner long-polls for a job, so it needs no inbound connectivity and works behind NAT and through any ordinary HTTP proxy. It takes one job at a time, runs the whole job in a single container (steps `exec` into it, so what one step installs is there for the next), streams logs back as it goes, and reports the result. Ctrl-C finishes the current job and stops.
+
+`runs-on` labels map to images. The defaults cover `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, and `self-hosted` with the [`catthehacker`](https://github.com/catthehacker/docker_images) images that `act` also uses; `--image <label>=<image>` overrides any of them, and an unmapped label that looks like an image name (`runs-on: node:24`) is used as one. Note that the images decide what your workflows can assume: a bare `ubuntu:24.04` has no node, no python, and no compilers.
+
+If the runner dies mid-job, the server notices the lease expire and requeues the job; after three attempts it fails it with a message naming the runner, rather than retrying forever.
+
+### Runs in the vault
+
+Run state is files, like everything else:
+
+```
+<vault>/mycollection/myrepo.runs/
+  12/
+    run.json          the run: trigger, ref, sha, status, job order
+    jobs/build.json   one per job: steps, timings, outputs
+    jobs/build.log    the log, one JSON object per line
+```
+
+Runs are the one part of a vault that grows without bound, so they are pruned. The default keeps the last 100 completed runs per repository; `config.json` tunes it:
+
+```json
+{ "theme": "paper", "ci": { "runs": 100, "days": 30 } }
+```
+
+`days` of `0` disables the age rule. Active runs are never pruned.
 
 ## Git LFS
 
@@ -367,7 +455,9 @@ Backing up a vault is copying a directory. Moving it to another host, or from yo
 
 The project direction is specified in [SPEC.md](SPEC.md). The phase described there as "a web interface that performs operations" is implemented; nearer-term items now are:
 
+- Workflow steps that `use:` an action: JS and composite actions resolved from github.com, with hubbit-native overrides for the handful that talk to GitHub-only services (`checkout`, the artifact actions, `cache`, and the Pages trio)
+- Artifacts, and deploying one to `<repo>.pages` so a workflow can publish a site
+- Secrets, and a scoped token for the run so a workflow can push back
 - Issues and pull requests, stored in the vault (design in SPEC.md, undecided between sibling directories and in-repo refs)
 - JSON responses on the read routes via content negotiation, and UI operations mirrored into the API
-- A post-receive hook that builds `<repo>.pages` on push, growing into CI
 - Federation between vaults: forking and cross-vault pull requests

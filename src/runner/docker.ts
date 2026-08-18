@@ -1,0 +1,189 @@
+import { ChildProcess, execFile, spawn } from 'child_process';
+
+// The Docker surface the runner needs, as thin wrappers over the CLI rather
+// than the Engine API socket. Shelling out keeps the runner dependency-free
+// and works with anything that provides a `docker` command, including
+// Podman's shim.
+
+export class DockerError extends Error {}
+
+function run(args: string[], input?: string): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = execFile('docker', args, { maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) reject(new DockerError(`docker ${args[0]} failed: ${(stderr || err.message).trim()}`));
+      else resolve({ stdout, stderr });
+    });
+    if (input !== undefined && child.stdin) {
+      child.stdin.write(input);
+      child.stdin.end();
+    }
+  });
+}
+
+export async function dockerAvailable(): Promise<string | null> {
+  try {
+    const { stdout } = await run(['version', '--format', '{{.Server.Version}}']);
+    return stdout.trim() || 'unknown';
+  } catch {
+    return null;
+  }
+}
+
+export async function imagePresent(image: string): Promise<boolean> {
+  try {
+    await run(['image', 'inspect', image]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function pullImage(image: string, onLine: (line: string) => void): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('docker', ['pull', image]);
+    const feed = (buf: Buffer) => {
+      for (const line of buf.toString('utf8').split('\n')) {
+        if (line.trim() !== '') onLine(line.replace(/\r/g, ''));
+      }
+    };
+    child.stdout.on('data', feed);
+    child.stderr.on('data', feed);
+    child.on('error', (e) => reject(new DockerError(`docker pull failed: ${e.message}`)));
+    child.on('close', (code) =>
+      code === 0 ? resolve() : reject(new DockerError(`docker pull ${image} exited ${code}`))
+    );
+  });
+}
+
+export interface ContainerOptions {
+  image: string;
+  name: string;
+  binds: { host: string; container: string; readonly?: boolean }[];
+  env: Record<string, string>;
+  workdir: string;
+  network?: string;
+}
+
+// One container per job, kept alive by a sleep so each step can exec into
+// it. This is how a container job behaves on GitHub: steps share a
+// filesystem and a process namespace, and anything a step installs is there
+// for the next one.
+export async function startContainer(opts: ContainerOptions): Promise<string> {
+  const args = ['run', '--detach', '--name', opts.name, '--workdir', opts.workdir, '--entrypoint', ''];
+  for (const b of opts.binds) {
+    args.push('--volume', `${b.host}:${b.container}${b.readonly ? ':ro' : ''}`);
+  }
+  for (const [k, v] of Object.entries(opts.env)) {
+    args.push('--env', `${k}=${v}`);
+  }
+  if (opts.network) args.push('--network', opts.network);
+  args.push(opts.image, 'sh', '-c', 'while true; do sleep 3600; done');
+  const { stdout } = await run(args);
+  return stdout.trim();
+}
+
+export async function removeContainer(id: string): Promise<void> {
+  try {
+    await run(['rm', '--force', '--volumes', id]);
+  } catch {
+    // a container that is already gone is the desired state
+  }
+}
+
+export interface ExecOptions {
+  workdir?: string;
+  env?: Record<string, string>;
+  user?: string;
+}
+
+export interface ExecHandle {
+  child: ChildProcess;
+  done: Promise<number>;
+}
+
+// Exec a command in a running container, streaming combined output. stdout
+// and stderr are interleaved into one callback because that is what a build
+// log is: their relative order matters more than their separation.
+export function execInContainer(
+  id: string,
+  argv: string[],
+  onLine: (line: string) => void,
+  opts: ExecOptions = {}
+): ExecHandle {
+  const args = ['exec'];
+  if (opts.workdir) args.push('--workdir', opts.workdir);
+  if (opts.user) args.push('--user', opts.user);
+  for (const [k, v] of Object.entries(opts.env ?? {})) args.push('--env', `${k}=${v}`);
+  args.push(id, ...argv);
+  const child = spawn('docker', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+  // Split on newlines across chunk boundaries, and cap any single line so a
+  // program printing a gigabyte without a newline cannot exhaust memory.
+  const makeFeeder = () => {
+    let buffer = '';
+    return (buf: Buffer) => {
+      buffer += buf.toString('utf8');
+      let i: number;
+      while ((i = buffer.indexOf('\n')) !== -1) {
+        onLine(buffer.slice(0, i).replace(/\r$/, ''));
+        buffer = buffer.slice(i + 1);
+      }
+      if (buffer.length > 64 * 1024) {
+        onLine(buffer.slice(0, 64 * 1024));
+        buffer = buffer.slice(64 * 1024);
+      }
+    };
+    };
+  const outFeed = makeFeeder();
+  const errFeed = makeFeeder();
+  child.stdout?.on('data', outFeed);
+  child.stderr?.on('data', errFeed);
+
+  const done = new Promise<number>((resolve) => {
+    let settled = false;
+    const finish = (code: number) => {
+      if (!settled) {
+        settled = true;
+        resolve(code);
+      }
+    };
+    child.on('error', (e) => {
+      onLine(`docker exec failed: ${e.message}`);
+      finish(126);
+    });
+    child.on('close', (code) => finish(code === null ? 143 : code));
+  });
+  return { child, done };
+}
+
+// Copy a file into a container. `docker cp` from stdin needs a tar stream, so
+// the simpler route for the small files the runner writes (step scripts, the
+// environment files) is to pipe the bytes through a shell redirect.
+export function writeFileInContainer(id: string, containerPath: string, content: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      'docker',
+      ['exec', '--interactive', id, 'sh', '-c', `cat > "$0"`, containerPath],
+      { stdio: ['pipe', 'ignore', 'pipe'] }
+    );
+    let stderr = '';
+    child.stderr?.on('data', (b: Buffer) => {
+      stderr += b.toString('utf8');
+    });
+    child.on('error', (e) => reject(new DockerError(e.message)));
+    child.on('close', (code) =>
+      code === 0 ? resolve() : reject(new DockerError(`writing ${containerPath} failed: ${stderr.trim()}`))
+    );
+    child.stdin?.write(content);
+    child.stdin?.end();
+  });
+}
+
+export async function readFileInContainer(id: string, containerPath: string): Promise<string> {
+  try {
+    const { stdout } = await run(['exec', id, 'sh', '-c', `cat "$0" 2>/dev/null || true`, containerPath]);
+    return stdout;
+  } catch {
+    return '';
+  }
+}

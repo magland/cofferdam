@@ -285,6 +285,7 @@ export function adminIndexPage(viewer: Viewer, canTheme: boolean): string {
   const content = `<h1>Administration</h1>
 <div class="card-list">
 ${card('/admin/users', 'Users', 'Create users, grant push and admin scope, mint tokens.')}
+${card('/admin/runners', 'Runners', 'Register the machines that execute workflow jobs.')}
 ${
   canTheme
     ? card('/admin/appearance', 'Appearance', 'Choose the theme this vault is served with.')

@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { GitRepo, execGit, isValidRefName, isValidRepoPath, isValidSha } from './git';
 import type { LfsStore } from './lfsstore';
+import { runsDir } from './ci/runs';
 import { findRepo, isValidName, pagesDir } from './scan';
 
 // The shared write-operations layer. Every function takes explicit arguments
@@ -241,6 +242,13 @@ export async function deleteRepo(
   const pages = pagesDir(root, collection, name);
   if (pages && containedIn(rootReal, pages)) {
     fs.rmSync(pages, { recursive: true, force: true });
+  }
+  // Workflow runs go too. Leaving them would orphan the history, and worse,
+  // a repository later created under the same name would inherit it, with
+  // run numbers continuing from someone else's runs.
+  const runs = runsDir(root, collection, name);
+  if (runs && containedIn(rootReal, runs)) {
+    fs.rmSync(runs, { recursive: true, force: true });
   }
   // Stored LFS objects go too, best-effort: by this point the repository is
   // gone and the objects are unreachable garbage, so a storage failure is

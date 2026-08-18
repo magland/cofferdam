@@ -1,4 +1,5 @@
 import express, { Express, Request, Response } from 'express';
+import { CiEngine } from './ci/engine';
 import { loadConfig, saveConfig } from './config';
 import { isValidRefName, isValidRepoPath, isValidSha } from './git';
 import { LfsContext } from './lfsstore';
@@ -70,7 +71,30 @@ function globsField(req: Request, name: string): string[] | null {
   return parts;
 }
 
-export function registerWebOps(app: Express, root: string, lfs: LfsContext | null = null): void {
+export function registerWebOps(
+  app: Express,
+  root: string,
+  lfs: LfsContext | null = null,
+  engine?: CiEngine
+): void {
+  // A commit made in the browser is a push like any other as far as
+  // workflows are concerned, so the same event goes to the CI engine. A
+  // failure here is logged and never allowed to affect the operation the
+  // user asked for, which has already been committed by this point.
+  function firePush(repo: { dir: string; collection: string; name: string }, branch: string, before: string | null, after: string, actor: string): void {
+    if (!engine) return;
+    const gitRepo = findRepo(root, repo.collection, repo.name);
+    if (!gitRepo) return;
+    engine
+      .handlePush(gitRepo, {
+        ref: `refs/heads/${branch}`,
+        before: before ?? '0'.repeat(40),
+        after,
+        actor,
+      })
+      .catch((e) => console.error(`CI trigger failed: ${e instanceof Error ? e.message : e}`));
+  }
+
   function fail(
     res: Response,
     status: number,
@@ -195,14 +219,24 @@ export function registerWebOps(app: Express, root: string, lfs: LfsContext | nul
     const dest = `${req.protocol}://${encodeURIComponent(viewer.auth.username)}@${host}/${encodeURIComponent(
       collection
     )}/${encodeURIComponent(name)}`;
-    const tmp = `${name}.import.git`;
+    // The clone is a scratch copy, so it goes to a temporary directory rather
+    // than to whatever directory the command happens to be pasted into. A
+    // fresh one each time means a failed attempt never blocks the next, and
+    // what it leaves behind is under /tmp rather than in someone's work tree.
+    // mktemp is given an explicit template because plain `mktemp -d` is a
+    // usage error on BSD, and `-t prefix` is a usage error on GNU.
+    //
     // GIT_ASKPASS= on the push keeps the password prompt in the terminal the
     // command was pasted into. Editors that set GIT_ASKPASS (VS Code does for
     // its integrated terminal) otherwise redirect it to a dialog elsewhere in
     // the window, and an unanswered dialog looks exactly like a hang: git
     // prints nothing after the clone and waits. Credential helpers are
     // consulted before askpass, so a stored credential still works.
-    const command = `git clone --bare ${source.url} ${tmp} && GIT_ASKPASS= git -C ${tmp} push --mirror ${dest} && rm -rf ${tmp}`;
+    const command =
+      `tmp="$(mktemp -d /tmp/import.XXXXXX)"` +
+      ` && git clone --bare ${source.url} "$tmp"` +
+      ` && GIT_ASKPASS= git -C "$tmp" push --mirror ${dest}` +
+      ` && rm -rf "$tmp"`;
     res.type('html').send(forms.importPage(viewer, collections, preset, { command, collection, name }));
   });
 
@@ -245,7 +279,7 @@ export function registerWebOps(app: Express, root: string, lfs: LfsContext | nul
       const repo = await ops.createRepo(root, collection, name);
       if (description) ops.setDescription(repo.dir, description);
       if (field(req, 'init') === '1') {
-        await ops.commitFileChange(repo.dir, {
+        const sha = await ops.commitFileChange(repo.dir, {
           branch: 'main',
           filePath: 'README.md',
           message: 'Initial commit',
@@ -253,6 +287,7 @@ export function registerWebOps(app: Express, root: string, lfs: LfsContext | nul
           expectedHead: null,
           action: { kind: 'create', content: Buffer.from(`# ${name}\n${description ? `\n${description}\n` : ''}`) },
         });
+        firePush(repo, 'main', null, sha, viewer.auth.username);
       }
       res.redirect(`/${encodeURIComponent(collection)}/${encodeURIComponent(name)}`);
     })
@@ -305,16 +340,16 @@ export function registerWebOps(app: Express, root: string, lfs: LfsContext | nul
     return { loaded, branch: ref, filePath, tip: branchInfo.sha };
   }
 
-  function handleOpError(
+  async function handleOpError(
     e: unknown,
     req: Request,
     res: Response,
     viewer: Viewer,
     target: FileOpTarget,
     retryUrl: string
-  ): void {
+  ): Promise<void> {
     if (e instanceof OpError && e.kind === 'conflict') {
-      const ctx = makeCtx(root, req, target.loaded, target.branch, viewer);
+      const ctx = await makeCtx(root, req, target.loaded, target.branch, viewer);
       res.status(409).type('html').send(forms.conflictPage(ctx, target.branch, retryUrl));
       return;
     }
@@ -355,7 +390,7 @@ export function registerWebOps(app: Express, root: string, lfs: LfsContext | nul
         fail(res, 400, 'Only text files up to 1 MB can be edited in the browser.', viewer, urlOf(loaded.repo));
         return;
       }
-      const ctx = makeCtx(root, req, loaded, branch, viewer);
+      const ctx = await makeCtx(root, req, loaded, branch, viewer);
       res.type('html').send(forms.editFilePage(ctx, filePath, buf.toString('utf8'), target.tip!));
     })
   );
@@ -396,7 +431,7 @@ export function registerWebOps(app: Express, root: string, lfs: LfsContext | nul
       const message = field(req, 'message').trim() || `Update ${filePath.split('/').pop()}`;
       const retryUrl = `${urlOf(loaded.repo)}/edit/${encPath(branch)}/${encPath(filePath)}`;
       try {
-        await ops.commitFileChange(loaded.repo.dir, {
+        const sha = await ops.commitFileChange(loaded.repo.dir, {
           branch,
           filePath,
           message,
@@ -404,8 +439,9 @@ export function registerWebOps(app: Express, root: string, lfs: LfsContext | nul
           expectedHead: expected,
           action: { kind: 'edit', content: Buffer.from(content, 'utf8') },
         });
+        firePush(loaded.repo, branch, expected, sha, viewer.auth.username);
       } catch (e) {
-        handleOpError(e, req, res, viewer, target, retryUrl);
+        await handleOpError(e, req, res, viewer, target, retryUrl);
         return;
       }
       res.redirect(`${urlOf(loaded.repo)}/blob/${encPath(branch)}/${encPath(filePath)}`);
@@ -419,7 +455,7 @@ export function registerWebOps(app: Express, root: string, lfs: LfsContext | nul
       if (!viewer) return;
       const target = await loadFileTarget(req, res, viewer, { allowEmptyRepo: true });
       if (!target) return;
-      const ctx = makeCtx(root, req, target.loaded, target.branch, viewer);
+      const ctx = await makeCtx(root, req, target.loaded, target.branch, viewer);
       const preset = target.tip === null ? { filename: 'README.md', content: `# ${target.loaded.repo.name}\n` } : {};
       res.type('html').send(forms.newFilePage(ctx, target.branch, target.filePath, target.tip, preset));
     })
@@ -443,7 +479,7 @@ export function registerWebOps(app: Express, root: string, lfs: LfsContext | nul
       if (expected === null && target.tip !== null) {
         // The form was rendered against an empty repository, but a branch has
         // appeared since; treat it as the branch having moved.
-        handleOpError(new OpError('branch created meanwhile', 'conflict'), req, res, viewer, target, req.originalUrl);
+        await handleOpError(new OpError('branch created meanwhile', 'conflict'), req, res, viewer, target, req.originalUrl);
         return;
       }
       const filename = field(req, 'filename').trim().replace(/^\/+|\/+$/g, '');
@@ -456,7 +492,7 @@ export function registerWebOps(app: Express, root: string, lfs: LfsContext | nul
       const content = normalizeContent(field(req, 'content'));
       const message = field(req, 'message').trim() || `Create ${filename.split('/').pop()}`;
       try {
-        await ops.commitFileChange(loaded.repo.dir, {
+        const sha = await ops.commitFileChange(loaded.repo.dir, {
           branch,
           filePath: fullPath,
           message,
@@ -464,8 +500,9 @@ export function registerWebOps(app: Express, root: string, lfs: LfsContext | nul
           expectedHead: expected,
           action: { kind: 'create', content: Buffer.from(content, 'utf8') },
         });
+        firePush(loaded.repo, branch, expected, sha, viewer.auth.username);
       } catch (e) {
-        handleOpError(e, req, res, viewer, target, retryUrl);
+        await handleOpError(e, req, res, viewer, target, retryUrl);
         return;
       }
       res.redirect(`${urlOf(loaded.repo)}/blob/${encPath(branch)}/${encPath(fullPath)}`);
@@ -485,7 +522,7 @@ export function registerWebOps(app: Express, root: string, lfs: LfsContext | nul
         send404(res, `File ${filePath} not found at ${branch}`, viewer);
         return;
       }
-      const ctx = makeCtx(root, req, loaded, branch, viewer);
+      const ctx = await makeCtx(root, req, loaded, branch, viewer);
       res.type('html').send(forms.deleteFilePage(ctx, filePath, target.tip!));
     })
   );
@@ -507,7 +544,7 @@ export function registerWebOps(app: Express, root: string, lfs: LfsContext | nul
       const message = field(req, 'message').trim() || `Delete ${filePath.split('/').pop()}`;
       const retryUrl = `${urlOf(loaded.repo)}/delete/${encPath(branch)}/${encPath(filePath)}`;
       try {
-        await ops.commitFileChange(loaded.repo.dir, {
+        const sha = await ops.commitFileChange(loaded.repo.dir, {
           branch,
           filePath,
           message,
@@ -515,8 +552,9 @@ export function registerWebOps(app: Express, root: string, lfs: LfsContext | nul
           expectedHead: expected,
           action: { kind: 'delete' },
         });
+        firePush(loaded.repo, branch, expected, sha, viewer.auth.username);
       } catch (e) {
-        handleOpError(e, req, res, viewer, target, retryUrl);
+        await handleOpError(e, req, res, viewer, target, retryUrl);
         return;
       }
       const parent = filePath.split('/').slice(0, -1).join('/');
@@ -549,6 +587,9 @@ export function registerWebOps(app: Express, root: string, lfs: LfsContext | nul
       const from = field(req, 'from').trim() || loaded.defaultBranch || '';
       try {
         await ops.createBranch(loaded.repo.dir, name, from);
+        const created = loaded.branches.find((b) => b.name === from);
+        const tip = created?.sha ?? loaded.tags.find((t) => t.name === from)?.sha;
+        if (tip) firePush(loaded.repo, name, null, tip, viewer.auth.username);
       } catch (e) {
         if (e instanceof OpError) {
           fail(res, e.kind === 'notfound' ? 404 : 400, e.message, viewer, backUrl);
@@ -635,7 +676,7 @@ export function registerWebOps(app: Express, root: string, lfs: LfsContext | nul
       if (!viewer) return;
       const loaded = await loadRepo(root, req, res, viewer);
       if (!loaded) return;
-      const ctx = makeCtx(root, req, loaded, loaded.defaultBranch ?? '', viewer);
+      const ctx = await makeCtx(root, req, loaded, loaded.defaultBranch ?? '', viewer);
       if (!ctx.canPush && !ctx.canAdmin) {
         fail(res, 403, 'You do not have access to this repository’s settings.', viewer, urlOf(loaded.repo));
         return;
@@ -689,6 +730,9 @@ export function registerWebOps(app: Express, root: string, lfs: LfsContext | nul
         fail(res, 400, `Type ${target} exactly to confirm deletion.`, viewer, backUrl);
         return;
       }
+      // Drop the repository's runs from the live index first, so nothing is
+      // dispatched for a repository whose files are about to disappear.
+      engine?.forgetRepo(loaded.repo.collection, loaded.repo.name);
       await ops.deleteRepo(root, loaded.repo.collection, loaded.repo.name, lfs?.store);
       res.redirect(`/${encodeURIComponent(loaded.repo.collection)}`);
     })

@@ -7,6 +7,7 @@ import { GitRepo } from './git';
 const RESERVED_NAMES = new Set([
   'vault.json',
   'config.json',
+  'runners.json',
   'api',
   'assets',
   'favicon.ico',

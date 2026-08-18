@@ -10,6 +10,7 @@ import {
   rejectCredential,
   setHelper,
 } from './credentials';
+import { runnerAddCmd, runnerListCmd, runnerRemoveCmd, runnerRunCmd } from './runner-cli';
 import { createApp } from './server';
 import { isValidName } from './scan';
 import { DEFAULT_THEME, themeNames } from './themes';
@@ -53,6 +54,23 @@ function usage(code = 0): never {
   hubbit logout
       Remove this vault's stored credential again.
 
+  hubbit runner add <name> --allow <glob>... [--labels <l,...>] [--save]
+      Register a machine that will execute workflow jobs, and print its
+      token once. --allow says which repositories it may take jobs for, as
+      globs over collection/repo; your admin scope must cover them. Jobs
+      never run on the vault's machine, so a vault with no runner queues
+      its runs and waits.
+
+  hubbit runner run [--host <url>] [--runner-token <t>] [--labels <l,...>]
+      Take jobs and run them, one at a time, each in a Docker container.
+      Reads ~/.config/hubbit/runner.json when given no arguments. Needs a
+      working docker command; --image <label>=<image> overrides which image
+      a runs-on label maps to.
+
+  hubbit runner list
+  hubbit runner remove <name>
+      Show or remove registered runners (admin token, as with users).
+
 User commands talk to a running hubbit server:
   HUBBIT_HOST    server URL, e.g. http://127.0.0.1:3000   (or --host <url>)
   HUBBIT_TOKEN   a token with admin scope                  (or --token <t>)
@@ -61,8 +79,10 @@ Vault layout:
   <vault>/<collection>/<repo>.git    bare repositories (the .git suffix is optional)
   <vault>/<collection>/<repo>.pages  optional static pages site for a repo
   <vault>/<collection>/<repo>.lfs    Git LFS objects, when no bucket is configured
+  <vault>/<collection>/<repo>.runs   workflow run history and logs
   <vault>/vault.json                 users and hashed tokens (server-managed)
-  <vault>/config.json                vault settings, currently {"theme": "<name>"}
+  <vault>/runners.json               registered runners (server-managed)
+  <vault>/config.json                vault settings: theme, and CI run retention
   <vault>/.secret                    session-cookie signing key (server-managed)
 
 Themes: ${themeNames().join(', ')} (default ${DEFAULT_THEME}). Pick one under
@@ -445,6 +465,14 @@ async function main() {
   else if (cmd === 'whoami') await whoamiCmd(args.slice(1));
   else if (cmd === 'login') await loginCmd(args.slice(1));
   else if (cmd === 'logout') await logoutCmd(args.slice(1));
+  else if (cmd === 'runner' && args[1] === 'add') await runnerAddCmd(args.slice(2), usage);
+  else if (cmd === 'runner' && args[1] === 'run') await runnerRunCmd(args.slice(2), usage);
+  else if (cmd === 'runner' && args[1] === 'list') await runnerListCmd(args.slice(2), usage);
+  else if (cmd === 'runner' && args[1] === 'remove') await runnerRemoveCmd(args.slice(2), usage);
+  else if (cmd === 'runner') {
+    console.error('Usage: hubbit runner <add|run|list|remove> ... (see hubbit --help)');
+    process.exit(1);
+  }
   else if (cmd === 'user') {
     console.error('Usage: hubbit user <add|grant|list> ... (see hubbit --help)');
     process.exit(1);
