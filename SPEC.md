@@ -17,7 +17,7 @@ Hosting git repositories usually means one big centralized service (GitHub, GitL
 
 ## 3. Current state
 
-Everything described here is implemented and verified end to end by `scripts/smoke.sh` (147 checks: browsing, sessions, every UI operation, authorization denials, CSRF, themes, the JSON API, git clone/push/push-to-create, pages, repository deletion).
+Everything described here is implemented and verified end to end by `scripts/smoke.sh` (167 checks: browsing, sessions, every UI operation, authorization denials, CSRF, themes, the JSON API, git clone/push/push-to-create, pages, repository deletion).
 
 ### 3.1 Running it
 
@@ -53,7 +53,9 @@ First start against a directory with no `vault.json` initializes one and prints 
 | `src/web.ts` | Helpers shared by the HTML modules: `loadRepo`, `makeCtx`, wildcard/404 utilities |
 | `src/views.ts` | Read-page templates (template literals, `esc()` everywhere), `RepoCtx`, layout with sign-in header |
 | `src/forms.ts` | Form pages: login, new repo, edit/create/delete file, conflict, settings, admin users, token-shown |
-| `src/render.ts` | markdown-it rendering with relative-link rewriting, heading anchors and fenced-code highlighting, highlight.js by extension, binary sniffing |
+| `src/markdown.ts` | Markdown rendering (section 3.9): markdown-it, KaTeX, highlight.js, the allowlist sanitizer, and the slot mechanism |
+| `src/md-plugins.d.ts` | Ambient declarations for the three markdown-it plugins that ship without types |
+| `src/render.ts` | highlight.js by extension, HTML escaping, binary sniffing, size and date formatting |
 | `src/diff.ts` | Unified-diff to HTML (line classification, per-file boxes) |
 | `src/style.ts` | The single structural CSS string; every color and font is a `var(--…)` from the active theme |
 | `scripts/create-example.sh` | Builds the example vault, including its `vault.json` with the fixed dev user |
@@ -129,6 +131,7 @@ Server-side commits to a bare repo work with a temporary index: `GIT_INDEX_FILE`
 - Raw file serving deliberately uses `text/plain` plus a sandbox CSP for non-image types so repository content cannot inject HTML into the site's origin. Preserve this property in anything new.
 - Tokens travel as HTTP Basic passwords on push, so remote vaults need TLS in front (the compose and Fly setups provide it).
 - `isValidRepoPath` rejects control characters, so files whose names contain them cannot be browsed or edited; this is a deliberate trade against the newline-delimited git plumbing formats.
+- Markdown rendering is the one place where repository content becomes markup on this origin, and it rests on the sanitizer allowlist in `src/markdown.ts`. Treat changes to that allowlist as security changes, and never render a document with the sanitizer disabled.
 - Rate limiting and abuse controls for public vaults are unaddressed and acceptable to defer, but say so in the README of any public deployment.
 
 ### 3.8 Themes
@@ -142,9 +145,17 @@ The choice is vault state, not visitor state: one vault is one site. It lives in
 Setting the theme in the UI (`/admin/appearance`) requires admin scope covering `*`. This is stricter than the rest of user administration on purpose: an administrator delegated to one organization may manage users there, but restyling the whole vault is not theirs to do.
 ### 3.9 Rendered markdown
 
-Markdown files render as documents rather than as source. `GET /:org/:repo/blob/:ref/*path` returns rendered HTML for `.md` and `.markdown`, and `?plain=1` returns the highlighted source with line numbers, the spelling GitHub uses. A segmented Preview/Code control in the file's meta bar switches between the two, and the README box on directory pages links to the file so the source view is one click away.
+Markdown files render as documents rather than as source. `GET /:org/:repo/blob/:ref/*path` returns rendered HTML for `.md` and `.markdown`, and `?plain=1` returns the highlighted source with line numbers, the spelling GitHub uses. A segmented Preview/Code control in the file's meta bar switches between the two, and the README box on directory pages links to the file so the source view is one click away. `src/markdown.ts` renders both, so the two views cannot drift.
 
-Rendering is markdown-it with `html: false`, so raw HTML in a document is escaped rather than injected into the site's origin. This is the same property the raw-file policy protects, and it should survive any later switch to a richer renderer. Three transformations sit on top. Relative links and image sources resolve against the file's own directory, with dot segments collapsed so that `../README.md` yields the path a reader would type; headings get GitHub-style slug ids, with a numeric suffix on duplicates, which is what makes in-document `#section` links work; and fenced code blocks in a recognized language are highlighted by highlight.js. The same function renders READMEs on directory pages, so the two views cannot drift.
+The feature set targets what GitHub renders, since that is what people write their READMEs against: fenced code with highlight.js and a hover copy button, indented code blocks, tables with column alignment, task lists, footnotes, strikethrough, autolinks, emoji shortcodes, heading anchors (GitHub-style slugs, numeric suffix on duplicates, a `#` permalink on hover), alert callouts (`> [!NOTE]` and its four siblings), LaTeX math, and a subset of inline HTML. Relative links and image sources resolve against the file's own directory, with dot segments collapsed so that `../README.md` yields the path a reader would type; the rewriting happens in the sanitizer's tag transform, so links written as HTML are handled the same as links written as markdown. External links get `rel="nofollow noopener noreferrer"`.
+
+Math is rendered on the server by KaTeX: `$…$` inline, `$$…$$` in a block, and ```` ```math ```` fences, all three as on GitHub. Invalid LaTeX renders in red rather than failing the request. KaTeX's stylesheet and fonts are served from the installed package under `/assets/katex/`, so math works on a machine with no outbound network; the font route matches names against a fixed pattern rather than joining a request path. Note that KaTeX output is verbose: a document that is mostly equations can render to twenty times its source size, which the 1 MB source cap bounds but does not make small.
+
+Two properties are load-bearing. First, no document may put active markup on this origin. The rendered HTML passes through an allowlist sanitizer (`sanitize-html`) whose allowlist has no `style` attribute (an inline style could cover the page, which is a phishing surface even without scripting), no event handlers, no scripts, frames, or objects, and only `http`, `https`, `mailto`, and `ftp` URL schemes. This is the same property the raw-serving policy protects, and it is the reason inline HTML can be allowed at all: `<details>`, `<kbd>`, `<sub>`, alignment, and badges all work, while anything executable is discarded. Second, everything renders on the server; no page needs client-side JavaScript to read.
+
+Those two properties conflict with the markup we generate ourselves, since highlighted code carries an inline `onclick` for its copy button and KaTeX emits MathML that the allowlist would strip. Rather than widen the allowlist, such fragments are parked in *slots*: the renderer emits an opaque marker, the sanitizer sees ordinary text, and the fragments are substituted back afterwards. The marker is random per render, so a document cannot forge one. Keep new trusted markup on that path rather than loosening the allowlist.
+
+Mermaid diagrams are the one notable GitHub feature deliberately left out: they would need a multi-megabyte client-side bundle, which the "server renders HTML" principle rules out for now. ```` ```mermaid ```` blocks render as code, which is a reasonable fallback.
 
 ## 4. Later phases, sketched
 
@@ -157,7 +168,7 @@ Rendering is markdown-it with `html: false`, so raw HTML in a document is escape
 
 ## 5. Security notes for the next implementer
 
-Escaping is manual (`esc()` in views); every new interpolation into HTML must go through it, and command arguments must keep using `execFile` arrays, never a shell. Validate every org/repo/ref/path from a URL or form with the existing validators before it reaches git; ref names additionally must not start with `-`. The raw-serving content-type policy (3.7) must survive any refactor. Session cookies must never be accepted for the git or Bearer API endpoints, and tokens never grant UI sessions implicitly; the two credential presentations stay distinct. Deletion paths (`deleteRepo`) must resolve and containment-check against the vault root before any recursive removal. Every mutating route re-derives abilities from live `vault.json` and checks CSRF; keep both properties when adding routes.
+Escaping is manual (`esc()` in views); every new interpolation into HTML must go through it, and command arguments must keep using `execFile` arrays, never a shell. Validate every org/repo/ref/path from a URL or form with the existing validators before it reaches git; ref names additionally must not start with `-`. The raw-serving content-type policy (3.7) must survive any refactor. So must the markdown sanitizer (3.9): rendered documents are attacker-controlled markup on the site's origin, and an escape there hands a repository writer any reader's session. Session cookies must never be accepted for the git or Bearer API endpoints, and tokens never grant UI sessions implicitly; the two credential presentations stay distinct. Deletion paths (`deleteRepo`) must resolve and containment-check against the vault root before any recursive removal. Every mutating route re-derives abilities from live `vault.json` and checks CSRF; keep both properties when adding routes.
 
 ## 6. Housekeeping
 

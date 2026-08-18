@@ -69,6 +69,7 @@ export function layout(title: string, content: string, opts: PageOpts = {}): str
 <title>${esc(title)}</title>
 <link rel="stylesheet" href="/assets/style.css?t=${encodeURIComponent(theme)}">
 <link rel="stylesheet" href="/assets/hl.css?t=${encodeURIComponent(theme)}">
+<link rel="stylesheet" href="/assets/katex/katex.css">
 </head>
 <body>
 <header class="topbar"><div class="container"><a class="brand" href="/">repos</a><span class="crumbs">${

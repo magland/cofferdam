@@ -180,6 +180,61 @@ body_lacks "source view is not rendered" 'class="rendered markdown-body"'
 check "repo home renders the readme" 200 "$BASE/demo/proj"
 body_has "readme box links to the file" 'href="/demo/proj/blob/main/README.md">README.md'
 
+RICH_DOC="$(cat <<'EOF'
+# Rich
+
+Inline $E = mc^2$ and display math:
+
+$$
+\int_0^1 x^2\,dx
+$$
+
+> [!WARNING]
+> Careful with this.
+
+- [x] done
+- [ ] todo
+
+Emoji :tada: and a footnote[^a].
+
+[^a]: Footnote body.
+
+<script>window.pwned = 'XSSMARK'</script>
+<img src="x" onerror="XSSMARK" alt="an image">
+<iframe src="https://example.org"></iframe>
+<div style="position:fixed;top:0">overlay</div>
+<a href="javascript:XSSMARK">first link</a>
+<a href="https://example.org" onclick="XSSMARK">second link</a>
+<details><summary>More</summary>hidden text</details>
+EOF
+)"
+
+check "new rich markdown form" 200 -b "$JAR" "$BASE/demo/proj/new/main"
+CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
+check "create docs/rich.md" 302 -b "$JAR" "$BASE/demo/proj/new/main" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
+  --data-urlencode filename=docs/rich.md --data-urlencode "content=$RICH_DOC" \
+  --data-urlencode "message=Add rich document"
+check "rich markdown renders" 200 -b "$JAR" "$BASE/demo/proj/blob/main/docs/rich.md"
+body_has "inline math rendered" 'class="katex"'
+body_has "display math rendered" 'class="math-block"'
+body_has "alert callout" 'alert alert-warning'
+body_has "alert title" 'Warning</p>'
+body_has "task list checkbox" 'type="checkbox" disabled checked'
+body_has "task list item class" 'task-item'
+body_has "footnote section" 'footnotes-list'
+body_has "emoji shortcode" '🎉'
+body_has "heading anchor" 'class="heading-anchor"'
+body_has "details kept" '<details>'
+body_has "external link gets rel" 'rel="nofollow noopener noreferrer"'
+body_lacks "scripts and handlers stripped" 'XSSMARK'
+body_lacks "inline styles stripped" 'position:fixed'
+body_lacks "frames stripped" '<iframe'
+
+check "katex stylesheet" 200 "$BASE/assets/katex/katex.css"
+check "katex font" 200 "$BASE/assets/katex/fonts/KaTeX_Main-Regular.woff2"
+check "katex font names are fixed" 404 "$BASE/assets/katex/fonts/anything-else.woff2"
+
 check "new text file form" 200 -b "$JAR" "$BASE/demo/proj/new/main"
 CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
 check "create docs/plain.txt" 302 -b "$JAR" "$BASE/demo/proj/new/main" \

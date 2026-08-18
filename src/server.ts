@@ -1,5 +1,6 @@
 import express, { NextFunction, Request, Response } from 'express';
 import * as fs from 'fs';
+import * as path from 'path';
 import { registerApi } from './api';
 import { registerBrowse } from './browse';
 import { loadConfig } from './config';
@@ -44,6 +45,24 @@ export function createApp(root: string) {
       hlCache.set(name, css);
     }
     res.type('text/css').set('Cache-Control', 'no-cache').send(css);
+  });
+  // KaTeX ships the stylesheet and fonts its output needs; serving them from
+  // the installed package keeps rendered math working with no external
+  // requests, which matters for vaults on closed networks.
+  const katexDir = path.dirname(require.resolve('katex/dist/katex.min.css'));
+  let katexCss: string | null = null;
+  app.get('/assets/katex/katex.css', (_req, res) => {
+    if (katexCss === null) katexCss = fs.readFileSync(path.join(katexDir, 'katex.min.css'), 'utf8');
+    res.type('text/css').set('Cache-Control', 'public, max-age=86400').send(katexCss);
+  });
+  app.get('/assets/katex/fonts/:file', (req, res) => {
+    // The request never reaches the filesystem unless it names a KaTeX font.
+    if (!/^KaTeX_[A-Za-z0-9]+-[A-Za-z]+\.(woff2|woff|ttf)$/.test(req.params.file)) {
+      res.status(404).end();
+      return;
+    }
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    res.sendFile(path.join(katexDir, 'fonts', req.params.file));
   });
   app.get('/favicon.ico', (_req, res) => {
     res.status(204).end();

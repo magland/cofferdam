@@ -33,6 +33,10 @@ export interface ThemeVars {
   danger: string;
   dangerHover: string;
   onDanger: string;
+  /** Markdown alert callouts; note uses accent and caution uses danger. */
+  alertTip: string;
+  alertImportant: string;
+  alertWarning: string;
   diffAdd: string;
   diffDel: string;
   diffHunk: string;
@@ -94,6 +98,9 @@ export const THEMES: Theme[] = [
       danger: '#b3261e',
       dangerHover: '#961c16',
       onDanger: '#ffffff',
+      alertTip: '#2f7d5d',
+      alertImportant: '#7a4fa3',
+      alertWarning: '#b5730f',
       diffAdd: '#e4f2e6',
       diffDel: '#fbe6e2',
       diffHunk: '#e2eef0',
@@ -137,6 +144,9 @@ export const THEMES: Theme[] = [
       danger: '#cf222e',
       dangerHover: '#a40e26',
       onDanger: '#ffffff',
+      alertTip: '#1a7f37',
+      alertImportant: '#8250df',
+      alertWarning: '#9a6700',
       diffAdd: '#e6ffec',
       diffDel: '#ffebe9',
       diffHunk: '#ddf4ff',
@@ -180,6 +190,9 @@ export const THEMES: Theme[] = [
       danger: '#c02a3f',
       dangerHover: '#a11f32',
       onDanger: '#ffffff',
+      alertTip: '#2f8a5a',
+      alertImportant: '#7c5cff',
+      alertWarning: '#a56b0a',
       diffAdd: '#e8f5ec',
       diffDel: '#fdeaed',
       diffHunk: '#ebeafb',
@@ -223,6 +236,9 @@ export const THEMES: Theme[] = [
       danger: '#da3633',
       dangerHover: '#f85149',
       onDanger: '#ffffff',
+      alertTip: '#3fb950',
+      alertImportant: '#a371f7',
+      alertWarning: '#d29922',
       diffAdd: '#12261c',
       diffDel: '#2d1417',
       diffHunk: '#0d2740',
@@ -266,6 +282,9 @@ export const THEMES: Theme[] = [
       danger: '#b91c1c',
       dangerHover: '#dc2626',
       onDanger: '#ffffff',
+      alertTip: '#4ade80',
+      alertImportant: '#c084fc',
+      alertWarning: '#facc15',
       diffAdd: '#0c2415',
       diffDel: '#2a1113',
       diffHunk: '#0b2027',

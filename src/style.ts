@@ -152,8 +152,45 @@ pre.codeview { margin: 0; padding: 10px 16px; overflow-x: auto; flex: 1; font-si
 .markdown-body h2 { font-size: 1.4em; border-bottom: 1px solid var(--border-soft); padding-bottom: 0.3em; }
 .markdown-body h3 { font-size: 1.15em; }
 .markdown-body code { background: var(--inline-code-bg); padding: 0.2em 0.4em; border-radius: var(--radius); font-size: 85%; }
-.markdown-body pre { background: var(--surface); padding: 16px; border-radius: var(--radius); overflow-x: auto; }
+.markdown-body pre { margin: 0; background: var(--surface); padding: 16px; border-radius: var(--radius); overflow-x: auto; }
 .markdown-body pre code { background: none; padding: 0; font-size: 12px; }
+
+/* Fenced code: the copy button appears on hover, as on GitHub. */
+.markdown-body .code-block { position: relative; margin: 1em 0; }
+.markdown-body .code-block .copy-btn { position: absolute; top: 8px; right: 8px; opacity: 0; transition: opacity 0.1s; }
+.markdown-body .code-block:hover .copy-btn, .markdown-body .code-block .copy-btn:focus { opacity: 1; }
+
+.heading-anchor { margin-left: 8px; font-weight: 400; color: var(--fg-subtle); opacity: 0; }
+.markdown-body h1:hover .heading-anchor, .markdown-body h2:hover .heading-anchor,
+.markdown-body h3:hover .heading-anchor, .markdown-body h4:hover .heading-anchor,
+.markdown-body h5:hover .heading-anchor, .markdown-body h6:hover .heading-anchor,
+.heading-anchor:focus { opacity: 1; text-decoration: none; }
+
+.markdown-body li.task-item { list-style: none; margin-left: -1.3em; }
+.markdown-body li.task-item input[type="checkbox"] { margin-right: 6px; }
+
+/* GitHub-style alert callouts: > [!NOTE] and friends. */
+.markdown-body blockquote.alert { border-left-color: var(--alert); color: var(--fg); }
+.markdown-body .alert-title { font-weight: 600; color: var(--alert); margin: 0 0 4px; }
+.markdown-body .alert-note { --alert: var(--accent); }
+.markdown-body .alert-tip { --alert: var(--alert-tip); }
+.markdown-body .alert-important { --alert: var(--alert-important); }
+.markdown-body .alert-warning { --alert: var(--alert-warning); }
+.markdown-body .alert-caution { --alert: var(--danger); }
+
+/* Math. Display math scrolls sideways rather than widening the page. */
+.markdown-body .math-block { overflow-x: auto; overflow-y: hidden; margin: 1em 0; }
+.markdown-body .katex-display { margin: 0; padding: 2px 0; }
+.markdown-body .math-error { color: var(--danger); }
+
+.markdown-body .footnotes { font-size: 13px; color: var(--fg-muted); }
+.markdown-body .footnotes-sep { margin-top: 32px; }
+.markdown-body .footnote-backref { text-decoration: none; }
+.markdown-body kbd {
+  font-family: var(--font-mono); font-size: 85%; padding: 2px 5px; border: 1px solid var(--border);
+  border-bottom-width: 2px; border-radius: var(--radius); background: var(--surface);
+}
+.markdown-body summary { cursor: pointer; font-weight: 600; }
 .markdown-body blockquote { margin: 0; padding-left: 16px; border-left: 4px solid var(--border); color: var(--fg-muted); }
 .markdown-body img { max-width: 100%; }
 .markdown-body table { border-collapse: collapse; }
