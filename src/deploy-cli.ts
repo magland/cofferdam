@@ -2,16 +2,7 @@ import { execFile, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import {
-  approveCredential,
-  clearLogin,
-  configuredHelper,
-  credentialTarget,
-  loadLogin,
-  readCredential,
-  rejectCredential,
-  saveLogin,
-} from './credentials';
+import { clearLogin, credentialTarget, loadLogin, readCredential, rejectCredential } from './credentials';
 import { mintToken } from './vault';
 
 // `cofferdam deploy fly`: put a vault on Fly.io from one command, and deploy
@@ -148,8 +139,8 @@ function parseDeployArgs(args: string[], usage: () => never): DeployArgs {
   return out;
 }
 
-// `deploy show` and `deploy destroy` take an app name and nothing else, apart
-// from --yes on destroy. The flags that shape a deployment are parsed by the
+// `deploy fly show` and `deploy fly destroy` take an app name and nothing else,
+// apart from --yes on destroy. The flags that shape a deployment are parsed by the
 // same function they share, so accepting one here and then ignoring it would
 // look like it had been applied. Only the first one found is named, since fixing
 // it means dropping it and running the command again either way.
@@ -358,40 +349,6 @@ async function waitForVault(
   return { ok: false, reason: `timed out after ${seconds}s: ${last}` };
 }
 
-/**
- * Hand the owner token to git's credential store and remember the vault, which
- * is exactly what `cofferdam login` does with a token typed by hand. Reported
- * rather than fatal: the deployment is up either way, and a machine with no
- * credential helper should be told how to finish rather than told it failed.
- */
-async function storeOwnerToken(url: string, username: string, token: string): Promise<boolean> {
-  const target = credentialTarget(url);
-  const helper = await configuredHelper(target.url);
-  if (!helper) {
-    console.log('');
-    console.log(`No credential helper is configured for ${target.url}, so git has nowhere to keep the token.`);
-    console.log('Finish by choosing where it should live:');
-    console.log('');
-    console.log(`  cofferdam login ${url} --helper store   # or cache, libsecret, osxkeychain`);
-    console.log('');
-    console.log('The owner token, which is shown here once:');
-    console.log('');
-    console.log(`  ${token}`);
-    return false;
-  }
-  await approveCredential(target, username, token);
-  const stored = await readCredential(target);
-  if (!stored || stored.password !== token) {
-    console.log('');
-    console.log(`The credential helper '${helper}' did not keep the token. Store it by hand with:`);
-    console.log('');
-    console.log(`  cofferdam login ${url} --token ${token}`);
-    return false;
-  }
-  saveLogin(url);
-  return true;
-}
-
 export async function deployFlyCmd(args: string[], usage: () => never): Promise<void> {
   const a = parseDeployArgs(args, usage);
   if (!a.app) {
@@ -480,21 +437,21 @@ export async function deployFlyCmd(args: string[], usage: () => never): Promise<
     console.log('==> A bucket is already configured (BUCKET_NAME is set), leaving it alone');
   }
 
-  // Set once the operator has the token, either stored by git or printed. It is
-  // what the exit hook below checks before printing the token as a last resort.
+  // Set once the operator has been shown the token. It is what the exit hook
+  // below checks before printing it as a last resort.
   let tokenDelivered = false;
 
   // An owner token is minted only for a vault that has none. The question is
   // whether the vault has been initialized rather than whether the app exists,
   // because a first deploy that fails leaves the app behind: on the next
   // attempt the app is not new but the vault still is, and that retry should
-  // end logged in like any other first deploy. Whether a machine has ever run
-  // is as close to that question as Fly can be asked.
+  // end with a usable owner token like any other first deploy. Whether a
+  // machine has ever run is as close to that question as Fly can be asked.
   //
   // The secret already being set is deliberately not part of it. A Fly secret
   // can be written and not read, so a token from an abandoned attempt is a
   // token nobody has; overwriting it with one this run knows is the only way
-  // the retry can end logged in.
+  // the retry can end with a token the operator holds.
   //
   // Minting here rather than on the server is what makes that possible: the
   // server adopts this token when it initializes the vault, stores only its
@@ -508,9 +465,9 @@ export async function deployFlyCmd(args: string[], usage: () => never): Promise<
     if (r.code !== 0) die(`Could not set the owner token secret:\n${r.stderr.trim() || r.stdout.trim()}`);
     // From here the token exists in two places: this process, and a Fly secret
     // that can be written but never read back. So every way out of the rest of
-    // this command has to end with the operator either logged in with it or
-    // looking at it, and an exit hook is the one place that covers them all,
-    // including a `die()` from deeper down and an unexpected throw.
+    // this command has to end with the operator looking at it, and an exit hook
+    // is the one place that covers them all, including a `die()` from deeper
+    // down and an unexpected throw.
     process.on('exit', () => {
       if (tokenDelivered) return;
       // Written with writeSync rather than console.error, which is the whole
@@ -612,32 +569,55 @@ export async function deployFlyCmd(args: string[], usage: () => never): Promise<
     process.exit(1);
   }
 
-  const loggedIn = await storeOwnerToken(url, ready.username, ownerToken);
-  // storeOwnerToken either stored the token or printed it, so it has been
-  // handed over either way and the exit hook has nothing left to say.
-  tokenDelivered = true;
+  // The token is shown rather than stored. A deploy that logged you in quietly
+  // left the operator holding a vault whose token they had never seen, which is
+  // no way to sign in to the web UI and nothing to keep anywhere; and the token
+  // cannot be recovered later, since the server keeps only its hash and a Fly
+  // secret cannot be read back. So it is printed once, with the two ways to use
+  // it, and `cofferdam login` stays the one thing that stores a credential.
   console.log('');
   console.log(`==> Ready: ${url}`);
-  if (loggedIn) {
-    console.log('');
-    console.log(`Logged in as '${ready.username}'. Nothing to paste: the token is in git's credential`);
-    console.log('store, so both cofferdam and git will use it.');
-    console.log('');
-    console.log('  cofferdam whoami');
-    console.log("  cofferdam user add alice --scope 'alice/*'");
-    console.log(`  cofferdam import https://github.com/someone/something.git mine`);
-    console.log('');
-    console.log('Deploy an update, or change a setting, with the same command:');
-    console.log('');
-    console.log(`  cofferdam deploy fly ${app}`);
-    console.log(`  cofferdam deploy fly ${app} --volume 50 --vm-memory 1gb`);
-  }
+  console.log('');
+  console.log(`The vault is initialized, and '${ready.username}' owns it. This is its token, shown`);
+  console.log('here once and nowhere else: the server keeps only its hash, and the Fly secret it');
+  console.log('was staged in cannot be read back. Keep it somewhere safe now.');
+  console.log('');
+  console.log(`  ${ownerToken}`);
+  // Only now: the exit hook is the backstop for a token that never reached the
+  // operator, and stdout can fail (a closed pipe) between here and there.
+  tokenDelivered = true;
+  console.log('');
+  console.log(`To administer the vault in a browser, open its sign-in page and give that token as`);
+  console.log(`'${ready.username}':`);
+  console.log('');
+  console.log(`  ${url}/login`);
+  console.log('');
+  console.log('The form asks for a username and a token, since a vault has no passwords. From');
+  console.log('there the Admin page creates the users and the repositories, which is the usual');
+  console.log('way to bootstrap a fresh vault.');
+  console.log('');
+  console.log('To use the CLI and git instead, hand the same token to git\'s credential store,');
+  console.log('which is what login is for:');
+  console.log('');
+  console.log(`  cofferdam login ${url}`);
+  console.log('');
+  console.log('It asks for the token without echoing it, checks it, and remembers this vault, so');
+  console.log('these need no arguments afterwards and git stops asking on a push:');
+  console.log('');
+  console.log('  cofferdam whoami');
+  console.log("  cofferdam user add alice --scope 'alice/*'");
+  console.log(`  cofferdam import https://github.com/someone/something.git mine`);
+  console.log('');
+  console.log('Deploy an update, or change a setting, with the same command:');
+  console.log('');
+  console.log(`  cofferdam deploy fly ${app}`);
+  console.log(`  cofferdam deploy fly ${app} --volume 50 --vm-memory 1gb`);
 }
 
 export async function deployShowCmd(args: string[], usage: () => never): Promise<void> {
   const a = parseDeployArgs(args, usage);
-  if (!a.app) die('Which app? Usage: cofferdam deploy show <app>');
-  rejectFlyFlags(a, 'cofferdam deploy show <app>', false);
+  if (!a.app) die('Which app? Usage: cofferdam deploy fly show <app>');
+  rejectFlyFlags(a, 'cofferdam deploy fly show <app>', false);
   const app = a.app;
   await requireFly();
   if (!(await appExists(app))) {
@@ -714,8 +694,8 @@ function promptLine(prompt: string): Promise<string> {
 
 export async function deployDestroyCmd(args: string[], usage: () => never): Promise<void> {
   const a = parseDeployArgs(args, usage);
-  if (!a.app) die('Which app? Usage: cofferdam deploy destroy <app> [--yes]');
-  rejectFlyFlags(a, 'cofferdam deploy destroy <app> [--yes]', true);
+  if (!a.app) die('Which app? Usage: cofferdam deploy fly destroy <app> [--yes]');
+  rejectFlyFlags(a, 'cofferdam deploy fly destroy <app> [--yes]', true);
   const app = a.app;
   await requireFly();
   if (!(await appExists(app))) {

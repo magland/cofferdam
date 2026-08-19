@@ -517,17 +517,20 @@ nothing when that is nothing.`,
 
 Needs flyctl installed, and fly auth login done. The app name is globally
 unique on Fly and becomes the URL, https://<app>.fly.dev. Creating one mints
-the owner token here, hands it to the server as a secret, and logs you in when
-it answers, so there is no token to copy out of a log. Run it again to deploy a
-new version; settings not named by a flag keep whatever the live app has, so a
-single flag changes a single thing. A vault is a directory on one volume, so
-the app runs as exactly one machine: a busier vault wants a bigger one, not
-more.`,
+the owner token here and hands it to the server as a secret, then prints it once
+the vault answers, with how to sign in on the web and how to store it for the
+CLI and git. Nothing is kept on this machine: cofferdam login with that token is
+what does that. Run it again to deploy a new version; settings not named by a
+flag keep whatever the live app has, so a single flag changes a single thing. A
+vault is a directory on one volume, so the app runs as exactly one machine: a
+busier vault wants a bigger one, not more.
+
+See also: cofferdam deploy fly show <app>, cofferdam deploy fly destroy <app>.`,
     deployFlyCmd
   ),
-  raw(['deploy', 'show'], 'What Fly has for this app, and whether the vault answers', '', deployShowCmd),
+  raw(['deploy', 'fly', 'show'], 'What Fly has for this app, and whether the vault answers', '', deployShowCmd),
   raw(
-    ['deploy', 'destroy'],
+    ['deploy', 'fly', 'destroy'],
     'Destroy the app and its volume, and with them the vault',
     'No undo. Pass --yes to skip the confirmation.',
     deployDestroyCmd

@@ -12,7 +12,7 @@ Fly.io runs the container for you, and the CLI can put it there. Install [flyctl
 cofferdam deploy fly my-vault-name
 ```
 
-Fly app names are globally unique and the name becomes the URL, so pick your own. That creates the app, a 10GB volume, and a single machine serving the vault over HTTPS at `https://my-vault-name.fly.dev`, and finishes with you logged in:
+Fly app names are globally unique and the name becomes the URL, so pick your own. That creates the app, a 10GB volume, and a single machine serving the vault over HTTPS at `https://my-vault-name.fly.dev`, and ends by printing the owner token:
 
 ```
 ==> Creating 'my-vault-name' in ewr
@@ -23,12 +23,30 @@ Fly app names are globally unique and the name becomes the URL, so pick your own
 
 ==> Ready: https://my-vault-name.fly.dev
 
-Logged in as 'owner'.
+The vault is initialized, and 'owner' owns it. This is its token, shown
+here once and nowhere else: the server keeps only its hash, and the Fly secret it
+was staged in cannot be read back. Keep it somewhere safe now.
+
+  cofferdam_7acfa9fa32691cdbb53c3865fed61e59f61ab4eb948b4157d7e7fafc163fcb08
+
+To administer the vault in a browser, open its sign-in page and give that token as
+'owner':
+
+  https://my-vault-name.fly.dev/login
+...
 ```
 
-There is no token to copy out of a log. The CLI mints the owner token on your machine, sets it as the `COFFERDAM_OWNER_TOKEN` secret, and the server adopts it when it initializes the empty vault, storing only its hash; the deploy then verifies it against the running server and hands it to git's credential store, exactly as `cofferdam login` would. So `cofferdam whoami`, `cofferdam user add`, and `git push` all work the moment the command returns. The secret stays set and is ignored on every later start, since a vault is initialized once.
+That token is the way in, by either route, and it is the one thing to save before the terminal scrolls away. In the browser, open the `/login` page and sign in as `owner` with the token in the **Token** field: a vault has no passwords, so a username and a token is what the form asks for. From there the Admin page creates the users and the repositories, which is the usual way to bootstrap a fresh vault. To work from the CLI and from git instead, hand the same token to git's credential store once:
 
-Note that this needs a credential helper configured, as any login does. Without one the deploy still succeeds and prints the token, with the `cofferdam login --helper` line to store it (see [Not typing the token every time](cli.md#not-typing-the-token-every-time)).
+```bash
+cofferdam login https://my-vault-name.fly.dev
+```
+
+That asks for the token without echoing it, checks it against the vault, and remembers the vault, after which `cofferdam whoami`, `cofferdam user add`, and `git push` need no token of their own (see [Not typing the token every time](cli.md#not-typing-the-token-every-time), and note that a login needs a credential helper configured).
+
+The token is minted on your machine, not on the server: the deploy sets it as the `COFFERDAM_OWNER_TOKEN` secret, and the server adopts it when it initializes the empty vault, storing only its hash. So it is printed by the one process that ever had it, rather than read out of a log, and it cannot be recovered afterwards from either the server or the Fly secret, which can be written but never read back. The secret stays set and is ignored on every later start, since a vault is initialized once.
+
+Note that the deploy stores nothing on your machine and logs you in to nothing. That is deliberate: `cofferdam login` is the one command that writes a credential, so a deploy from a machine that is not yours leaves no token behind on it.
 
 ### Deploying updates, and changing settings
 
@@ -53,7 +71,7 @@ Two of these have limits worth knowing before you rely on them: Fly volumes can 
 To see what is deployed, and whether the vault on it actually answers:
 
 ```bash
-cofferdam deploy show my-vault-name
+cofferdam deploy fly show my-vault-name
 ```
 
 ```
@@ -67,7 +85,7 @@ my-vault-name  https://my-vault-name.fly.dev
   login     this is the vault cofferdam commands use
 ```
 
-`cofferdam deploy destroy my-vault-name` removes the app, the volume, and with them the vault; it asks you to type the app name first (`--yes` skips the prompt, for a script that means it), and also drops the stored credential for a vault that no longer exists. Anything else is flyctl's job, and flyctl is already on your machine: `fly logs -a my-vault-name`, `fly ssh console -a my-vault-name`, `fly certs add vault.example.org` for a domain of your own.
+`cofferdam deploy fly destroy my-vault-name` removes the app, the volume, and with them the vault; it asks you to type the app name first (`--yes` skips the prompt, for a script that means it), and also drops the stored credential for a vault that no longer exists. Anything else is flyctl's job, and flyctl is already on your machine: `fly logs -a my-vault-name`, `fly ssh console -a my-vault-name`, `fly certs add vault.example.org` for a domain of your own.
 
 ### LFS objects in a bucket
 
@@ -77,7 +95,7 @@ By default Git LFS objects live on the volume with everything else, which is the
 cofferdam deploy fly my-vault-name --lfs-bucket
 ```
 
-Tigris' secrets are the ones the server already reads, so there is nothing further to configure (see [Git LFS](lfs.md)). Note that this provisions a billable resource in your Fly organization, and that `deploy destroy` leaves the bucket alone: destroying it, and its contents, is `fly storage destroy <name>`.
+Tigris' secrets are the ones the server already reads, so there is nothing further to configure (see [Git LFS](lfs.md)). Note that this provisions a billable resource in your Fly organization, and that `deploy fly destroy` leaves the bucket alone: destroying it, and its contents, is `fly storage destroy <name>`.
 
 ### What the deploy does, in flyctl terms
 

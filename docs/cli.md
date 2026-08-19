@@ -39,7 +39,7 @@ cofferdam whoami --json
 
 (`cofferdam runner run` reads `COFFERDAM_RUNNER_TOKEN` as well, since a runner holds a token that is not any user's.)
 
-`cofferdam deploy fly <app>` is the exception to the division above in one respect: it drives flyctl rather than a vault, since at the moment it runs there is no vault yet. It creates a vault on Fly.io, or deploys an update to an existing one, and on a new one it mints the owner token locally and logs you in when the server answers, so nothing needs to be read out of a log (see [Deploying a vault](deploying.md)).
+`cofferdam deploy fly <app>` is the exception to the division above in one respect: it drives flyctl rather than a vault, since at the moment it runs there is no vault yet. It creates a vault on Fly.io, or deploys an update to an existing one, and on a new one it mints the owner token locally and prints it once the server has confirmed it, together with how to sign in on the web and the `cofferdam login` line that stores it for the CLI and git (see [Deploying a vault](deploying.md)). The deploy itself stores nothing: logging in stays a separate, deliberate step.
 
 Note that login is a client-side arrangement only: it calls the server once to check who the token belongs to, and writes nothing but local files. `cofferdam runner run` is the one command that reads a configuration of its own, since a runner holds a token that is not any user's: it is a long-running process that takes workflow jobs from a vault and executes them locally in Docker (see [Workflows](workflows.md)).
 

@@ -364,15 +364,19 @@ export async function dispatch(cli: Cli, argv: string[]): Promise<void> {
   if (!found) {
     const head = argv[0];
     if (cli.groups.some((g) => g.name === head) || cli.commands.some((c) => c.path[0] === head)) {
-      // A known group with an unknown or missing subcommand.
-      const subs = cli.commands.filter((c) => c.path[0] === head && c.path.length > 1).map((c) => c.path[1]);
+      // A known group with an unknown or missing subcommand. Listed by their
+      // whole path below the group, since a group may nest ('deploy fly show'),
+      // and deduplicated: several such commands share one second word.
+      const under = cli.commands.filter((c) => c.path[0] === head && c.path.length > 1);
+      const subs = [...new Set(under.map((c) => c.path.slice(1).join(' ')))];
       const sub = argv[1];
       if (sub === undefined || HELP_FLAGS.has(sub)) {
         process.stdout.write(groupHelp(cli, head));
         if (sub === undefined) throw new CliError(`'cofferdam ${head}' needs a command: ${subs.join(', ')}`, EXIT_USAGE);
         return;
       }
-      const near = nearest(sub, subs);
+      // What was typed is one word, so it is compared against single words.
+      const near = nearest(sub, [...new Set(under.map((c) => c.path[1]))]);
       throw new CliError(
         `unknown command 'cofferdam ${head} ${sub}'` + (near ? `; did you mean '${head} ${near}'?` : `. One of: ${subs.join(', ')}`),
         EXIT_USAGE
