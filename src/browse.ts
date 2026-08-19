@@ -430,7 +430,9 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
       }
       const patch = await loaded.repo.commitPatch(detail.sha);
       const ctx = await makeCtx(root, req, loaded, loaded.defaultBranch ?? detail.sha, viewer);
-      res.type('html').send(views.commitPage(ctx, detail, renderDiff(patch)));
+      res
+        .type('html')
+        .send(views.commitPage(ctx, detail, renderDiff(patch, { blobBase: `${repoUrl(ctx)}/blob/${detail.sha}` })));
     })
   );
 

@@ -517,4 +517,40 @@ textarea {
   .blame .lnum { left: 180px; }
   .blame-when { display: none; }
 }
+
+/* --- diffs: the numbers down each side, and the shape of the change. These
+   rules come after the base .dline and .diff-file-header ones and refine
+   them, rather than editing them in place. --- */
+.diff-summary { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.stat-add { color: var(--alert-tip); font-weight: 600; font-size: 12px; }
+.stat-del { color: var(--danger); font-weight: 600; font-size: 12px; margin-left: 6px; }
+/* Five squares in the proportion of the change, as on GitHub. */
+.statbar { display: inline-flex; gap: 2px; margin-left: 8px; }
+.statbar .sq { width: 8px; height: 8px; border-radius: 2px; background: var(--chip-bg); }
+.statbar .sq.add { background: var(--alert-tip); }
+.statbar .sq.del { background: var(--danger); }
+details.diff-file > summary.diff-file-header {
+  display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; font-family: var(--font-ui);
+}
+details.diff-file > summary::-webkit-details-marker { display: none; }
+.diff-file-header .fold { color: var(--fg-muted); transition: transform 0.1s; }
+details.diff-file:not([open]) .fold { transform: rotate(-90deg); }
+details.diff-file:not([open]) > summary.diff-file-header { border-bottom: none; }
+.diff-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.diff-file-stat { flex: none; display: flex; align-items: center; }
+.diff-none { padding: 16px; }
+.dline { display: flex; padding: 0; width: max-content; min-width: 100%; }
+/* The numbers stay put while a long line scrolls under them; inheriting the
+   background keeps an added or removed line's colour behind its number. */
+.dnum {
+  position: sticky; flex: none; width: 44px; padding: 0 6px; text-align: right;
+  color: var(--fg-subtle); user-select: none; background: inherit;
+}
+.dline .dnum:first-child { left: 0; }
+.dline .dnum:nth-child(2) { left: 44px; box-shadow: 1px 0 0 var(--border-soft); }
+.dtext { white-space: pre; padding: 0 10px; flex: 1 1 auto; }
+@media (max-width: 700px) {
+  .dnum { width: 34px; }
+  .dline .dnum:nth-child(2) { left: 34px; }
+}
 `;

@@ -237,6 +237,18 @@ function refPicker(ctx: RepoCtx, urlForRef: (ref: string) => string): string {
 </details>`;
 }
 
+/**
+ * The way in to the file finder. The data attribute is what the page script
+ * watches for, so that t reaches the finder from any page that offers it, as
+ * on GitHub.
+ */
+function findButton(ctx: RepoCtx): string {
+  const href = `${repoUrl(ctx)}/find/${encPath(ctx.ref)}`;
+  return `<a class="btn" href="${href}" data-find-url="${href}" title="Go to file (t)">${icon(
+    'search'
+  )}<span>Go to file</span></a>`;
+}
+
 /** The green Code button: the clone URL, and the source as an archive. */
 function cloneMenu(ctx: RepoCtx): string {
   const archive = (ext: string, label: string) =>
@@ -508,7 +520,7 @@ export function treePage(ctx: RepoCtx, view: TreeView): string {
   const content = `${repoHeader(ctx, 'code')}
 <div class="toolbar">
   <div class="left">${refPicker(ctx, (ref) => `${base}/tree/${encPath(ref)}`)}${breadcrumb(ctx, path)}</div>
-  <div class="right-group">${historyBtn}${addFileBtn}${cloneMenu(ctx)}</div>
+  <div class="right-group">${findButton(ctx)}${historyBtn}${addFileBtn}${cloneMenu(ctx)}</div>
 </div>
 <div class="repo-layout">
 <div class="repo-main">
@@ -522,6 +534,47 @@ ${atRoot ? aboutPanel(ctx, view) : ''}
     `${ctx.collection}/${ctx.repo}${path ? ` at ${path}` : ''}`,
     content,
     repoOpts(ctx, atRoot ? repoUrl(ctx) : `${refBase}/${encPath(path)}`)
+  );
+}
+
+/**
+ * The file finder. The whole path list is in the page and the filter runs in
+ * the browser, so it answers a keystroke without a request; what it costs is
+ * a page proportional to the tree, which is why the caller caps the list.
+ *
+ * Matching is subsequence matching, as GitHub's is: "srcmn" finds
+ * src/compute/mean.py. Enter opens the first match, which is what makes this
+ * a way of navigating rather than a list to read.
+ */
+export function findFilePage(ctx: RepoCtx, paths: string[], total: number): string {
+  const base = repoUrl(ctx);
+  const items = paths
+    .map((p) => {
+      const cut = p.lastIndexOf('/');
+      const dir = cut === -1 ? '' : `<span class="muted">${esc(p.slice(0, cut + 1))}</span>`;
+      return `<a class="find-item" href="${base}/blob/${encPath(ctx.ref)}/${encPath(p)}">${FILE_ICON}<span>${dir}${esc(
+        p.slice(cut + 1)
+      )}</span></a>`;
+    })
+    .join('');
+  const capped =
+    total > paths.length
+      ? `<p class="muted small">Showing the first ${count(paths.length)} of ${count(total)} files.</p>`
+      : '';
+  const content = `${repoHeader(ctx, 'code')}
+<div class="toolbar">
+  <div class="left">${refPicker(ctx, (ref) => `${base}/find/${encPath(ref)}`)}<span class="muted small">${count(
+    total
+  )} file${total === 1 ? '' : 's'}</span></div>
+</div>
+<input class="find-input" type="text" placeholder="Go to file" autofocus autocomplete="off" spellcheck="false" aria-label="Go to file" oninput="filterFiles(this)" onkeydown="findKey(event, this)">
+${capped}
+<div class="find-list" id="find-list">${items}</div>
+<div class="empty-state" id="find-empty" hidden>No file matches.</div>`;
+  return layout(
+    `Find a file - ${ctx.collection}/${ctx.repo}`,
+    content,
+    repoOpts(ctx, `${base}/find/${encPath(ctx.ref)}`)
   );
 }
 
@@ -563,8 +616,10 @@ export function blobPage(
   const historyBtn = `<a class="btn" href="${base}/commits/${encPath(ctx.ref)}/${encPath(
     path
   )}" title="Commits touching this file">${icon('history')}<span>History</span></a>`;
+  // Blame is for anything we render as text, which includes a markdown file
+  // being shown as a document rather than as source.
   const blameBtn =
-    view.kind === 'code'
+    view.kind === 'code' || view.kind === 'markdown'
       ? `<a class="btn" href="${base}/blame/${encPath(ctx.ref)}/${encPath(
           path
         )}" title="Who last changed each line">${icon('versions')}<span>Blame</span></a>`
