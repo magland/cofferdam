@@ -292,6 +292,29 @@ check "text file shows source" 200 -b "$JAR" "$BASE/demo/proj/blob/main/docs/pla
 body_has "text file numbers its lines" 'class="lnum"'
 body_lacks "no preview toggle on a text file" 'plain=1'
 
+# ---- language breakdown ----
+
+# Only programming and markup count, as Linguist counts them, so the repo as
+# it stands (readme, markdown, a text file) reports no languages at all.
+check "repo home before any source" 200 "$BASE/demo/proj"
+body_lacks "no languages for a tree of documents" 'lang-bar'
+
+check "new source file form" 200 -b "$JAR" "$BASE/demo/proj/new/main"
+CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
+check "create src/app.ts" 302 -b "$JAR" "$BASE/demo/proj/new/main" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
+  --data-urlencode filename=src/app.ts --data-urlencode "content=export const app = 'hello';" \
+  --data-urlencode "message=Add a source file"
+check "repo home with source" 200 "$BASE/demo/proj"
+body_has "languages block" '<h3>Languages</h3>'
+body_has "language bar drawn" 'class="lang-seg"'
+body_has "language named" '>TypeScript<'
+body_has "language share shown" 'class="lang-pct'
+# The tree is read once, at the root, which is the only place the About panel
+# that carries the bar appears.
+check "subdirectory listing" 200 "$BASE/demo/proj/tree/main/src"
+body_lacks "no languages away from the root" 'lang-bar'
+
 # ---- branches and tags ----
 
 check "branches page" 200 -b "$JAR" "$BASE/demo/proj/branches"
@@ -300,6 +323,16 @@ check "create branch" 302 -b "$JAR" "$BASE/demo/proj/branches/create" \
   --data-urlencode "csrf=$CSRF" --data-urlencode name=feature --data-urlencode from=main
 check "branch listed" 200 -b "$JAR" "$BASE/demo/proj/branches"
 body_has "feature branch shown" '>feature<'
+body_has "branch row offers a comparison" 'compare/main...feature'
+
+# ---- comparing two revisions ----
+
+check "compare form" 200 "$BASE/demo/proj/compare"
+body_has "compare offers both revisions" 'name="head"'
+check "compare a branch with itself" 200 "$BASE/demo/proj/compare/main...feature"
+body_has "identical revisions say so" 'identical'
+check "compare with two dots" 200 "$BASE/demo/proj/compare/main..feature"
+check "compare with an unknown revision 404s" 404 "$BASE/demo/proj/compare/main...no-such-ref"
 check "default branch delete refused" 400 -b "$JAR" "$BASE/demo/proj/branches/delete" \
   --data-urlencode "csrf=$CSRF" --data-urlencode name=main
 check "delete branch" 302 -b "$JAR" "$BASE/demo/proj/branches/delete" \
@@ -329,8 +362,8 @@ check "create demo/bare without init" 302 -b "$JAR" "$BASE/new" \
   --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=bare
 check "empty repo page" 200 -b "$JAR" "$BASE/demo/bare"
 body_has "create README button" 'Create a README'
-body_has "empty repo keeps clone command" 'git clone'
-body_has "empty repo keeps push command" 'git push'
+body_has "empty repo shows the remote command" 'git remote add origin'
+body_has "empty repo keeps push command" 'git push -u origin main'
 check "new file form on empty repo" 200 -b "$JAR" "$BASE/demo/bare/new/main"
 CSRF="$(csrf_of)"
 check "first commit via web" 302 -b "$JAR" "$BASE/demo/bare/new/main" \

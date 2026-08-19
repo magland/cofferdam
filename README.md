@@ -31,9 +31,11 @@ The `.git` suffix on repository directory names is optional; it is stripped for 
 - Commit history with pagination, and diff views that number both sides of every hunk, count what each file gained and lost, and fold away a file you have read; the History button on any file or directory narrows it to that path
 - Search the files at any ref for a literal string, with the matches grouped by file, and a "Go to file" finder that filters every path as you type (`t` opens it)
 - Blame: every line beside the commit that last touched it, and a step back to the blame before that change
+- Comparing two revisions: what one branch has that another does not, and the diff between them, from the Compare button on any branch or tag
 - Diffs with line numbers on both sides, per-file counts and a changed-files summary, and files that fold away
 - Blame for any text file: each line beside the commit that last touched it, and a link to the blame as it stood before that change
 - Source downloads: `.tar.gz` or `.zip` of any branch, tag, or commit, from the Code button or straight from `/<collection>/<repo>/archive/<ref>.zip`
+- A language breakdown in the About panel: the share of the source each language holds, drawn as GitHub's bar in Linguist's colours
 - Sign-in with username and token; operations happen directly in the web interface:
   - creating repositories (with an optional initial README)
   - editing, creating, and deleting files, committed straight to a branch

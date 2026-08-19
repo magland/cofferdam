@@ -954,26 +954,56 @@ export function refListPage(ctx: RepoCtx, kind: 'branches' | 'tags'): string {
   const base = repoUrl(ctx);
   const refs = kind === 'branches' ? ctx.branches : ctx.tags;
   const viewer = ctx.viewer;
+  const noun = kind === 'branches' ? 'branch' : 'tag';
+  const listId = `${kind}-list`;
   const rows = refs
     .map((r) => {
       let action = '';
       if (ctx.canPush && viewer && (kind === 'tags' || r.name !== ctx.defaultBranch)) {
-        const noun = kind === 'branches' ? 'branch' : 'tag';
         action = `<form method="post" action="${base}/${kind}/delete" onsubmit="return confirm('Delete ${noun} ${esc(
           r.name
         )}?')">${csrfField(viewer)}<input type="hidden" name="name" value="${esc(
           r.name
-        )}"><button type="submit" class="btn btn-danger-outline">Delete</button></form>`;
+        )}"><button type="submit" class="btn btn-danger-outline" title="Delete this ${noun}" aria-label="Delete ${esc(
+          r.name
+        )}">${icon('trash')}</button></form>`;
       }
-      return `<tr><td><a href="${base}/tree/${encPath(r.name)}"><b>${esc(r.name)}</b></a>${
-        kind === 'branches' && r.name === ctx.defaultBranch ? ' <span class="counter">default</span>' : ''
-      }<div class="muted small">${esc(r.subject)}</div></td><td class="right small">${timeTag(r.date)}</td><td class="right"><a class="sha" href="${base}/commit/${r.sha}">${r.sha.slice(0, 7)}</a></td><td class="right">${action}</td></tr>`;
+      // A tag is what people download a release from, so its row carries the
+      // archives, as the tags page on GitHub does.
+      const archives =
+        kind === 'tags'
+          ? `<a class="btn" href="${base}/archive/${encPath(r.name)}.zip" title="Download this tag as a zip">${icon(
+              'file-zip'
+            )}<span>zip</span></a><a class="btn" href="${base}/archive/${encPath(
+              r.name
+            )}.tar.gz" title="Download this tag as a tar.gz">${icon('file-zip')}<span>tar.gz</span></a>`
+          : '';
+      const badge =
+        kind === 'branches' && r.name === ctx.defaultBranch ? ' <span class="badge">Default</span>' : '';
+      // Every ref but the default one can be compared against it, which is
+      // the question a list of branches invites: what is on this one?
+      const compare =
+        ctx.defaultBranch && r.name !== ctx.defaultBranch
+          ? `<a class="btn" href="${base}/compare/${encPath(ctx.defaultBranch)}...${encPath(
+              r.name
+            )}" title="Compare with ${esc(ctx.defaultBranch)}">${icon('git-compare')}<span>Compare</span></a>`
+          : '';
+      return `<tr>
+<td class="ref-name">${icon(kind === 'branches' ? 'git-branch' : 'tag', 'icon')}<a href="${base}/tree/${encPath(
+        r.name
+      )}"><b>${esc(r.name)}</b></a>${badge}
+<div class="muted small">Updated ${timeTag(r.date)} &middot; ${esc(r.subject)}</div></td>
+<td class="right"><a class="sha" href="${base}/commit/${r.sha}">${r.sha.slice(0, 7)}</a></td>
+<td class="right"><span class="right-group">${compare}${archives}${action}</span></td>
+</tr>`;
     })
     .join('');
   const body = rows
-    ? `<table class="listing"><tbody>${rows}</tbody></table>`
+    ? `${listFilter(listId, `Find a ${noun}`, refs.length)}<table class="listing" id="${listId}"><tbody>${rows}</tbody></table>${noMatches(
+        listId
+      )}`
     : `<div class="empty-state">No ${kind} yet.</div>`;
-  let createForm = '';
+  let createMenu = '';
   if (ctx.canPush && viewer && ctx.branches.length > 0) {
     const fromOptions = ctx.branches
       .map(

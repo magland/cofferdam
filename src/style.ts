@@ -84,6 +84,13 @@ h2 { font-family: var(--font-head); font-size: 18px; }
 .tab.active { font-weight: 600; border-bottom-color: var(--tab-marker); }
 .tab.active .octicon { color: var(--fg); }
 .counter { display: inline-block; background: var(--chip-bg); border-radius: 2em; padding: 0 6px; font-size: 12px; color: var(--fg-muted); margin-left: 4px; }
+/* The outlined pill GitHub uses for a label on a name: Default, and its kin. */
+.badge { display: inline-block; border: 1px solid var(--accent); color: var(--accent); border-radius: 2em; padding: 0 7px; font-size: 12px; line-height: 18px; }
+.ref-name { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ref-name .icon { color: var(--fg-muted); margin-right: 0; }
+.ref-name div { flex-basis: 100%; }
+.ref-form { padding: 16px; width: 300px; }
+.ref-form .field:last-of-type { margin-bottom: 16px; }
 
 .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
 /* flex:1 is load-bearing: a wrapping flex container's max-content width is its
@@ -350,7 +357,14 @@ table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
 .copy-btn .copy-done { display: none; color: var(--alert-tip); }
 .copy-btn.copied .copy-idle { display: none; }
 .copy-btn.copied .copy-done { display: inline-flex; }
-.empty-cmds { max-width: 520px; margin: 12px auto; text-align: left; }
+/* The command blocks on the empty-repository page: several lines with one
+   button, where .cmd-row is one line with one button. */
+.cmd-block { display: flex; align-items: flex-start; gap: 8px; margin: 4px 0 20px; }
+.cmd-block pre {
+  flex: 1; margin: 0; overflow-x: auto; padding: 10px 12px; background: var(--input-bg);
+  border: 1px solid var(--border); border-radius: var(--radius); font-size: 12px; line-height: 20px;
+}
+.setup-head { font-family: var(--font-head); font-size: 15px; margin: 24px 0 8px; }
 
 .empty-state { border: 1px dashed var(--border); border-radius: var(--radius); padding: 48px; text-align: center; color: var(--fg-muted); }
 .error-page { text-align: center; padding: 64px 0; color: var(--fg-muted); }
@@ -606,4 +620,14 @@ details.diff-file:not([open]) > summary.diff-file-header { border-bottom: none; 
   .repo-search { display: none; }
   .search-form .search-input { width: 100%; }
 }
+
+/* --- comparing two revisions --- */
+.cmp-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.cmp-picker { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--fg-muted); }
+.cmp-picker select { width: auto; max-width: 220px; padding: 4px 8px; font-size: 13px; }
+.cmp-status {
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+  padding: 10px 12px; margin-bottom: 16px;
+}
+.cmp-commits { margin-bottom: 20px; }
 `;

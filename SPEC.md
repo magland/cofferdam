@@ -85,7 +85,9 @@ First start against a directory with no `vault.json` initializes one and prints 
 | `src/icons.ts` | The icon set: 16-pixel Octicons inlined as SVG, and the `icon()` wrapper |
 | `src/find.ts` | Finding things in a repository: the file finder and the search route |
 | `src/avatar.ts` | Identicons: the drawing a name gets in place of an uploaded picture |
+| `src/languages.ts` | The language breakdown: Linguist's names and colours by extension, and the byte shares the About panel's bar is drawn from |
 | `src/find.ts` | The file finder: every path at a ref, filtered in the browser |
+| `src/compare.ts` | Comparing two revisions: the route and its page |
 | `scripts/create-example.sh` | Builds the example vault, including its `vault.json` with the fixed dev user |
 | `scripts/smoke.sh` | The end-to-end smoke test |
 | `scripts/deploy-fly.sh` | Idempotent create-app/create-volume/deploy/print-token for Fly |
@@ -103,10 +105,10 @@ Read routes (anonymous):
 | `GET /:collection/:repo` | Repo home: tree at default branch, README, clone box |
 | `GET /:collection/:repo/tree/:ref/*` `blob` `raw` | Browsing; ref may contain `/`, resolved by longest match against real ref names. Markdown blobs render as documents; `?plain=1` shows the source |
 | `GET /:collection/:repo/commits/:ref[/*path]` `commit/:sha` | History (paginated), narrowed to a path when one is given, and the diff view for one commit |
-| `GET /:collection/:repo/blame/:ref/*path` | Blame for one text file; binary, LFS, and oversized blobs redirect to the blob page |
 | `GET /:collection/:repo/search?q=&ref=` | Literal text search over the files at a ref (`git grep`, fixed strings, bounded in results and in time); an unknown ref falls back to the default branch |
 | `GET /:collection/:repo/find[/:ref]` | The file finder: every path at a ref, filtered in the browser |
 | `GET /:collection/:repo/blame/:ref/*path` | Blame for one text file; binary or over-large files redirect to the blob page |
+| `GET /:collection/:repo/compare[/:base...:head]` | Compare two revisions: the commits head has that base does not, and the merge-base diff between them. Also accepts `?base=&head=` from the form, and `..` for a direct diff |
 | `GET /:collection/:repo/archive/:ref.{tar.gz,tgz,zip}` | Source download, streamed straight from `git archive`; the ref must be one the repository has, or a commit id |
 | `GET /:collection/:repo/branches` `tags` | Ref listings (with operation forms when the session allows) |
 | `GET /:collection/:repo/site/*` | Static site from the sibling `<repo>.site` directory (index.html, optional 404.html) |
@@ -290,6 +292,7 @@ The interface deliberately reads as GitHub's, because that is the interface its 
 - **The file finder is the way people navigate a repository they know.** `/{collection}/{repo}/find/{ref}` renders every path at that ref and filters it in the browser by subsequence match, the t key reaches it, and Enter opens the first match. No search endpoint and no index: the trade is a page proportional to the tree, capped at 20,000 paths.
 - **Every name has a face.** `avatar()` in `src/avatar.ts` draws a GitHub-style identicon from a hash of the name: a 5 x 5 mirrored grid in one hue. No picture is uploaded and none is fetched from a third party, which is the point; a vault should not phone home to render a page.
 - **The repository root has an About panel** on the right, with the description, the documents a reader looks for (readme, license, site), and the commit, branch, and tag counts. It appears at the root only, as GitHub's does.
+- **A repository says what it is written in.** `languageBreakdown()` in `src/languages.ts` measures the tree at a ref by extension, using the blob sizes `git ls-tree -l` already reports, so the bar costs one command and no blob reads. It follows Linguist in counting only programming and markup, which is why a repository of markdown and JSON reports no languages rather than reporting itself as Markdown; vendored and generated paths are skipped by a documented subset of Linguist's rules, sizes are of the blob as stored (an LFS pointer is 130 bytes), and a tree wider than 20,000 files is not measured at all. The colours are Linguist's and are the one place the interface names a colour outside `themes.ts`, because a language's colour belongs to the language: they are inline on the bar, from the table in that file and never from anything a repository contains.
 
 ## 4. Later phases, sketched
 

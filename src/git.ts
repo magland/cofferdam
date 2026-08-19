@@ -338,6 +338,70 @@ export class GitRepo {
     return lines;
   }
 
+  /**
+   * Comparing two revisions, the way `git log base..head` and
+   * `git diff base...head` do: the commits head has that base does not, and
+   * the patch that would bring base up to head. The three-dot diff is taken
+   * from the merge base, so a base that has moved on of its own does not show
+   * up as changes head made; that is the comparison GitHub shows and the one
+   * a reader almost always means.
+   */
+  async compare(
+    base: string,
+    head: string,
+    limit = 250
+  ): Promise<{ ahead: number; behind: number; commits: CommitSummary[]; patch: string; mergeBase: string | null }> {
+    const fmt = '%H%x00%an%x00%aI%x00%s';
+    const [counts, log, patch, mergeBase] = await Promise.all([
+      execGit(this.dir, ['rev-list', '--left-right', '--count', `${base}...${head}`])
+        .then((b) => b.toString('utf8').trim().split(/\s+/))
+        .catch(() => ['0', '0']),
+      execGit(this.dir, ['log', `--format=${fmt}`, '-n', String(limit), `${base}..${head}`, '--'])
+        .then((b) => b.toString('utf8'))
+        .catch(() => ''),
+      execGit(this.dir, ['diff', '--no-color', `${base}...${head}`])
+        .then((b) => b.toString('utf8'))
+        .catch(() => ''),
+      execGit(this.dir, ['merge-base', base, head])
+        .then((b) => b.toString('utf8').trim())
+        .catch(() => null),
+    ]);
+    const commits = log
+      .split('\n')
+      .filter((l) => l !== '')
+      .map((l) => {
+        const [sha, author, date, subject] = l.split('\0');
+        return { sha, author, date, subject: subject ?? '' };
+      });
+    return {
+      behind: parseInt(counts[0], 10) || 0,
+      ahead: parseInt(counts[1], 10) || 0,
+      commits,
+      patch,
+      mergeBase: mergeBase || null,
+    };
+  }
+
+  /**
+   * Who has committed here and how much, as `git shortlog -sne` reports it,
+   * ordered by commit count. Mail addresses come back so that an avatar and a
+   * contact are both available; the interface shows the name.
+   */
+  async contributors(ref: string): Promise<{ name: string; email: string; commits: number }[]> {
+    let out: string;
+    try {
+      out = (await execGit(this.dir, ['shortlog', '-sne', '--no-merges', ref, '--'])).toString('utf8');
+    } catch {
+      return [];
+    }
+    const people: { name: string; email: string; commits: number }[] = [];
+    for (const line of out.split('\n')) {
+      const m = line.match(/^\s*(\d+)\t(.*?)\s*<([^>]*)>\s*$/);
+      if (m) people.push({ commits: parseInt(m[1], 10), name: m[2], email: m[3] });
+    }
+    return people;
+  }
+
   async commitPatch(sha: string): Promise<string> {
     return (await execGit(this.dir, ['show', '--format=', '--patch', '--no-color', sha, '--'])).toString('utf8');
   }
