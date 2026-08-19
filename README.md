@@ -79,6 +79,24 @@ There is no database and no state outside this directory, so backing up a vault 
 - [cofferdam for an agent](docs/agents.md): short enough to paste into a context window, including an honest list of what is not there
 - [Issues and pull requests](docs/issues-and-pull-requests.md), [Sites](docs/sites.md), [Themes](docs/themes.md)
 
+## Using a vault from Claude Code
+
+[cofferdam-skill](https://github.com/magland/cofferdam-skill) is a Claude Code skill that teaches an agent this CLI the way one already knows `gh`: the vault and token precedence, `--json` and the exit codes worth branching on, reading and writing a file with `--expected-sha`, the branch-then-pull-request path, diagnosing a workflow run, and the list of capabilities cofferdam does not have. Installing it as a plugin, from Claude Code:
+
+```
+/plugin marketplace add magland/cofferdam-skill
+/plugin install cofferdam@cofferdam-skill
+```
+
+Or as a personal skill, available in every session, with no plugin machinery:
+
+```bash
+git clone https://github.com/magland/cofferdam-skill /tmp/cofferdam-skill
+cp -r /tmp/cofferdam-skill/skills/cofferdam ~/.claude/skills/cofferdam
+```
+
+Either way the agent needs the `cofferdam` command on its PATH and a vault to talk to, which is `COFFERDAM_HOST` and `COFFERDAM_TOKEN` in the environment, or a `cofferdam login` already done. For an agent that reads a page rather than installing anything, [cofferdam for an agent](docs/agents.md) is the short version.
+
 ## Development
 
 ```bash
