@@ -758,4 +758,18 @@ table.listing.issues td.issue-cell > span { min-width: 0; }
 .pull-commits .commit-row { border: none; border-top: 1px solid var(--border-soft); padding: 8px 0; }
 .pull-commits .commit-row:first-child { border-top: none; }
 .pull-files { margin: 24px 0 12px; font-size: 16px; }
+
+/* --- narrowing a list of issues --- */
+.issue-filters { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.issue-search { position: relative; }
+.issue-search .search-input { width: 320px; max-width: 100%; }
+/* A label chip is a link when it narrows the list, and keeps its own colour
+   rather than the link colour. */
+a.chip.label:hover { text-decoration: none; filter: brightness(1.1); }
+.issue-filters .dropdown-menu { width: 260px; }
+.issue-filters .dd-item .muted { margin-left: auto; }
+@media (max-width: 700px) {
+  .issue-search .search-input { width: 100%; }
+  .issue-filters { flex-direction: column; align-items: stretch; }
+}
 `;

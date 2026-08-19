@@ -148,17 +148,89 @@ function summaryFrom(n: number, dir: string, doc: { meta: Record<string, unknown
   };
 }
 
-export function listIssues(root: string, collection: string, repo: string): IssueSummary[] {
+/**
+ * Every issue in a repository, newest first. A `match` narrows the list while
+ * the files are being read, which is where the body is in hand: searching
+ * titles alone would miss the issue whose subject is in its first paragraph,
+ * and reading every file twice to find it would be silly.
+ */
+export function listIssues(
+  root: string,
+  collection: string,
+  repo: string,
+  opts: { match?: string } = {}
+): IssueSummary[] {
   const dir = issuesDir(root, collection, repo);
   if (!dir) return [];
+  const needle = (opts.match ?? '').trim().toLowerCase();
   const out: IssueSummary[] = [];
   for (const n of numericDirs(dir)) {
     const sub = path.join(dir, String(n));
     const doc = readDoc(path.join(sub, 'issue.md'));
-    if (doc) out.push(summaryFrom(n, sub, doc));
+    if (!doc) continue;
+    const summary = summaryFrom(n, sub, doc);
+    if (
+      needle !== '' &&
+      !summary.title.toLowerCase().includes(needle) &&
+      !doc.body.toLowerCase().includes(needle) &&
+      !summary.labels.some((l) => l.toLowerCase().includes(needle))
+    ) {
+      continue;
+    }
+    out.push(summary);
   }
   // Newest first, which is how a list of issues is read.
   return out.sort((a, b) => b.number - a.number);
+}
+
+export type IssueSort = 'newest' | 'oldest' | 'updated' | 'comments';
+
+export const ISSUE_SORTS: { key: IssueSort; label: string }[] = [
+  { key: 'newest', label: 'Newest' },
+  { key: 'oldest', label: 'Oldest' },
+  { key: 'updated', label: 'Recently updated' },
+  { key: 'comments', label: 'Most commented' },
+];
+
+/** Narrow and order a list that has already been read. */
+export function selectIssues(
+  list: IssueSummary[],
+  opts: { state?: 'open' | 'closed' | 'all'; label?: string; author?: string; sort?: IssueSort }
+): IssueSummary[] {
+  const state = opts.state ?? 'open';
+  const out = list.filter(
+    (i) =>
+      (state === 'all' || i.state === state) &&
+      (!opts.label || i.labels.includes(opts.label)) &&
+      (!opts.author || i.author === opts.author)
+  );
+  const by: Record<IssueSort, (a: IssueSummary, b: IssueSummary) => number> = {
+    newest: (a, b) => b.number - a.number,
+    oldest: (a, b) => a.number - b.number,
+    updated: (a, b) => (a.updated < b.updated ? 1 : a.updated > b.updated ? -1 : 0),
+    comments: (a, b) => b.comments - a.comments || b.number - a.number,
+  };
+  return out.sort(by[opts.sort ?? 'newest']);
+}
+
+/** Every label in use, and how many issues carry it. */
+export function labelsInUse(list: IssueSummary[]): { label: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const issue of list) {
+    for (const label of issue.labels) counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
+/** Everyone who has opened an issue, most prolific first. */
+export function authorsInUse(list: IssueSummary[]): { author: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const issue of list) counts.set(issue.author, (counts.get(issue.author) ?? 0) + 1);
+  return [...counts.entries()]
+    .map(([author, count]) => ({ author, count }))
+    .sort((a, b) => b.count - a.count || a.author.localeCompare(b.author));
 }
 
 // Counting open issues means reading every issue's header, and the Issues tab

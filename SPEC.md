@@ -122,7 +122,7 @@ Read routes (anonymous):
 | `GET /:collection/:repo/releases`, `releases/tag/*` | Releases: notes attached to a tag, from `<repo>.releases/<tag>.md` |
 | `GET /:collection/:repo/pulls`, `pulls/:n` | Pull requests: the list (`?state=`) and one pull request with its thread, commits, and diff |
 | `GET /:collection/:repo/releases.atom`, `commits/:ref[/*path].atom` | Atom feeds of releases and of a history |
-| `GET /:collection/:repo/issues[?state=open\|closed\|all]` `issues/:n` | Issue list and one issue with its comments; anonymous, like every other read |
+| `GET /:collection/:repo/issues[?state=&label=&author=&q=&sort=]` `issues/:n` | Issue list, narrowed by state, label, author, or a text search over titles and bodies, and one issue with its comments; anonymous, like every other read |
 | `GET /:collection/:repo/compare[/:base...:head]` | Compare two revisions: the commits head has that base does not, and the merge-base diff between them. Also accepts `?base=&head=` from the form, and `..` for a direct diff |
 | `GET /:collection/:repo/archive/:ref.{tar.gz,tgz,zip}` | Source download, streamed straight from `git archive`; the ref must be one the repository has, or a commit id |
 | `GET /:collection/:repo/branches` `tags` | Ref listings (with operation forms when the session allows) |
@@ -316,6 +316,8 @@ Issues live in a sibling directory, `<repo>.issues/`, beside the `.git`, `.site`
 One directory per issue: `<repo>.issues/<n>/issue.md` is the issue as markdown under a YAML frontmatter header (`title`, `state`, `author`, `created`, `updated`, `labels`, and `closedBy`/`closedAt` once closed), and `<repo>.issues/<n>/comments/<id>.md` is each comment, the same shape with `author` and `created`. A comment is a separate file so that writing one never rewrites the issue and two people commenting at once cannot lose each other's words. Numbers are allocated by `mkdir`, which the filesystem makes atomic: whoever creates the directory owns the number and a writer that loses the race takes the next one. Every write lands beside its target and is renamed into place.
 
 Authorization follows the vault's model rather than GitHub's. Reading is anonymous, like every other read. Opening an issue and commenting need a session — a vault's users are its users, and there is no public sign-up to abuse. Closing, reopening, and editing need push scope over the repository or being the author. Labels are a push-scope decision, so a form that carries them from someone without it is read without them. Every mutating route checks CSRF and re-derives abilities from live `vault.json`, like the rest of the operations layer, and issue and comment bodies are rendered by the same sanitizing markdown pipeline as a README (3.9), which is what keeps one user's issue from carrying script into another user's session.
+
+Labels have no registry: the set of labels is whatever the issues carry, and a label's colour is derived from its name the way an identicon is, so nothing has to be stored for one to look the same on every page. The list is narrowed by state, label, author, and a text search; the search matches titles, bodies, and labels while the files are being read, since that is where the body is already in hand.
 
 Counting open issues means reading every issue's header, and the Issues tab asks for that count on every page of a repository, so the count is memoized against the issues directory's modification time and every write touches that directory. A repository with no issues never pays for the tab.
 

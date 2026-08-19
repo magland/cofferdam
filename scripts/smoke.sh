@@ -511,6 +511,20 @@ body_has "issue reference became a link" 'href="/demo/proj/issues/1"'
 body_has "commit id became a link" 'href="/demo/proj/commit/0123abcdef0123abcdef0123abcdef0123abcdef"'
 body_has "commit id shown abbreviated" '>0123abc<'
 body_lacks "a plain number is not a commit" 'commit/1234567'
+check "filter issues by label" 200 "$BASE/demo/proj/issues?state=all&label=bug"
+body_has "the labelled issue is listed" 'Something is still wrong'
+check "filter by a label nothing carries" 200 "$BASE/demo/proj/issues?state=all&label=nosuchlabel"
+body_has "an empty filter says so" 'No issues match that'
+check "filter issues by author" 200 "$BASE/demo/proj/issues?state=all&author=owner"
+body_has "the author's issue is listed" 'Something is still wrong'
+check "filter issues by someone else" 200 "$BASE/demo/proj/issues?state=all&author=nobody"
+body_has "nothing from a stranger" 'No issues match that'
+check "search issue text" 200 "$BASE/demo/proj/issues?state=all&q=startup"
+body_has "the search found the body" 'Something is still wrong'
+check "search for what is not there" 200 "$BASE/demo/proj/issues?state=all&q=zzzznotpresent"
+body_has "an empty search says so" 'No issues match that'
+check "sort issues" 200 "$BASE/demo/proj/issues?state=all&sort=oldest"
+body_has "sorting keeps the filter links" 'sort=oldest'
 check "unknown issue 404s" 404 "$BASE/demo/proj/issues/99"
 check "non-numeric issue 404s" 404 "$BASE/demo/proj/issues/nope"
 ISSUE_FILE="$VAULT/demo/proj.issues/1/issue.md"

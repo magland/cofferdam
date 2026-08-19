@@ -1,7 +1,8 @@
+import * as crypto from 'crypto';
 import express, { Express, Request, Response } from 'express';
 import { avatar } from './avatar';
 import * as forms from './forms';
-import { icon } from './icons';
+import { IconName, icon } from './icons';
 import * as issues from './issues';
 import { Issue, IssueSummary } from './issues';
 import { renderMarkdown } from './markdown';
@@ -50,20 +51,67 @@ function stateBadge(state: 'open' | 'closed'): string {
     : `<span class="state-badge closed">${icon('issue-closed')}<span>Closed</span></span>`;
 }
 
-function labelChips(labels: string[]): string {
-  return labels.map((l) => `<span class="chip label">${esc(l)}</span>`).join('');
+/** What the reader has narrowed the list to, and what the links must carry. */
+interface IssueFilter {
+  state: 'open' | 'closed' | 'all';
+  label: string;
+  author: string;
+  query: string;
+  sort: issues.IssueSort;
 }
 
-function listPage(ctx: RepoCtx, list: IssueSummary[], state: 'open' | 'closed' | 'all', counts: { open: number; closed: number }): string {
+/** The same filter with one field changed, as a query string. */
+function filterUrl(base: string, filter: IssueFilter, change: Partial<IssueFilter>): string {
+  const next = { ...filter, ...change };
+  const params = new URLSearchParams();
+  if (next.state !== 'open') params.set('state', next.state);
+  if (next.label) params.set('label', next.label);
+  if (next.author) params.set('author', next.author);
+  if (next.query) params.set('q', next.query);
+  if (next.sort !== 'newest') params.set('sort', next.sort);
+  const q = params.toString();
+  return q === '' ? base : `${base}?${q}`;
+}
+
+/**
+ * A label's colour is derived from its name, the way an identicon is: a vault
+ * keeps no label registry, so the set of labels is whatever the issues carry,
+ * and a colour that comes from the name is stable without one being stored.
+ */
+function labelStyle(label: string): string {
+  const hash = crypto.createHash('sha256').update(label.trim().toLowerCase()).digest();
+  return `background: hsl(${Math.round((hash[0] / 256) * 360)} 58% 46%); color: #fff;`;
+}
+
+function labelChips(labels: string[], base?: string, filter?: IssueFilter): string {
+  return labels
+    .map((l) =>
+      base && filter
+        ? `<a class="chip label" style="${labelStyle(l)}" href="${filterUrl(base, filter, { label: l })}">${esc(l)}</a>`
+        : `<span class="chip label" style="${labelStyle(l)}">${esc(l)}</span>`
+    )
+    .join('');
+}
+
+function listPage(
+  ctx: RepoCtx,
+  list: IssueSummary[],
+  filter: IssueFilter,
+  counts: { open: number; closed: number },
+  labels: { label: string; count: number }[],
+  authors: { author: string; count: number }[]
+): string {
   const base = issuesUrl(ctx);
-  const tab = (id: string, label: string, n: number, glyph: 'issue-opened' | 'issue-closed' | 'comment') =>
-    `<a class="state-tab${state === id ? ' current' : ''}" href="${base}?state=${id}">${icon(glyph)}<span>${n} ${label}</span></a>`;
+  const tab = (id: 'open' | 'closed', label: string, n: number, glyph: 'issue-opened' | 'issue-closed') =>
+    `<a class="state-tab${filter.state === id ? ' current' : ''}" href="${filterUrl(base, filter, {
+      state: id,
+    })}">${icon(glyph)}<span>${n} ${label}</span></a>`;
   const rows = list
     .map(
       (i) =>
         `<tr>
 <td class="issue-cell">${icon(i.state === 'open' ? 'issue-opened' : 'issue-closed', i.state === 'open' ? 'issue-open' : 'issue-closed')}<span>
-<a class="issue-link" href="${base}/${i.number}">${esc(i.title)}</a>${labelChips(i.labels)}
+<a class="issue-link" href="${base}/${i.number}">${esc(i.title)}</a>${labelChips(i.labels, base, filter)}
 <div class="muted small">#${i.number} opened ${timeTag(i.created)} by ${esc(i.author)}${
           i.state === 'closed' && i.closedAt ? ` &middot; closed ${timeTag(i.closedAt)}` : ''
         }</div></span></td>
@@ -80,10 +128,85 @@ function listPage(ctx: RepoCtx, list: IssueSummary[], state: 'open' | 'closed' |
   const newBtn = ctx.viewer
     ? `<a class="btn btn-primary" href="${base}/new">${icon('plus')}<span>New issue</span></a>`
     : `<a class="btn" href="/login?next=${encodeURIComponent(`${base}/new`)}">${icon('plus')}<span>New issue</span></a>`;
-  const empty =
-    state === 'closed'
+
+  // The three menus and the search box. Each menu is a list of links carrying
+  // the rest of the filter, so narrowing never loses what was already chosen
+  // and nothing here needs script.
+  const menu = (label: string, current: string, glyph: IconName, items: string[]) =>
+    `<details class="dropdown">
+<summary class="btn">${icon(glyph)}<span>${esc(current || label)}</span>${icon('chevron-down', 'caret')}</summary>
+<div class="dropdown-menu"><div class="dd-scroll">${items.join('')}</div></div>
+</details>`;
+  const labelMenu = menu(
+    'Labels',
+    filter.label,
+    'tag',
+    [
+      `<a class="dd-item${filter.label === '' ? ' current' : ''}" href="${filterUrl(base, filter, {
+        label: '',
+      })}"><span class="dd-check"></span><span class="dd-label">Any label</span></a>`,
+      ...labels.map(
+        (l) =>
+          `<a class="dd-item${filter.label === l.label ? ' current' : ''}" href="${filterUrl(base, filter, {
+            label: l.label,
+          })}">${
+            filter.label === l.label ? icon('check', 'dd-check') : '<span class="dd-check"></span>'
+          }<span class="dd-label">${esc(l.label)}</span><span class="muted small">${l.count}</span></a>`
+      ),
+    ]
+  );
+  const authorMenu = menu(
+    'Author',
+    filter.author,
+    'person',
+    [
+      `<a class="dd-item${filter.author === '' ? ' current' : ''}" href="${filterUrl(base, filter, {
+        author: '',
+      })}"><span class="dd-check"></span><span class="dd-label">Anyone</span></a>`,
+      ...authors.map(
+        (a) =>
+          `<a class="dd-item${filter.author === a.author ? ' current' : ''}" href="${filterUrl(base, filter, {
+            author: a.author,
+          })}">${
+            filter.author === a.author ? icon('check', 'dd-check') : '<span class="dd-check"></span>'
+          }<span class="dd-label">${esc(a.author)}</span><span class="muted small">${a.count}</span></a>`
+      ),
+    ]
+  );
+  const sortMenu = menu(
+    'Sort',
+    issues.ISSUE_SORTS.find((x) => x.key === filter.sort)?.label ?? 'Newest',
+    'filter',
+    issues.ISSUE_SORTS.map(
+      (x) =>
+        `<a class="dd-item${filter.sort === x.key ? ' current' : ''}" href="${filterUrl(base, filter, {
+          sort: x.key,
+        })}">${
+          filter.sort === x.key ? icon('check', 'dd-check') : '<span class="dd-check"></span>'
+        }<span class="dd-label">${esc(x.label)}</span></a>`
+    )
+  );
+  const hidden = [
+    filter.state === 'open' ? '' : `<input type="hidden" name="state" value="${esc(filter.state)}">`,
+    filter.label === '' ? '' : `<input type="hidden" name="label" value="${esc(filter.label)}">`,
+    filter.author === '' ? '' : `<input type="hidden" name="author" value="${esc(filter.author)}">`,
+    filter.sort === 'newest' ? '' : `<input type="hidden" name="sort" value="${esc(filter.sort)}">`,
+  ].join('');
+  const search = `<form class="issue-search" method="get" action="${base}" role="search">${hidden}
+<input class="search-input" type="search" name="q" value="${esc(
+    filter.query
+  )}" placeholder="Search issues" aria-label="Search issues">${icon('search', 'search-glyph')}</form>`;
+  const narrowed = filter.label !== '' || filter.author !== '' || filter.query !== '';
+  const clear = narrowed
+    ? `<a class="btn" href="${filterUrl(base, filter, { label: '', author: '', query: '' })}">${icon(
+        'x'
+      )}<span>Clear</span></a>`
+    : '';
+  const empty = narrowed
+    ? 'No issues match that.'
+    : filter.state === 'closed'
       ? 'No closed issues.'
-      : state === 'open'
+      : filter.state === 'open'
         ? 'No open issues. Anything that needs doing here can be written down.'
         : 'No issues yet.';
   const content = `${repoHeader(ctx, 'issues')}
@@ -96,8 +219,9 @@ function listPage(ctx: RepoCtx, list: IssueSummary[], state: 'open' | 'closed' |
   )}</span>
   ${newBtn}
 </div>
+<div class="issue-filters">${search}<span class="right-group">${labelMenu}${authorMenu}${sortMenu}${clear}</span></div>
 ${rows ? `<table class="listing issues"><tbody>${rows}</tbody></table>` : `<div class="empty-state">${empty}</div>`}`;
-  return layout(`Issues - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, base));
+  return layout(`Issues - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, filterUrl(base, filter, {})));
 }
 
 function commentCard(ctx: RepoCtx, author: string, when: string, html: string, note = ''): string {
@@ -250,11 +374,28 @@ export function registerIssues(app: Express, root: string): void {
       if (!loaded) return;
       const ctx = await makeCtx(root, req, loaded, loaded.defaultBranch ?? '', viewer);
       const asked = String(req.query.state ?? 'open');
-      const state = asked === 'closed' ? 'closed' : asked === 'all' ? 'all' : 'open';
+      const sortAsked = String(req.query.sort ?? 'newest');
+      const filter: IssueFilter = {
+        state: asked === 'closed' ? 'closed' : asked === 'all' ? 'all' : 'open',
+        label: String(req.query.label ?? '').slice(0, 60),
+        author: String(req.query.author ?? '').slice(0, 60),
+        // A query is a reader's typing and becomes a substring match, not a
+        // pattern, so its only bound is a sane length.
+        query: String(req.query.q ?? '').slice(0, 200),
+        sort: (issues.ISSUE_SORTS.find((x) => x.key === sortAsked)?.key ?? 'newest') as issues.IssueSort,
+      };
+      // Counts on the state tabs are of the whole repository, as GitHub's are,
+      // so they do not move as the other filters narrow the list.
       const all = issues.listIssues(root, ctx.collection, ctx.repo);
-      const counts = { open: all.filter((i) => i.state === 'open').length, closed: all.filter((i) => i.state === 'closed').length };
-      const list = state === 'all' ? all : all.filter((i) => i.state === state);
-      res.type('html').send(listPage(ctx, list, state, counts));
+      const counts = {
+        open: all.filter((i) => i.state === 'open').length,
+        closed: all.filter((i) => i.state === 'closed').length,
+      };
+      const matched = filter.query === '' ? all : issues.listIssues(root, ctx.collection, ctx.repo, { match: filter.query });
+      const list = issues.selectIssues(matched, filter);
+      res
+        .type('html')
+        .send(listPage(ctx, list, filter, counts, issues.labelsInUse(all), issues.authorsInUse(all)));
     })
   );
 
