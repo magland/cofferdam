@@ -87,6 +87,8 @@ First start against a directory with no `vault.json` initializes one and prints 
 | `src/style.ts` | The single structural CSS string; every color and font is a `var(--…)` from the active theme |
 | `src/icons.ts` | The icon set: 16-pixel Octicons inlined as SVG, and the `icon()` wrapper |
 | `src/find.ts` | Finding things in a repository: the file finder (every path at a ref, filtered in the browser) and the text search route |
+| `src/pulls.ts` | The pull request store under `<repo>.pulls/` |
+| `src/pullweb.ts` | The pull request pages, and the merge button over `ops.mergeBranch` |
 | `src/releases.ts` | Releases: the store under `<repo>.releases/`, the pages, and the write routes |
 | `src/atom.ts` | Atom feed construction, shared by the release and history feeds |
 | `src/avatar.ts` | Identicons: the drawing a name gets in place of an uploaded picture |
@@ -118,6 +120,7 @@ Read routes (anonymous):
 | `GET /:collection/:repo/find[/:ref]` | The file finder: every path at a ref, filtered in the browser |
 | `GET /:collection/:repo/blame/:ref/*path` | Blame for one text file; binary or over-large files redirect to the blob page |
 | `GET /:collection/:repo/releases`, `releases/tag/*` | Releases: notes attached to a tag, from `<repo>.releases/<tag>.md` |
+| `GET /:collection/:repo/pulls`, `pulls/:n` | Pull requests: the list (`?state=`) and one pull request with its thread, commits, and diff |
 | `GET /:collection/:repo/releases.atom`, `commits/:ref[/*path].atom` | Atom feeds of releases and of a history |
 | `GET /:collection/:repo/issues[?state=open\|closed\|all]` `issues/:n` | Issue list and one issue with its comments; anonymous, like every other read |
 | `GET /:collection/:repo/compare[/:base...:head]` | Compare two revisions: the commits head has that base does not, and the merge-base diff between them. Also accepts `?base=&head=` from the form, and `..` for a direct diff |
@@ -155,6 +158,9 @@ UI operation routes (session + CSRF; all POSTs follow POST-redirect-GET):
 | `POST /:collection/:repo/issues/:n/comment` | Comment on an issue | session |
 | `POST /:collection/:repo/issues/:n/state` | Close or reopen, optionally with a comment | push scope or being the author |
 | `GET/POST /:collection/:repo/issues/:n/edit` | Edit the title, body, and labels | push scope or being the author |
+| `GET/POST /:collection/:repo/pulls/new` (optional `?base=`, `?head=`) | Open a pull request between two branches | session |
+| `POST /:collection/:repo/pulls/:n/{comment,state}` | Comment, close, reopen | session; state needs push scope or authorship |
+| `POST /:collection/:repo/pulls/:n/merge` | Merge the head into the base | push scope |
 | `GET/POST /:collection/:repo/releases/new` (optional `?tag=`) | Draft or edit the notes on a tag | push scope |
 | `POST /:collection/:repo/releases/delete` | Remove a release's notes; the tag is untouched | push scope |
 | `GET/POST /:collection/:repo/settings` | Description and default branch | push scope (page also visible with admin) |
@@ -313,7 +319,19 @@ Authorization follows the vault's model rather than GitHub's. Reading is anonymo
 
 Counting open issues means reading every issue's header, and the Issues tab asks for that count on every page of a repository, so the count is memoized against the issues directory's modification time and every write touches that directory. A repository with no issues never pays for the tab.
 
-### 3.14 The shape of the interface
+### 3.14 Pull requests
+
+A pull request is one branch proposed into another of the same repository, stored the way issues are: `<repo>.pulls/<n>/pull.md` with a YAML frontmatter header, `<repo>.pulls/<n>/comments/<id>.md` for each comment, numbers allocated by `mkdir`, and every write landed beside its target and renamed into place. The header carries `base` and `head` and, once it is over, `mergedBy`/`mergedAt`/`mergeSha` or `closedBy`/`closedAt`. The store deliberately mirrors `src/issues.ts` rather than sharing it; if a third thread-shaped thing ever appears, the common half is worth extracting then.
+
+Nothing about the diff, the commits, or the mergeability is stored. Those are questions for git, which can answer them from `base` and `head` at any moment, and a stored copy would only ever be a stale one.
+
+Merging happens in the bare repository, with no work tree and no clone. `git merge-tree --write-tree` computes the merged tree in the object database and names the paths that conflict; a clean result is committed with `commit-tree` against exactly that tree, so the merge a reader was shown is the merge that happens, and the branch moves with a guarded `update-ref` whose old value is the tip the merge was planned against — a branch that moved while the reader was deciding fails the merge rather than losing the commit that moved it. A merge commit is always made, even where the base could simply advance, because that commit is the record of the decision. Conflicts are reported and never committed: resolving them needs a work tree and a person, and the vault has neither. A merge moves a branch, so it fires the same push event to the CI engine that an edit in the browser does (3.12).
+
+Authorization: reading is anonymous, opening one and commenting need a session, closing and reopening need push scope or authorship, and merging needs push scope over the repository, because it writes to a branch like any other write. Bodies and comments go through the same sanitizing markdown pipeline as a README (3.9).
+
+Across repositories is the open question. Nothing in the stored shape forbids it — a head could name another repository — but a vault has no way to name one yet, and federation (section 4) is the larger form of that question.
+
+### 3.15 The shape of the interface
 
 The interface deliberately reads as GitHub's, because that is the interface its readers already know; the themes (3.8) are where a vault gets to look like itself. Five conventions carry most of that and should be kept when new pages are added.
 
@@ -329,7 +347,7 @@ The interface deliberately reads as GitHub's, because that is the interface its 
 
 ## 4. Later phases, sketched
 
-- **Pull requests.** Within a vault, a PR can be branch-to-branch with a merge button (server-side `git merge-tree`/`merge` in a temp worktree or index). Across vaults is the federation question below.
+- **Pull requests across repositories.** Branch-to-branch within one repository is implemented (3.14). A pull request from a fork, and one across vaults, both wait on a way to name a head that lives somewhere else; the second is the federation question below.
 - **Secrets and a run token.** Neither exists yet. A run token minted per job from the workflow's `permissions:` block, revoked when the job ends, is what would let a workflow push back to its own repository and call the vault's API; it is also what would stop actions that expect `github.token` from reporting "Bad credentials" and taking a fallback path. Secrets storage was deliberately deferred rather than designed badly: whether a vault backup should carry live secrets is unresolved (7.11).
 - **A cache service**, so `actions/cache` and the caching built into `setup-node` and its relatives stop being no-ops. A runner-local directory is the obvious first implementation, with the trade-off that a second runner starts cold.
 - **JSON everywhere.** Content negotiation on the read routes, the ops layer exposed through the API for CLI parity, `--json` on the CLI, and a raw `hubbit api` passthrough command.

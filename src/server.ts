@@ -12,6 +12,7 @@ import { registerFind, registerSearch } from './find';
 import { registerIssues } from './issueweb';
 import { registerGitHttp } from './githttp';
 import { registerLfs } from './lfs';
+import { registerPulls } from './pullweb';
 import { registerReleases } from './releases';
 import { createLfsStore } from './lfsstore';
 import { faviconSvg } from './logo';
@@ -107,6 +108,7 @@ export function createApp(root: string) {
   registerWebOps(app, root, lfs, engine);
   registerCompare(app, root);
   registerIssues(app, root);
+  registerPulls(app, root, engine);
   registerReleases(app, root);
   registerFind(app, root);
   registerSearch(app, root);

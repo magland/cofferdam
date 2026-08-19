@@ -85,10 +85,19 @@ ${icon('git-branch')}${picker(ctx, 'base', 'base', baseRef)}<span class="muted">
       result.ahead > result.commits.length
         ? `<p class="muted small">Showing the newest ${result.commits.length} of ${result.ahead} commits.</p>`
         : '';
+    // A comparison with something on it is a pull request waiting to be
+    // written, which is the path GitHub puts here too.
+    const propose =
+      result.ahead > 0 && ctx.branches.some((b) => b.name === headRef) && ctx.branches.some((b) => b.name === baseRef)
+        ? `<a class="btn btn-primary" href="${base}/pulls/new?base=${encodeURIComponent(
+            baseRef
+          )}&amp;head=${encodeURIComponent(headRef)}">${icon('git-pull-request')}<span>Create pull request</span></a>`
+        : '';
     body = `<div class="cmp-status">
-  <b>${esc(headRef)}</b> is <b>${result.ahead} commit${result.ahead === 1 ? '' : 's'}</b> ahead of <b>${esc(
+  <span><b>${esc(headRef)}</b> is <b>${result.ahead} commit${result.ahead === 1 ? '' : 's'}</b> ahead of <b>${esc(
       baseRef
-    )}</b>${behind}.
+    )}</b>${behind}.</span>
+  ${propose}
 </div>
 ${more}
 <div class="cmp-commits">${commitRows(ctx, result.commits)}</div>

@@ -22,6 +22,8 @@ export interface RepoCtx {
   releases: string[];
   /** Open issues, for the Issues tab's count. */
   openIssues: number;
+  /** Open pull requests, for the tab's counter. */
+  openPulls: number;
   /** The repository this one was forked from, if it was. */
   forkedFrom: { collection: string; repo: string } | null;
   viewer: Viewer | null;
@@ -318,7 +320,7 @@ ${archive('zip', 'Source as zip')}${archive('tar.gz', 'Source as tar.gz')}</div>
 
 export function repoHeader(
   ctx: RepoCtx,
-  active: 'code' | 'commits' | 'issues' | 'actions' | 'branches' | 'tags' | 'settings'
+  active: 'code' | 'commits' | 'issues' | 'pulls' | 'actions' | 'branches' | 'tags' | 'settings'
 ): string {
   const base = repoUrl(ctx);
   const tab = (id: string, label: string, href: string, glyph: IconName, count?: number) =>
@@ -348,6 +350,7 @@ ${parent}
 ${tab('code', 'Code', base, 'code')}
 ${tab('commits', 'Commits', `${base}/commits/${encPath(ctx.ref)}`, 'history')}
 ${tab('issues', 'Issues', `${base}/issues`, 'issue-opened', ctx.openIssues)}
+${tab('pulls', 'Pull requests', `${base}/pulls`, 'git-pull-request', ctx.openPulls)}
 ${ctx.hasCi || active === 'actions' ? tab('actions', 'Actions', `${base}/actions`, 'play') : ''}
 ${tab('branches', 'Branches', `${base}/branches`, 'git-branch', ctx.branches.length)}
 ${tab('tags', 'Tags', `${base}/tags`, 'tag', ctx.tags.length)}
@@ -657,8 +660,18 @@ export function treePage(ctx: RepoCtx, view: TreeView): string {
         ctx.viewer ? `${base}/fork` : `/login?next=${encodeURIComponent(`${base}/fork`)}`
       }" title="Copy this repository elsewhere in the vault">${icon('repo-forked')}<span>Fork</span></a>`
     : '';
+  // GitHub's "Add file" is a menu of two: write one here, or upload some.
+  const uploadUrl = `${base}/upload/${encPath(ctx.ref)}${atRoot ? '' : `/${encPath(path)}`}`;
   const addFileBtn =
-    ctx.canPush && ctx.refIsBranch ? `<a class="btn" href="${addFileUrl}">${icon('plus')}<span>Add file</span></a>` : '';
+    ctx.canPush && ctx.refIsBranch
+      ? `<details class="dropdown">
+<summary class="btn">${icon('plus')}<span>Add file</span>${icon('chevron-down', 'caret')}</summary>
+<div class="dropdown-menu dd-right">
+<a class="dd-item" href="${addFileUrl}">${icon('file')}<span class="dd-label">Create new file</span></a>
+<a class="dd-item" href="${uploadUrl}">${icon('upload')}<span class="dd-label">Upload files</span></a>
+</div>
+</details>`
+      : '';
   const readmePath = atRoot ? view.readmeName : `${path}/${view.readmeName}`;
   const readme = view.readmeHtml
     ? `<div class="box" id="readme"><div class="box-header">${icon('book')}<a href="${base}/blob/${encPath(

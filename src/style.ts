@@ -734,4 +734,26 @@ table.listing.issues td.issue-cell > span { min-width: 0; }
 .commit-target { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px; }
 .commit-target .field { margin: 8px 0 4px; }
 .commit-target p { margin: 0; }
+
+/* --- pull requests: the merge box, and the branch pair. Merged is drawn in
+   the purple each theme already carries for an important callout, which is
+   the same purple GitHub uses for a merged pull request. --- */
+.cmp-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.state-badge.merged { background: var(--alert-important); border-color: var(--alert-important); color: var(--on-primary); }
+.pull-merged { color: var(--alert-important); }
+.merge-box {
+  display: flex; align-items: flex-start; gap: 12px; margin: 16px 0;
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; background: var(--surface);
+}
+.merge-box > .octicon { margin-top: 2px; }
+.merge-box form { margin-left: auto; }
+.merge-box.clean > .octicon { color: var(--alert-tip); }
+.merge-box.conflict > .octicon { color: var(--danger); }
+.merge-box.merged > .octicon { color: var(--alert-important); }
+.merge-box.closed > .octicon, .merge-box.unknown > .octicon { color: var(--fg-muted); }
+.merge-conflicts { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--fg-muted); }
+.pull-commits { display: flex; flex-direction: column; }
+.pull-commits .commit-row { border: none; border-top: 1px solid var(--border-soft); padding: 8px 0; }
+.pull-commits .commit-row:first-child { border-top: none; }
+.pull-files { margin: 24px 0 12px; font-size: 16px; }
 `;
