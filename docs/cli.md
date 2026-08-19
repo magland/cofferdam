@@ -87,12 +87,18 @@ cofferdam repo view demo/proj
 cofferdam branch list --repo demo/proj
 cofferdam file list --repo demo/proj       # one directory
 cofferdam file list --all                  # every path in the tree
+cofferdam file list --commits              # with the last commit per entry
 cofferdam file view README.md
+cofferdam file view logo.png --raw         # the bytes, unchanged
 cofferdam commit list --limit 10
+cofferdam commit list --path src/index.ts  # only commits touching a path
 cofferdam commit view <sha> --patch
 cofferdam diff main...topic
+cofferdam diff main...topic --stat         # names and counts, not the patch
 cofferdam search 'needle'
 ```
+
+`file list --commits` costs one `git log` per entry, so it is worth asking for only when the answer is wanted; `--all` walks the whole tree and takes `--limit`. `file view --raw` writes the bytes with no metadata and no base64, which is what a binary wants.
 
 Which repository a command is about is resolved in this order: the positional argument or `--repo <collection>/<repo>`, then `COFFERDAM_REPO`, then the git remote in the current directory that points at the vault you are logged in to, preferring `origin`. A remote for some other host is not an answer, so a clone of a GitHub repository is never read as naming something here. Failing all three, the command says so and names all three.
 
@@ -106,8 +112,10 @@ cofferdam repo rename demo/proj newname --collection othercollection
 cofferdam repo delete demo/old --yes
 cofferdam repo clone demo/proj
 
-cofferdam branch create topic
+cofferdam branch create topic              # from the default branch, or from a named one
+cofferdam branch create topic main
 cofferdam branch delete topic --yes
+cofferdam tag list
 cofferdam tag create v1.0.0 main
 cofferdam tag delete v1.0.0 --yes
 
@@ -133,6 +141,13 @@ cofferdam api repos/demo/proj/commits -X POST --input change.json
 
 A commit made this way is a push as far as workflows are concerned, so it triggers the same runs a `git push` would.
 
+`--branch` commits on an existing branch and `--new-branch` creates one and commits there, which is the first half of the branch-then-pull-request path in a single call:
+
+```bash
+cofferdam file write notes.md --new-branch topic --message 'Add notes' --body-file notes.md
+cofferdam pr create --base main --head topic --title 'Add notes'
+```
+
 ### Issues and pull requests
 
 ```bash
@@ -142,13 +157,17 @@ cofferdam issue create --title 'It broke' --body-file report.md --label bug
 cofferdam issue edit 12 --add-label urgent
 cofferdam issue comment 12 --body-file -        # from stdin
 cofferdam issue close 12
+cofferdam issue reopen 12
 
 cofferdam pr list
+cofferdam pr view 4 --comments
 cofferdam pr create --base main --head topic --title 'Add a thing'
 cofferdam pr diff 4
+cofferdam pr comment 4 --body 'Looks right to me'
 cofferdam pr merge 4 --squash --delete-branch
 cofferdam pr checks 4
 cofferdam pr close 4
+cofferdam pr reopen 4
 ```
 
 `--body-file` exists alongside `--body` on every command that takes a body, and `-` reads stdin: an issue body is frequently longer than a shell argument should be. Asking for both is an error rather than a precedence question.
@@ -169,7 +188,7 @@ And a merge that does not apply exits 5 and names the conflicting paths, so a ca
 cofferdam workflow list                        # workflows at a ref, and the inputs each takes
 cofferdam workflow run .github/workflows/build.yml --field greeting=hello
 cofferdam run list --status completed
-cofferdam run view 12                          # the run, its jobs, and their step states
+cofferdam run view 12                          # the run and its jobs
 cofferdam run view 12 --log                    # and the failed job's log
 cofferdam run watch 12 --exit-status
 cofferdam run cancel 12
@@ -179,7 +198,7 @@ cofferdam run download 12 --dir artifacts
 
 A job log comes back as its last 200 lines by default. That is not a convenience: a log can be large, and handing the whole of one to a caller that is diagnosing a failure wastes its attention on the part that succeeded. `--tail 0` asks for all of it, and the response says whether it kept only the end and whether the server capped the log as it was written, which are different things.
 
-`run view --log` without `--job` picks the failed job, or the only job. When neither applies it asks rather than guessing.
+`run view --log` without `--job` picks the failed job, or the only job. When neither applies it asks rather than guessing. The table it prints is job-level; the step states come back under `--json`, which is where a caller asking "which step failed" should look. `run watch --log` prints the log when the run finishes, and `workflow run --ref` dispatches against a ref other than the default branch.
 
 `cofferdam run watch` polls until the run finishes and then reports how it went; `--exit-status` makes a failed run a non-zero exit, which is what a script wants. It polls rather than streams because the engine has no event channel and the vault reads its state off disk per request, so a five-second poll against a local process costs nothing and needs no protocol. Note that a vault with no runner registered queues its runs and waits, so a watch there will reach its timeout.
 
@@ -187,6 +206,7 @@ A job log comes back as its last 200 lines by default. That is not a convenience
 
 ```bash
 cofferdam release list
+cofferdam release view v1.0.0
 cofferdam release create v1.0.0 --title 'First cut' --notes-file NOTES.md
 cofferdam release edit v1.0.0 --latest          # clear the prerelease flag
 cofferdam release delete v1.0.0 --yes
@@ -199,6 +219,7 @@ cofferdam collection delete emptyone --yes
 
 cofferdam config view
 cofferdam config set --theme slate --ci-runs 50
+cofferdam config set --ci-days 30 --ci-artifact-mb 100
 cofferdam config set --sites-host vault-sites.example.org
 ```
 
@@ -223,6 +244,8 @@ cofferdam api collections/mycollection
 ```
 
 The path may be written with or without a leading slash and with or without the `api/` prefix, so `whoami` and `/api/whoami` name the same route. `--field k=v` builds a JSON body, coercing `true`, `false`, `null`, and whole numbers; `--raw-field k=v` keeps the value a string; `--input <file>` sends a file as the body, or stdin for `-`. The method defaults to GET, or POST when a body is given, and `-X` overrides it. The response body is printed verbatim on stdout; a non-2xx status prints it on stderr instead and exits with the code from the table above.
+
+`--include` (`-i`) prints the status and content type as well. Note that it prints them on **stderr**, not stdout, so that `cofferdam api ... -i | jq` still sees only the body; redirect stderr if you want them together.
 
 Only the path is taken from the argument. A full URL is accepted, but its host is ignored in favour of the one you are logged in to, so a token is never sent somewhere you did not configure.
 
@@ -283,7 +306,7 @@ Importing runs on your machine, not on the server, and `cofferdam import` is wha
 cofferdam import https://github.com/owner/repo mycollection
 ```
 
-That clones the source into a temporary directory, pushes it at the vault, which creates the repository, and removes the clone again. The source may be an https or ssh git URL, `owner/repo` as shorthand for GitHub, or a directory on this machine, which is the case for a repository that exists only as a local clone. The name comes from the source's last segment; write `mycollection/another-name` to choose another. The collection need not exist: the push creates it, as any push to a new path does.
+That clones the source into a temporary directory, pushes it at the vault, which creates the repository, and removes the clone again. The source may be an https or ssh git URL, `owner/repo` as shorthand for GitHub, or a directory on this machine, which is the case for a repository that exists only as a local clone. The name comes from the source's last segment; write `mycollection/another-name` to choose another, or give `--collection` and `--name` separately, which is easier to build in a script than a joined path. The collection need not exist: the push creates it, as any push to a new path does.
 
 The source is read with whatever git credentials this machine already has, so a private source works if your own `git clone` of it works, and the push is authorized by the token `cofferdam login` stored. Branches and tags come across. Issues and pull requests do not. A name already taken stops the import before the clone, since a mirror push would replace that repository's branches and tags.
 

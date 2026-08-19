@@ -55,6 +55,9 @@ A vault is a plain directory. Each subdirectory of it is a collection, and each 
 ```
 <vault>/
   vault.json              (users and hashed tokens; created on first start)
+  config.json             (vault settings: theme, sites host, CI retention, limits)
+  .secret                 (session-cookie signing key; created on first need)
+  runners.json            (registered workflow runners; created when you add one)
   alice/
     webapp.git/           (bare repository)
     webapp.site/          (its static site)
