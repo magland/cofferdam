@@ -227,6 +227,8 @@ Those two properties conflict with the markup we generate ourselves, since highl
 
 Mermaid diagrams are the one notable GitHub feature deliberately left out: they would need a multi-megabyte client-side bundle, which the "server renders HTML" principle rules out for now. ```` ```mermaid ```` blocks render as code, which is a reasonable fallback.
 
+Rendered documents also carry GitHub's cross-references: `#12` becomes a link to that issue and a hex string of seven or more characters becomes a link to that commit. This happens in a core rule over the inline token stream rather than an inline rule, because by the time inline rules run markdown-it's text rule has already swallowed those characters — the same reason its own linkify works that way. Text inside a link is left alone so a reference cannot nest a second link, code spans and fences are untouched because those tokens are not text, a commit id must contain at least one letter so a plain number is not mistaken for one, and both halves are off unless the caller passes the base URLs, which keeps the rule out of contexts where a repository is not in view.
+
 ### 3.10 Importing an existing repository
 
 Importing is a client-side operation. `git clone --bare` the source, then `git push --mirror` at a vault URL that does not exist yet; push-to-create makes the repository through `ops.createRepo`, so it arrives with the same `receive.*` protections as any other, HEAD pointed at the right branch, and branches and tags in place. `GET /import` writes that command with the collection, the target name, the vault's own host, and the signed-in username filled in, and performs nothing itself.
@@ -346,7 +348,7 @@ The verification style is `scripts/smoke.sh` plus manual curl and git against th
 
 1. Web identity beyond tokens: per-user passwords, or OIDC per vault, or nothing more?
 2. Real names and emails for commit authorship (a `displayName`/`email` field on user records?), versus the current `username@noreply.<host>` placeholder.
-3. Issue and PR storage format (sibling directory versus in-repo refs), and whether issues get IDs that survive repo renames.
+3. Pull request storage. Issues answered half of this question in 3.13, and answered it for releases too: a sibling directory, not an in-repo ref. What is left is whether a pull request is an issue carrying a base and a head, or a record of its own kind, and whether it shares `<repo>.issues/` or gets a directory beside it. Whether an issue's number survives a repository rename or transfer is still open, and belongs with 6.
 4. Session revocation granularity: is rotate-the-secret acceptable, or do sessions need server-side state eventually?
 5. Multi-tenant hosting (a vault per account on shared infrastructure) as a product, versus staying purely self-hosted.
 6. Repository renames and transfers, which interact with issue IDs, site directories, and clone URLs.

@@ -33,7 +33,17 @@ export interface MarkdownOpts {
   rawBase: string;
   /** Base URL for relative links (the blob endpoint). */
   blobBase: string;
+  /** Where `#12` points. Cross-referencing issues is off without it. */
+  issueBase?: string;
+  /** Where a commit id points. Cross-referencing commits is off without it. */
+  commitBase?: string;
 }
+
+// GitHub's cross-references: `#12` is that issue, and a hex string of seven
+// or more characters is that commit. The pattern refuses a run that is part
+// of a longer word, and a commit id must contain at least one letter, so that
+// a plain number written in passing is not mistaken for one.
+const CROSS_REF = /(?<![\w#/-])(?:#(\d{1,9})|([0-9a-f]{7,40}))(?![\w-])/g;
 
 export function isMarkdownFile(filename: string): boolean {
   const base = filename.split('/').pop() ?? filename;
@@ -174,6 +184,64 @@ export function renderMarkdown(text: string, opts: MarkdownOpts): string {
   const md = new MarkdownIt({ html: true, linkify: true });
   md.use(footnotePlugin);
   md.use(emojiPlugin);
+
+  // Cross-references are resolved over the inline token stream in a core
+  // rule, not in an inline rule: by the time inline rules run, markdown-it's
+  // text rule has already swallowed these characters, which is the same
+  // reason its own linkify works this way. Text inside a link is left alone,
+  // so a reference written inside one does not try to nest a second.
+  if (opts.issueBase || opts.commitBase) {
+    md.core.ruler.push('hubbit_refs', (state) => {
+      for (const block of state.tokens) {
+        if (block.type !== 'inline' || !block.children) continue;
+        const out: typeof block.children = [];
+        let inLink = 0;
+        let changed = false;
+        for (const token of block.children) {
+          if (token.type === 'link_open') inLink++;
+          else if (token.type === 'link_close') inLink--;
+          if (token.type !== 'text' || inLink > 0) {
+            out.push(token);
+            continue;
+          }
+          let last = 0;
+          CROSS_REF.lastIndex = 0;
+          for (let m = CROSS_REF.exec(token.content); m; m = CROSS_REF.exec(token.content)) {
+            const [whole, issue, sha] = m;
+            const href = issue
+              ? opts.issueBase && `${opts.issueBase}/${issue}`
+              : sha && /[a-f]/.test(sha) && opts.commitBase
+                ? `${opts.commitBase}/${sha}`
+                : undefined;
+            if (!href) continue;
+            if (m.index > last) {
+              const before = new state.Token('text', '', 0);
+              before.content = token.content.slice(last, m.index);
+              out.push(before);
+            }
+            const open = new state.Token('link_open', 'a', 1);
+            open.attrSet('href', href);
+            const label = new state.Token('text', '', 0);
+            // A full commit id is shown abbreviated, the way it is written
+            // everywhere else in the interface.
+            label.content = sha && sha.length > 7 ? sha.slice(0, 7) : whole;
+            const close = new state.Token('link_close', 'a', -1);
+            out.push(open, label, close);
+            last = m.index + whole.length;
+            changed = true;
+          }
+          if (last === 0) {
+            out.push(token);
+          } else if (last < token.content.length) {
+            const rest = new state.Token('text', '', 0);
+            rest.content = token.content.slice(last);
+            out.push(rest);
+          }
+        }
+        if (changed) block.children = out;
+      }
+    });
+  }
 
   const codeBlock = (code: string, lang: string | null): string => {
     const cls = lang ? ` class="language-${esc(lang)}"` : '';

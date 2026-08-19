@@ -13,6 +13,7 @@ Hosting git repositories usually means running a service with a database (GitHub
     webapp.git/
     webapp.site/          (static site for webapp)
     webapp.issues/        (its issues, one directory each)
+    webapp.releases/      (its release notes, one file per tag)
     webapp.lfs/           (its Git LFS objects, when no bucket is configured)
   bob/
     notes.git/
@@ -35,6 +36,7 @@ The `.git` suffix on repository directory names is optional; it is stripped for 
 - Atom feeds for a repository's releases and for any history (`/commits/<ref>.atom`, narrowed by path like the page it follows)
 - Comparing two revisions: what one branch has that another does not, and the diff between them, from the Compare button on any branch or tag
 - Issues: open, comment, label, close, and reopen, stored as markdown files in the vault
+- Cross-references in any rendered markdown: `#12` links to that issue and a commit id links to that commit, as on GitHub
 - Source downloads: `.tar.gz` or `.zip` of any branch, tag, or commit, from the Code button or straight from `/<collection>/<repo>/archive/<ref>.zip`
 - A language breakdown in the About panel: the share of the source each language holds, drawn as GitHub's bar in Linguist's colours
 - Sign-in with username and token; operations happen directly in the web interface:

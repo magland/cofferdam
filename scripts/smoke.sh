@@ -388,6 +388,14 @@ check "reopen an issue" 302 -b "$JAR" "$BASE/demo/proj/issues/1/state" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "state=open"
 check "issue is open again" 200 "$BASE/demo/proj/issues/1"
 body_has "open badge" 'state-badge open'
+check "cross-reference in an issue" 302 -b "$JAR" "$BASE/demo/proj/issues/new" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "title=Follows on from the first" \
+  --data-urlencode "body=Same as #1, and introduced by 0123abcdef0123abcdef0123abcdef0123abcdef. Not this: 1234567."
+check "cross-referenced issue page" 200 "$BASE/demo/proj/issues/2"
+body_has "issue reference became a link" 'href="/demo/proj/issues/1"'
+body_has "commit id became a link" 'href="/demo/proj/commit/0123abcdef0123abcdef0123abcdef0123abcdef"'
+body_has "commit id shown abbreviated" '>0123abc<'
+body_lacks "a plain number is not a commit" 'commit/1234567'
 check "unknown issue 404s" 404 "$BASE/demo/proj/issues/99"
 check "non-numeric issue 404s" 404 "$BASE/demo/proj/issues/nope"
 ISSUE_FILE="$VAULT/demo/proj.issues/1/issue.md"

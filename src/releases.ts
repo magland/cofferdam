@@ -468,6 +468,8 @@ ${releaseCard(ctx, release, ref, latest, notesHtml(ctx, release))}`;
     return renderMarkdown(release.body, {
       rawBase: `${base}/raw/${encPath(release.tag)}`,
       blobBase: `${base}/blob/${encPath(release.tag)}`,
+      issueBase: `${base}/issues`,
+      commitBase: `${base}/commit`,
     });
   }
 }

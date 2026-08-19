@@ -36,7 +36,12 @@ function issuesUrl(ctx: RepoCtx): string {
 function body(ctx: RepoCtx, text: string): string {
   const base = repoUrl(ctx);
   const ref = encPath(ctx.defaultBranch || ctx.ref || 'HEAD');
-  return renderMarkdown(text, { rawBase: `${base}/raw/${ref}`, blobBase: `${base}/blob/${ref}` });
+  return renderMarkdown(text, {
+    rawBase: `${base}/raw/${ref}`,
+    blobBase: `${base}/blob/${ref}`,
+    issueBase: `${base}/issues`,
+    commitBase: `${base}/commit`,
+  });
 }
 
 function stateBadge(state: 'open' | 'closed'): string {

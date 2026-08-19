@@ -112,6 +112,8 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
           readmeHtml = renderMarkdown(text, {
             rawBase: `${base}/raw/${encPath(ref)}${dirSuffix}`,
             blobBase: `${base}/blob/${encPath(ref)}${dirSuffix}`,
+            issueBase: `${base}/issues`,
+            commitBase: `${base}/commit`,
           });
         } else {
           readmeHtml = `<pre>${esc(text)}</pre>`;
@@ -250,6 +252,8 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
         const html = renderMarkdown(text, {
           rawBase: `${repoUrl(ctx)}/raw/${encPath(ref)}${dir}`,
           blobBase: `${repoUrl(ctx)}/blob/${encPath(ref)}${dir}`,
+          issueBase: `${repoUrl(ctx)}/issues`,
+          commitBase: `${repoUrl(ctx)}/commit`,
         });
         res
           .type('html')
