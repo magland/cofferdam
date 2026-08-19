@@ -23,21 +23,69 @@
 // monoline is why every rule on the page is one of two weights and no more.
 
 export const CSS = `
+/* The scale. Colour, radius, and the faces belong to the theme; spacing,
+   type, and measure belong to the sheet, so they live here as their own set
+   of properties and every rule below draws from them rather than from a fresh
+   round number. Six steps of space and six of type is enough for the whole
+   interface, and holding to them is what gives a page its rhythm. */
+:root {
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+  --t-xs: 12px;
+  --t-sm: 13px;
+  --t-base: 15px;
+  --t-lg: 17px;
+  --t-xl: 20px;
+  --t-2xl: 26px;
+  /* The column the interface is read in. */
+  --page: 1120px;
+  /* The narrower column prose is read in. A line much past a hundred
+     characters loses the eye on its way back to the left margin, so a README
+     or an issue is capped even where the page has room to spare. Code, tables,
+     and images inside it still take the width they need. */
+  --measure: 820px;
+  /* The least height of anything that has to be hit. A 28px button is a fine
+     target for a pointer and a poor one for a thumb, so the number is raised
+     rather than the layout redrawn when the pointer is coarse. */
+  --touch: 30px;
+}
+@media (pointer: coarse) {
+  :root { --touch: 42px; }
+}
 * { box-sizing: border-box; }
+/* The bar at the top stays put, so an anchored line or heading has to be
+   pushed clear of it when the page jumps to one. */
+html { scroll-padding-top: 68px; }
 body {
   margin: 0;
   font-family: var(--font-ui);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: var(--t-base);
+  line-height: 1.55;
   color: var(--fg);
   background: var(--bg);
+  -webkit-text-size-adjust: 100%;
 }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 code, pre, .mono { font-family: var(--font-mono); }
-.container { max-width: 1216px; margin: 0 auto; padding: 0 16px; }
-.topbar { background: var(--surface); border-bottom: 1px solid var(--border); }
-.topbar .container { display: flex; align-items: center; gap: 12px; height: 52px; }
+/* One focus ring for everything a keyboard can reach. It is drawn only for
+   focus that came from the keyboard, so a clicked button does not light up,
+   and it sits outside the element's own border so a bordered control does not
+   have to give up its edge to show it. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.container { max-width: var(--page); margin: 0 auto; padding: 0 var(--s4); }
+/* The bar carries the way out of wherever the reader is, so it stays in view
+   rather than scrolling off the top of a long file or a long thread. */
+.topbar {
+  position: sticky; top: 0; z-index: 30;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.topbar .container { display: flex; align-items: center; gap: var(--s3); height: 52px; }
 /* The brand is the logotype from logo.ts, which inherits the text colour. Its
    395 x 60 box runs ascender to baseline with nothing below, and the x-height
    fills the lower two thirds, so 16px here puts the x-height at 10.7px and the
@@ -45,7 +93,17 @@ code, pre, .mono { font-family: var(--font-mono); }
 .brand { display: flex; align-items: center; color: var(--fg); flex: none; }
 .brand svg { display: block; height: 16px; width: auto; }
 .brand:hover { text-decoration: none; }
-.topbar .crumbs { color: var(--fg-muted); }
+/* The address in the bar gives way before anything else does: it shortens to
+   an ellipsis rather than pushing the account menu off the side of a phone. */
+.topbar .crumbs {
+  color: var(--fg-subtle); font-size: var(--t-sm); flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Quiet, because the page under it says the same thing in its own title. The
+   bar's copy is there for after the title has scrolled away, and a locator
+   that competed with the title would be read twice for no gain. */
+.topbar .crumbs a { color: var(--fg-muted); }
+.topbar .crumbs a:hover { color: var(--accent); }
 .userbox { margin-left: auto; display: flex; align-items: center; gap: 12px; }
 .user-menu > summary { display: flex; align-items: center; gap: 2px; }
 .user-menu .dropdown-menu { width: 220px; }
@@ -79,12 +137,16 @@ code, pre, .mono { font-family: var(--font-mono); }
 }
 .btn-link { border: none; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
 .btn-link:hover { text-decoration: underline; }
-main { padding: 24px 16px 64px; }
-h1 { font-family: var(--font-head); font-size: 22px; margin: 0 0 16px; }
-h2 { font-family: var(--font-head); font-size: 18px; }
+main { padding: var(--s5) var(--s4) var(--s7); }
+/* Titles are set larger than the body by a clear step rather than a nudge, so
+   the top of a page announces itself and the reader knows where they are
+   before reading a word of the content. */
+h1 { font-family: var(--font-head); font-size: var(--t-2xl); line-height: 1.25; letter-spacing: -0.01em; margin: 0 0 var(--s4); }
+h2 { font-family: var(--font-head); font-size: var(--t-xl); line-height: 1.3; }
+h3 { font-family: var(--font-head); font-size: var(--t-lg); line-height: 1.35; }
 .muted { color: var(--fg-muted); }
-.small { font-size: 12px; }
-.page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.small { font-size: var(--t-xs); }
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); margin-bottom: var(--s4); flex-wrap: wrap; }
 .page-head h1, .page-head h2 { margin: 0; }
 
 /* Icons are inline SVG (see icons.ts). text-bottom is what sits a 16px glyph
@@ -92,17 +154,29 @@ h2 { font-family: var(--font-head); font-size: 18px; }
    squeezed when it sits in a flex row. */
 .glyph { display: inline-block; vertical-align: text-bottom; flex: none; overflow: visible; }
 
-.repo-title { display: flex; align-items: center; gap: 8px; font-size: 18px; margin-bottom: 8px; }
+/* On a repository's pages there is no h1: the address is the title, so it is
+   set at the size a title is set at, and the repository's own name carries the
+   weight while the collection before it stays plain. */
+.repo-title { display: flex; align-items: center; gap: var(--s2); font-size: var(--t-xl); margin-bottom: var(--s2); }
 .repo-title .icon { color: var(--fg-muted); margin-right: 0; }
+.repo-title b { font-weight: 600; }
 /* The repository's sections. The active one is marked by the square from the
    mark in logo.ts, set under the middle of the label and clear of the rule,
    rather than by a bar drawn under the tab's whole width. The marker is
    inside the tab's padding box because .tabs scrolls sideways on a narrow
    screen, and anything hanging below it would be clipped. */
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; overflow-x: auto; }
+.tabs {
+  display: flex; gap: var(--s1); border-bottom: 1px solid var(--border);
+  margin-bottom: var(--s4); overflow-x: auto;
+  /* The row scrolls on a narrow screen. A scrollbar under it would read as a
+     second rule beside the one the tabs already hang from, so it is taken
+     away and the tab cut off at the edge is what says there is more. */
+  scrollbar-width: none; -webkit-overflow-scrolling: touch;
+}
+.tabs::-webkit-scrollbar { display: none; }
 .tab {
-  position: relative; display: flex; align-items: center; gap: 8px; white-space: nowrap;
-  padding: 8px 12px 14px; color: var(--fg);
+  position: relative; display: flex; align-items: center; gap: var(--s2); white-space: nowrap;
+  padding: var(--s2) var(--s3) 14px; color: var(--fg);
 }
 .tab .glyph { color: var(--fg-muted); }
 .tab:hover { color: var(--accent); text-decoration: none; }
@@ -124,13 +198,16 @@ h2 { font-family: var(--font-head); font-size: 18px; }
 .ref-form { padding: 16px; width: 300px; }
 .ref-form .field:last-of-type { margin-bottom: 16px; }
 
-.toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); margin-bottom: var(--s3); flex-wrap: wrap; }
 /* flex:1 is load-bearing: a wrapping flex container's max-content width is its
    widest item rather than the sum, so without it .left collapses to the ref
    selector and drops the breadcrumb onto a second line. */
-.toolbar .left { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; flex: 1 1 auto; min-width: 0; }
-.right-group { display: flex; align-items: center; gap: 6px; }
-.crumb { font-size: 15px; }
+.toolbar .left { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; flex: 1 1 auto; min-width: 0; }
+/* A row of buttons wraps rather than running off the side of the page. Without
+   this the four controls on a tree page (Go to file, History, Fork, Code) are
+   wider than a phone, and the last of them is simply unreachable. */
+.right-group { display: flex; align-items: center; gap: var(--s2) 6px; flex-wrap: wrap; min-width: 0; }
+.crumb { font-size: var(--t-base); }
 .crumb b { font-weight: 600; }
 
 /* Menus: a <details> whose summary is a button and whose body is a popover.
@@ -172,7 +249,8 @@ button.dd-item { width: 100%; background: none; font: inherit; font-size: 13px; 
   border-radius: var(--radius); background: var(--input-bg); color: var(--fg); font-family: var(--font-mono);
 }
 .btn {
-  display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: 13px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: var(--touch); padding: 4px var(--s3); font-size: var(--t-sm);
   border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
   color: var(--fg); cursor: pointer; font-family: inherit; line-height: 1.5; white-space: nowrap;
 }
@@ -189,9 +267,17 @@ button.dd-item { width: 100%; background: none; font: inherit; font-size: 13px; 
 .repo-layout { display: flex; align-items: flex-start; gap: 24px; }
 .repo-main { flex: 1 1 auto; min-width: 0; }
 .repo-side { flex: 0 0 296px; }
-.side-block { padding-bottom: 16px; margin-bottom: 16px; border-bottom: 1px solid var(--border-soft); }
-.side-block:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
-.side-block h3 { display: flex; align-items: center; gap: 8px; font-family: var(--font-head); font-size: 15px; margin: 0 0 8px; }
+/* The panel beside the listing is divided the way the rest of the page is:
+   each block hangs from its own rule under an uppercase caption, so About,
+   Contributors, and Languages read as three sections of one column rather than
+   as three stacked cards. The first block's rule lines up with the listing's. */
+.side-block { border-top: 2px solid var(--border); padding: var(--s3) 0 var(--s4); }
+.side-block:last-child { padding-bottom: 0; }
+.side-block h3 {
+  display: flex; align-items: center; gap: var(--s2); margin: 0 0 var(--s2);
+  font-family: var(--font-head); font-size: var(--t-sm); font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase;
+}
 .side-edit { margin-left: auto; color: var(--fg-muted); display: flex; }
 .side-edit:hover { color: var(--accent); }
 .side-desc { margin: 0 0 12px; }
@@ -199,8 +285,12 @@ button.dd-item { width: 100%; background: none; font: inherit; font-size: 13px; 
 .side-links a { display: flex; align-items: center; gap: 8px; color: var(--fg); font-size: 13px; }
 .side-links a:hover { color: var(--accent); text-decoration: none; }
 .side-links .glyph { color: var(--fg-muted); }
+/* When a two-column layout stacks, align-items has to be released along with
+   the direction: flex-start on a column means "as wide as your content", which
+   leaves the listing and the readme narrower than the panel that was beside
+   them a moment ago. Every stacking layout below does the same. */
 @media (max-width: 1000px) {
-  .repo-layout { flex-direction: column; }
+  .repo-layout { flex-direction: column; align-items: stretch; }
   .repo-side { flex: 1 1 auto; width: 100%; }
 }
 
@@ -257,14 +347,20 @@ table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
    it, running the full width of the column rather than sitting inside a
    frame. The caption is in the display face so that it reads as a title and
    not as a row of the content. */
-.box { border-top: 2px solid var(--border); margin-top: 24px; }
+.box { border-top: 2px solid var(--border); margin-top: var(--s5); }
+/* The caption on a section's rule carries the page's colour and weight rather
+   than the muted grey of secondary text: it is the answer to "what is this",
+   and a page whose every caption recedes reads as one undivided field. It is
+   not set in capitals, because some of these captions are a filename and one
+   of them is a whole sentence; the weight is what does the work. */
 .box-header {
-  display: flex; align-items: center; gap: 8px; padding: 9px 12px 8px;
+  display: flex; align-items: center; gap: var(--s2); padding: 9px var(--s3) 8px;
   border-bottom: 1px solid var(--border-soft);
-  font-family: var(--font-head); font-size: 14px; letter-spacing: 0.02em; color: var(--fg-muted);
+  font-family: var(--font-head); font-size: var(--t-sm); font-weight: 600;
+  letter-spacing: 0.01em; color: var(--fg);
 }
 .box-header .glyph { color: var(--fg-subtle); }
-.box-body { padding: 16px 12px 4px; }
+.box-body { padding: var(--s4) var(--s3) var(--s1); }
 .box-header a { color: var(--fg); }
 .box-header a:hover { color: var(--accent); text-decoration: none; }
 
@@ -305,9 +401,10 @@ table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
 .commit-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 8px 12px; }
 /* A day's commits hang under the day, which is a caption on its own rule. */
 .commit-day {
-  display: flex; align-items: center; gap: 8px; margin: 24px 0 0; padding: 9px 12px 8px;
+  display: flex; align-items: center; gap: var(--s2); margin: var(--s5) 0 0; padding: 9px var(--s3) 8px;
   border-top: 2px solid var(--border); border-bottom: 1px solid var(--border-soft);
-  font-family: var(--font-head); font-size: 14px; letter-spacing: 0.02em; color: var(--fg-muted);
+  font-family: var(--font-head); font-size: var(--t-sm); font-weight: 600;
+  letter-spacing: 0.01em; color: var(--fg);
 }
 .commit-day .glyph { color: var(--fg-subtle); }
 .commit-group .commit-row { border-top: 1px solid var(--border-soft); }
@@ -339,7 +436,11 @@ table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
 .dline.hunk { background: var(--diff-hunk); color: var(--fg-muted); }
 .dline.meta { color: var(--fg-subtle); background: var(--diff-meta); }
 
-.markdown-body { font-size: 15px; }
+/* Prose is capped at the reading measure even where the page has more room,
+   because a line of text is easier to follow than to find your way back along.
+   Code, tables, images, and display math are exempt by their own rules below:
+   they take the width they need and scroll if they cannot get it. */
+.markdown-body { font-size: var(--t-base); max-width: var(--measure); }
 .markdown-body > *:first-child { margin-top: 0; }
 .markdown-body > *:last-child { margin-bottom: 0; }
 .markdown-body h1, .markdown-body h2, .markdown-body h3 { font-family: var(--font-head); }
@@ -427,7 +528,15 @@ table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
 }
 .setup-head { font-family: var(--font-head); font-size: 15px; margin: 24px 0 8px; }
 
-.empty-state { border: 1px dashed var(--border); border-radius: var(--radius); padding: 48px; text-align: center; color: var(--fg-muted); }
+/* Nothing here yet. A frame on all four sides is this sheet's mark of
+   something the reader can operate, and an empty listing is the one thing on
+   the page they cannot, so it is drawn with space and a quieter colour instead
+   of with a box around it. */
+.empty-state { border-top: 2px solid var(--border); padding: var(--s7) var(--s4); text-align: center; color: var(--fg-muted); }
+.empty-state b { color: var(--fg); }
+/* When the empty notice is what a filtered-away listing leaves behind, the
+   listing gives up its rule so the two do not show as a doubled line. */
+table.listing:has(+ .empty-state:not([hidden])) { border-top: none; }
 .error-page { text-align: center; padding: 64px 0; color: var(--fg-muted); }
 .error-page .code { font-family: var(--font-head); font-size: 48px; font-weight: 700; color: var(--fg); }
 
@@ -491,8 +600,14 @@ textarea {
 /* News, of either kind: the tint, and a rule down the side it is read from. */
 .flash { background: var(--ok-bg); border-left: 3px solid var(--ok-border); padding: 8px 12px; margin-bottom: 16px; max-width: 620px; }
 .form-error { background: var(--err-bg); border-left: 3px solid var(--err-border); padding: 8px 12px; margin-bottom: 16px; max-width: 620px; }
-.danger-zone { border-left: 3px solid var(--danger); padding: 4px 0 4px 16px; margin-top: 24px; max-width: 620px; }
+/* A section flagged by the colour of the news it carries, as the flashes and
+   the merge box are. Two grades, because they are not the same warning: amber
+   for what disrupts other people and can be put back, red for what is gone.
+   A page where both wore red would teach the reader to read past red. */
+.danger-zone { border-left: 3px solid var(--danger); padding: 4px 0 4px var(--s4); margin-top: var(--s5); max-width: 620px; }
 .danger-zone h3 { margin-top: 0; color: var(--danger); }
+.danger-zone.caution { border-left-color: var(--alert-warning); }
+.danger-zone.caution h3 { color: var(--alert-warning); }
 
 /* Administration: the sections down the left, the page beside them. */
 .admin-layout { display: flex; align-items: flex-start; gap: 32px; }
@@ -502,7 +617,7 @@ textarea {
 .admin-side .side-links a:hover { background: var(--surface); }
 .admin-side .side-links a.current { background: var(--surface); font-weight: 600; }
 @media (max-width: 800px) {
-  .admin-layout { flex-direction: column; gap: 16px; }
+  .admin-layout { flex-direction: column; align-items: stretch; gap: var(--s4); }
   .admin-side { flex: 1 1 auto; width: 100%; }
 }
 .with-avatar-row { display: flex; align-items: flex-start; gap: 8px; }
@@ -549,7 +664,7 @@ textarea {
 .wf-side .side-links a.current { background: var(--surface); font-weight: 600; }
 .wf-side .side-links a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 900px) {
-  .actions-layout { flex-direction: column; }
+  .actions-layout { flex-direction: column; align-items: stretch; }
   .wf-side { flex: 1 1 auto; width: 100%; }
 }
 .run-sub { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
@@ -579,7 +694,7 @@ textarea {
 .step .joblog { border-top: 1px solid var(--border); }
 .joblog.live { border-top: 2px solid var(--border); max-height: 70vh; overflow-y: auto; }
 @media (max-width: 700px) {
-  .run-body { flex-direction: column; }
+  .run-body { flex-direction: column; align-items: stretch; }
   .job-list { flex: 1 1 auto; width: 100%; }
 }
 
@@ -788,7 +903,7 @@ table.listing.issues td.issue-cell > span { min-width: 0; }
 .release-download:hover { background: var(--surface); text-decoration: none; }
 .release-download .glyph { color: var(--fg-muted); }
 @media (max-width: 860px) {
-  .release { flex-direction: column; gap: 8px; }
+  .release { flex-direction: column; align-items: stretch; gap: var(--s2); }
   .release-side { flex: 1 1 auto; flex-direction: row; align-items: center; }
 }
 
@@ -841,4 +956,95 @@ a.chip.label:hover { text-decoration: none; filter: brightness(1.1); }
   .issue-search .search-input { width: 100%; }
   .issue-filters { flex-direction: column; align-items: stretch; }
 }
+
+/* --- a roster: a short list of names, each with one fact beside it ---
+
+   The collections on the front page and the repositories in a collection are
+   lists of a handful of names, and a name set against the far edge of a wide
+   page with a thousand pixels of nothing between it and its date is a name the
+   eye has to hunt for. So a roster is capped at a width it can be read across
+   in one movement, and the fact beside each name is pulled in to hug it. Every
+   other listing on the site, where the middle column carries a commit message
+   worth the room, keeps the full width of the page. */
+table.listing.roster { max-width: 720px; }
+table.listing.roster td { vertical-align: top; }
+table.listing.roster td.right { width: 1%; white-space: nowrap; }
+
+/* --- what a finger has to hit ---
+
+   Under a coarse pointer every control grows to --touch, which is the one
+   number that changes. Nothing is re-laid-out and nothing moves: the rows and
+   buttons that were comfortable for a mouse simply become large enough to be
+   hit by a thumb. */
+@media (pointer: coarse) {
+  .btn, .copy-btn, .seg a, .state-tab, .filter-chip { min-height: var(--touch); }
+  .dd-item, .find-item, .job-item, .wf-side .side-links a, .admin-side .side-links a {
+    min-height: var(--touch);
+  }
+  table.listing td { padding-top: 10px; padding-bottom: 10px; }
+  .side-links a { min-height: 32px; }
+  .tab { padding-top: var(--s3); padding-bottom: 18px; }
+  .lnum { width: 44px; }
+}
+
+/* --- the narrow screen ---
+
+   The interface is one column from the start, so a phone needs the spacing
+   loosened and two or three things told to stop insisting on a width, rather
+   than a second layout of its own. */
+@media (max-width: 700px) {
+  main { padding: var(--s4) var(--s3) var(--s6); }
+  .container { padding: 0 var(--s3); }
+  /* The bar is on every screen of every page, so it gives back what it can. */
+  .topbar .container { height: 46px; gap: var(--s2); }
+  h1 { font-size: 22px; }
+  .repo-title { font-size: var(--t-lg); }
+  /* Tighter tabs so more of the row is reachable without scrolling it. */
+  .tab { padding-left: var(--s2); padding-right: var(--s2); gap: 6px; }
+  /* A button in a wrapped row of them is easier to aim at when the row shares
+     the width out evenly than when each is as wide as its own label. */
+  .toolbar .right-group .btn, .toolbar .right-group .dropdown { flex: 1 1 auto; }
+  .toolbar .right-group .dropdown > summary { width: 100%; }
+  .form-box { padding: var(--s4); }
+  /* A row of label-and-field pairs has to become a column here, or the pairs
+     wrap where they like and a label ends up above somebody else's field. */
+  .inline-form { flex-direction: column; align-items: stretch; }
+  .inline-form label { margin-top: var(--s1); }
+  .inline-form input[type="text"], .inline-form select { width: 100%; }
+  .inline-form label.checkbox, .inline-form label:has(input) { margin-top: 0; }
+  .empty-state { padding: var(--s6) var(--s3); }
+  /* A row that reads "the file, and what you can do with it" becomes two rows
+     rather than a squeeze, and the numbers down the left of a file give back
+     the width they do not need. */
+  .code-meta { flex-direction: column; align-items: stretch; gap: var(--s2); }
+  .code-meta .right-group .btn, .code-meta .right-group .seg { flex: 1 1 auto; }
+  .lnum { width: 40px; padding-left: var(--s1); }
+  .blame .lnum { width: 40px; }
+  .issue-title { font-size: var(--t-xl); }
+  .release-side { flex-wrap: wrap; }
+  /* The panel under the listing keeps its rules but loses the indent, since
+     there is no listing beside it to line up with. */
+  .repo-side .side-block:first-child { padding-top: var(--s3); }
+}
+@media (max-width: 480px) {
+  /* A wrapped row of buttons on a phone lands wherever the widths happen to
+     fall. Two even columns is a shape the reader can predict, and an odd last
+     button takes the whole row rather than sitting half-width beside nothing. */
+  .toolbar .right-group, .code-meta .right-group {
+    display: grid; grid-template-columns: 1fr 1fr; gap: var(--s2); width: 100%;
+  }
+  .toolbar .right-group > *, .code-meta .right-group > * { width: 100%; }
+  .toolbar .right-group > .dropdown > summary, .code-meta .right-group > .dropdown > summary { width: 100%; }
+  .toolbar .right-group > *:last-child:nth-child(odd),
+  .code-meta .right-group > *:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  /* At this width the date beside a name is worth less than the room it
+     takes, so the roster's two columns become two lines. */
+  table.listing.roster tr { display: block; }
+  table.listing.roster td { display: block; border-top: none; padding: 2px var(--s3); }
+  table.listing.roster tr:first-child td:first-child { padding-top: var(--s2); }
+  table.listing.roster td:first-child { padding-top: var(--s2); border-top: 1px solid var(--border-soft); }
+  table.listing.roster tr:first-child td:first-child { border-top: none; }
+  table.listing.roster td.right { width: auto; text-align: left; padding-bottom: var(--s2); }
+}
+.side-block hr.rule { margin: var(--s3) 0; }
 `;

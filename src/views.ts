@@ -227,7 +227,14 @@ function filterMenu(input) {
 }
 
 export function repoOpts(ctx: RepoCtx, path?: string): PageOpts {
-  return { viewer: ctx.viewer, path };
+  // Every repository page puts its address in the top bar as well as at the
+  // head of the page. The bar is what stays in view once the reader has
+  // scrolled into a long file or a long thread, so it is the one place that
+  // can always answer "where am I, and how do I get back up from here".
+  const crumbs = ` / <a href="/${encodeURIComponent(ctx.collection)}">${esc(
+    ctx.collection
+  )}</a> / <a href="${repoUrl(ctx)}">${esc(ctx.repo)}</a>`;
+  return { viewer: ctx.viewer, path, crumbs };
 }
 
 /**
@@ -415,7 +422,7 @@ export function homePage(
       ? `<div class="empty-state">No repositories yet.${
           viewer ? ' Create one with the buttons above, or push to a new path.' : ''
         }</div>`
-      : `${listFilter('collection-list', 'Find a collection', collections.length)}<table class="listing" id="collection-list"><tbody>${rows}</tbody></table>${noMatches(
+      : `${listFilter('collection-list', 'Find a collection', collections.length)}<table class="listing roster" id="collection-list"><tbody>${rows}</tbody></table>${noMatches(
           'collection-list'
         )}`;
   const newBtn = viewer
@@ -461,7 +468,7 @@ export function collectionPage(
       ? `<div class="empty-state">No repositories in this collection yet.${
           viewer ? ' Create one with the buttons above, or push to a new path.' : ''
         }</div>`
-      : `${listFilter('repo-list', 'Find a repository', repoList.length)}<table class="listing" id="repo-list"><tbody>${rows}</tbody></table>${noMatches(
+      : `${listFilter('repo-list', 'Find a repository', repoList.length)}<table class="listing roster" id="repo-list"><tbody>${rows}</tbody></table>${noMatches(
           'repo-list'
         )}`;
   const newBtn = viewer
@@ -606,13 +613,16 @@ function aboutPanel(ctx: RepoCtx, view: TreeView): string {
     }</span></a>`,
     `<a href="${base}/tags">${icon('tag')}<span>${count(ctx.tags.length)} tag${ctx.tags.length === 1 ? '' : 's'}</span></a>`,
   ];
+  // The documents a reader looks for and the counts they navigate by are both
+  // facts about the repository, so they sit in the one About block rather than
+  // under a second rule with no caption on it. A hairline keeps them apart.
   return `<aside class="repo-side">
 <div class="side-block">
   <h3>About${settings}</h3>
   ${description}
-  ${links.length ? `<div class="side-links">${links.join('')}</div>` : ''}
+  ${links.length ? `<div class="side-links">${links.join('')}</div><hr class="rule">` : ''}
+  <div class="side-links">${facts.join('')}</div>
 </div>
-<div class="side-block"><div class="side-links">${facts.join('')}</div></div>
 ${contributorsBlock(ctx, view.contributors)}
 ${languagesBlock(view.languages)}
 </aside>`;

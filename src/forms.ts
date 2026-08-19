@@ -360,10 +360,11 @@ ${defaultBranchField}
 </div></div>`
     : '';
   // Renaming and moving are one operation, since both are a directory rename.
-  // It sits in the danger zone because every URL to this repository, and every
-  // remote pointing at it, changes with it.
+  // It is flagged because every URL to this repository, and every remote
+  // pointing at it, changes with it; it takes the amber grade rather than the
+  // red one because what it breaks can be put back by renaming it again.
   const renameForm = ctx.canAdmin
-    ? `<div class="danger-zone">
+    ? `<div class="danger-zone caution">
 <h3>Rename or move</h3>
 <p>Everything moves with the repository: its site, its workflow runs, its issues, its releases, and its LFS objects. Clones pointing at the old address stop working until their remote is changed.</p>
 <form method="post" action="${base}/settings/rename" class="inline-form">
