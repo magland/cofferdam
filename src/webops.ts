@@ -140,6 +140,42 @@ export function registerWebOps(
     return viewer;
   }
 
+  /**
+   * Where a commit from the editor should land. Ticking "commit to a new
+   * branch" makes it here first: the branch is created at the same commit the
+   * form was loaded from, so the edit lands on a branch that starts level with
+   * the one being edited. Returns null when the name is unusable, having
+   * already answered the request.
+   */
+  async function commitBranch(
+    req: Request,
+    res: Response,
+    viewer: Viewer,
+    repoDir: string,
+    branch: string,
+    expected: string | null,
+    backUrl: string
+  ): Promise<string | null> {
+    if (field(req, 'newBranchWanted') !== '1') return branch;
+    const wanted = field(req, 'newBranch').trim();
+    if (wanted === '') {
+      fail(res, 400, 'Name the new branch, or untick the box to commit to this one.', viewer, backUrl);
+      return null;
+    }
+    if (expected === null) {
+      fail(res, 400, 'There is nothing to branch from yet; commit to this branch first.', viewer, backUrl);
+      return null;
+    }
+    try {
+      await ops.createBranch(repoDir, wanted, expected);
+    } catch (e) {
+      const message = e instanceof OpError ? e.message : 'Could not create that branch.';
+      fail(res, e instanceof OpError && e.kind === 'exists' ? 409 : 400, message, viewer, backUrl);
+      return null;
+    }
+    return wanted;
+  }
+
   function authorFor(viewer: Viewer, req: Request): ops.CommitAuthor {
     const host = (req.get('host') ?? 'localhost').replace(/:\d+$/, '');
     return { name: viewer.auth.username, email: `${viewer.auth.username}@noreply.${host}` };
@@ -439,23 +475,42 @@ export function registerWebOps(
         return;
       }
       const content = normalizeContent(field(req, 'content'));
-      const message = commitMessage(req, `Update ${filePath.split('/').pop()}`);
+      // A changed path renames or moves the file in the same commit, which is
+      // what the path field on the form is for.
+      const wantedPath = field(req, 'path').trim().replace(/^\/+/, '');
+      const toPath = wantedPath === '' || wantedPath === filePath ? undefined : wantedPath;
       const retryUrl = `${urlOf(loaded.repo)}/edit/${encPath(branch)}/${encPath(filePath)}`;
+      if (toPath !== undefined && !isValidRepoPath(toPath)) {
+        fail(res, 400, `${toPath} is not a usable path.`, viewer, retryUrl);
+        return;
+      }
+      const message = commitMessage(
+        req,
+        toPath === undefined ? `Update ${filePath.split('/').pop()}` : `Rename ${filePath} to ${toPath}`
+      );
+      const onto = await commitBranch(req, res, viewer, loaded.repo.dir, branch, expected, retryUrl);
+      if (onto === null) return;
       try {
         const sha = await ops.commitFileChange(loaded.repo.dir, {
-          branch,
+          branch: onto,
           filePath,
           message,
           author: authorFor(viewer, req),
           expectedHead: expected,
-          action: { kind: 'edit', content: Buffer.from(content, 'utf8') },
+          action: { kind: 'edit', content: Buffer.from(content, 'utf8'), toPath },
         });
-        firePush(loaded.repo, branch, expected, sha, viewer.auth.username);
+        firePush(loaded.repo, onto, expected, sha, viewer.auth.username);
       } catch (e) {
         await handleOpError(e, req, res, viewer, target, retryUrl);
         return;
       }
-      res.redirect(`${urlOf(loaded.repo)}/blob/${encPath(branch)}/${encPath(filePath)}`);
+      // A commit on a new branch wants to be seen against the one it left, so
+      // that is where the editor lands.
+      if (onto !== branch) {
+        res.redirect(`${urlOf(loaded.repo)}/compare/${encPath(branch)}...${encPath(onto)}`);
+        return;
+      }
+      res.redirect(`${urlOf(loaded.repo)}/blob/${encPath(onto)}/${encPath(toPath ?? filePath)}`);
     })
   );
 
@@ -502,21 +557,27 @@ export function registerWebOps(
       }
       const content = normalizeContent(field(req, 'content'));
       const message = commitMessage(req, `Create ${filename.split('/').pop()}`);
+      const onto = await commitBranch(req, res, viewer, loaded.repo.dir, branch, expected, retryUrl);
+      if (onto === null) return;
       try {
         const sha = await ops.commitFileChange(loaded.repo.dir, {
-          branch,
+          branch: onto,
           filePath: fullPath,
           message,
           author: authorFor(viewer, req),
           expectedHead: expected,
           action: { kind: 'create', content: Buffer.from(content, 'utf8') },
         });
-        firePush(loaded.repo, branch, expected, sha, viewer.auth.username);
+        firePush(loaded.repo, onto, expected, sha, viewer.auth.username);
       } catch (e) {
         await handleOpError(e, req, res, viewer, target, retryUrl);
         return;
       }
-      res.redirect(`${urlOf(loaded.repo)}/blob/${encPath(branch)}/${encPath(fullPath)}`);
+      if (onto !== branch) {
+        res.redirect(`${urlOf(loaded.repo)}/compare/${encPath(branch)}...${encPath(onto)}`);
+        return;
+      }
+      res.redirect(`${urlOf(loaded.repo)}/blob/${encPath(onto)}/${encPath(fullPath)}`);
     })
   );
 

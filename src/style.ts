@@ -729,4 +729,9 @@ table.listing.issues td.issue-cell > span { min-width: 0; }
 /* --- forks --- */
 .fork-note { display: flex; align-items: center; gap: 6px; margin: -4px 0 8px 24px; }
 .fork-note .octicon { color: var(--fg-subtle); }
+
+/* --- the commit box's branch choice --- */
+.commit-target { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px; }
+.commit-target .field { margin: 8px 0 4px; }
+.commit-target p { margin: 0; }
 `;

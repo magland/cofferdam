@@ -154,14 +154,33 @@ ${command}
  * GitHub's shape and git's own (the two are joined by a blank line before the
  * commit is made). The face beside the heading is whose commit it will be.
  */
-function commitFields(viewer: Viewer, expectedHead: string | null, messagePlaceholder: string): string {
+function commitFields(
+  viewer: Viewer,
+  expectedHead: string | null,
+  messagePlaceholder: string,
+  branch?: string
+): string {
+  // Committing to a new branch is GitHub's second choice in this box, and the
+  // one that keeps a shared branch clean. The name field is only read when
+  // that choice is made, so leaving it filled in is harmless.
+  const branchChoice =
+    branch === undefined
+      ? ''
+      : `<div class="commit-target">
+<label class="checkbox"><input type="checkbox" name="newBranchWanted" value="1"> Commit to a new branch</label>
+<div class="field"><label class="sr-only" for="newBranch">New branch name</label><input type="text" id="newBranch" name="newBranch" placeholder="${esc(
+          branch
+        )}-patch" autocomplete="off"></div>
+<p class="muted small">Leave it unticked to commit straight to <span class="mono">${esc(branch)}</span>.</p>
+</div>`;
   return `${csrfField(viewer)}
 <input type="hidden" name="expected" value="${esc(expectedHead ?? '')}">
 <div class="commit-box-head">${avatar(viewer.auth.username, 28)}<b>Commit changes</b></div>
 <div class="field"><label class="sr-only" for="message">Commit message</label><input type="text" id="message" name="message" placeholder="${esc(
     messagePlaceholder
   )}"></div>
-<div class="field"><label class="sr-only" for="description">Extended description</label><textarea id="description" name="description" rows="3" placeholder="Add an optional extended description"></textarea></div>`;
+<div class="field"><label class="sr-only" for="description">Extended description</label><textarea id="description" name="description" rows="3" placeholder="Add an optional extended description"></textarea></div>
+${branchChoice}`;
 }
 
 export function editFilePage(
@@ -179,9 +198,12 @@ export function editFilePage(
 <h2 class="file-head">Editing <span class="mono">${esc(filePath)}</span> on <span class="mono">${esc(ctx.ref)}</span></h2>
 ${errorBanner(error)}
 <form method="post" action="${action}">
+<div class="field"><label for="path">Path</label><input type="text" id="path" name="path" value="${esc(
+    filePath
+  )}" spellcheck="false"><p class="muted small">Changing it renames or moves the file in the same commit.</p></div>
 <textarea class="code-editor" name="content" rows="${rows}" spellcheck="false">${esc(content)}</textarea>
 <div class="commit-box">
-${commitFields(ctx.viewer!, expectedHead, `Update ${filePath.split('/').pop()}`)}
+${commitFields(ctx.viewer!, expectedHead, `Update ${filePath.split('/').pop()}`, ctx.ref)}
 <div class="actions"><button type="submit" class="btn btn-primary">Commit changes</button><a class="btn" href="${cancel}">Cancel</a></div>
 </div>
 </form>`;
@@ -216,7 +238,7 @@ ${errorBanner(error)}
   )}" placeholder="path/to/file.md" required></div></div>
 <textarea class="code-editor" name="content" rows="18" spellcheck="false">${esc(preset.content ?? '')}</textarea>
 <div class="commit-box">
-${commitFields(ctx.viewer!, expectedHead, 'Create new file')}
+${commitFields(ctx.viewer!, expectedHead, 'Create new file', expectedHead === null ? undefined : branch)}
 <div class="actions"><button type="submit" class="btn btn-primary">Commit new file</button><a class="btn" href="${cancel}">Cancel</a></div>
 </div>
 </form>`;

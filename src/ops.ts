@@ -134,7 +134,13 @@ interface FileCommitArgs {
   // optimistic concurrency: if the branch has moved, the update fails with a
   // 'conflict' OpError instead of clobbering.
   expectedHead: string | null;
-  action: { kind: 'create'; content: Buffer } | { kind: 'edit'; content: Buffer } | { kind: 'delete' };
+  action:
+    | { kind: 'create'; content: Buffer }
+    // toPath renames the file in the same commit: the old path is removed and
+    // the content written at the new one, so a rename is one commit and not a
+    // delete followed by a create.
+    | { kind: 'edit'; content: Buffer; toPath?: string }
+    | { kind: 'delete' };
 }
 
 export async function commitFileChange(repoDir: string, args: FileCommitArgs): Promise<string> {
@@ -143,6 +149,9 @@ export async function commitFileChange(repoDir: string, args: FileCommitArgs): P
   if (!isValidRepoPath(filePath) || filePath === '') throw new OpError('invalid file path');
   if (expectedHead !== null && !isValidSha(expectedHead)) throw new OpError('invalid expected commit');
 
+  const toPath = action.kind === 'edit' && action.toPath && action.toPath !== filePath ? action.toPath : null;
+  if (toPath !== null && !isValidRepoPath(toPath)) throw new OpError('invalid file path');
+
   if (expectedHead !== null) {
     if (action.kind === 'create') {
       if (await entryExists(repoDir, expectedHead, filePath)) {
@@ -150,6 +159,9 @@ export async function commitFileChange(repoDir: string, args: FileCommitArgs): P
       }
     } else if (!(await entryExists(repoDir, expectedHead, filePath))) {
       throw new OpError(`${filePath} does not exist on ${branch}`, 'notfound');
+    }
+    if (toPath !== null && (await entryExists(repoDir, expectedHead, toPath))) {
+      throw new OpError(`${toPath} already exists on ${branch}`, 'exists');
     }
   } else if (action.kind !== 'create') {
     throw new OpError('cannot edit or delete a file on a branch that does not exist');
@@ -166,14 +178,18 @@ export async function commitFileChange(repoDir: string, args: FileCommitArgs): P
       await execGit(repoDir, ['read-tree', '--empty'], { env });
     }
 
-    if (action.kind === 'delete') {
-      // update-index --force-remove insists on a work tree; feeding a
-      // zero-mode entry to --index-info removes the path without one.
+    // update-index --force-remove insists on a work tree; feeding a zero-mode
+    // entry to --index-info removes a path without one.
+    const removePath = async (target: string) => {
       await execGit(repoDir, ['update-index', '--index-info'], {
         env,
-        input: `0 ${'0'.repeat(40)}\t${filePath}\n`,
+        input: `0 ${'0'.repeat(40)}\t${target}\n`,
       });
+    };
+    if (action.kind === 'delete') {
+      await removePath(filePath);
     } else {
+      if (toPath !== null) await removePath(filePath);
       const mode =
         action.kind === 'edit' && expectedHead !== null
           ? await entryMode(repoDir, expectedHead, filePath)
@@ -186,7 +202,7 @@ export async function commitFileChange(repoDir: string, args: FileCommitArgs): P
       } finally {
         fs.rmSync(contentFile, { force: true });
       }
-      await execGit(repoDir, ['update-index', '--add', '--cacheinfo', `${mode},${blobSha},${filePath}`], {
+      await execGit(repoDir, ['update-index', '--add', '--cacheinfo', `${mode},${blobSha},${toPath ?? filePath}`], {
         env,
       });
     }
@@ -223,17 +239,81 @@ export type MergeOutcome =
   | { status: 'up-to-date' }
   | { status: 'conflict'; paths: string[] };
 
+/** What a merge would do, without doing it. */
+export type MergePreview =
+  | { status: 'clean'; fastForward: boolean; base: string; head: string }
+  | { status: 'up-to-date' }
+  | { status: 'conflict'; paths: string[] };
+
 /**
- * Merge one ref into a branch, in a bare repository and without a work tree.
+ * Work out what merging `head` into branch `base` would come to, in a bare
+ * repository and without a work tree.
  *
  * `git merge-tree --write-tree` computes the merged tree in the object
- * database and says which paths conflict; a clean result becomes a commit
- * with two parents through commit-tree, and the branch moves with a guarded
- * update-ref, so a branch that moved while the reader was deciding fails
- * rather than losing the commit that moved it. Where the base is already an
- * ancestor of the head there is nothing to merge and the branch simply moves
- * forward, which is what git would do at the terminal.
+ * database and names the paths that conflict. The tree it writes when the
+ * merge is clean is not thrown away: the caller commits exactly that tree, so
+ * the merge a reader was shown is the merge that happens. An unreferenced
+ * tree left behind by a preview is ordinary garbage that git collects.
+ */
+async function planMerge(
+  repoDir: string,
+  base: string,
+  head: string
+): Promise<
+  | { status: 'up-to-date' }
+  | { status: 'conflict'; paths: string[] }
+  | { status: 'clean'; tree: string | null; fastForward: boolean; baseSha: string; headSha: string }
+> {
+  if (!isValidRefName(base) || base.startsWith('-')) throw new OpError('invalid base branch');
+  if (!isValidRefName(head) || head.startsWith('-')) throw new OpError('invalid head ref');
+  const baseSha = await refTip(repoDir, `refs/heads/${base}`);
+  if (!baseSha) throw new OpError(`branch ${base} not found`, 'notfound');
+  const headSha = await refTip(repoDir, head);
+  if (!headSha) throw new OpError(`ref ${head} not found`, 'notfound');
+
+  // Nothing to merge: the head is already in the base's history.
+  if ((await execGitStatus(repoDir, ['merge-base', '--is-ancestor', headSha, baseSha])).code === 0) {
+    return { status: 'up-to-date' };
+  }
+  // The base has not moved since the head left it, so the branch can simply
+  // advance, which is what git would do at the terminal.
+  if ((await execGitStatus(repoDir, ['merge-base', '--is-ancestor', baseSha, headSha])).code === 0) {
+    return { status: 'clean', tree: null, fastForward: true, baseSha, headSha };
+  }
+
+  const merged = await execGitStatus(repoDir, ['merge-tree', '--write-tree', '--name-only', baseSha, headSha]);
+  const lines = merged.stdout.split('\n');
+  const tree = (lines[0] ?? '').trim();
+  if (merged.code === 1 && isValidSha(tree)) {
+    // The conflicting paths follow the tree, one per line, and a blank line
+    // ends them before git's own narration of the merge.
+    const paths: string[] = [];
+    for (const line of lines.slice(1)) {
+      if (line.trim() === '') break;
+      paths.push(line);
+    }
+    return { status: 'conflict', paths };
+  }
+  if (merged.code !== 0 || !isValidSha(tree)) {
+    throw new OpError(merged.stderr.trim() || 'the merge could not be computed');
+  }
+  return { status: 'clean', tree, fastForward: false, baseSha, headSha };
+}
+
+/** Whether a merge would apply cleanly, without changing anything. */
+export async function previewMerge(repoDir: string, base: string, head: string): Promise<MergePreview> {
+  const plan = await planMerge(repoDir, base, head);
+  if (plan.status === 'clean') {
+    return { status: 'clean', fastForward: plan.fastForward, base: plan.baseSha, head: plan.headSha };
+  }
+  return plan;
+}
+
+/**
+ * Merge one ref into a branch and move the branch to the result.
  *
+ * The branch moves with a guarded update-ref, so a branch that moved while
+ * the reader was deciding fails rather than losing the commit that moved it.
  * Conflicts are reported, never committed: resolving them needs a work tree
  * and a person, and the vault has neither.
  */
@@ -244,48 +324,21 @@ export async function mergeBranch(
   message: string,
   author: CommitAuthor
 ): Promise<MergeOutcome> {
-  if (!isValidRefName(base) || base.startsWith('-')) throw new OpError('invalid base branch');
-  if (!isValidRefName(head) || head.startsWith('-')) throw new OpError('invalid head ref');
-  const baseSha = await refTip(repoDir, `refs/heads/${base}`);
-  if (!baseSha) throw new OpError(`branch ${base} not found`, 'notfound');
-  const headSha = await refTip(repoDir, head);
-  if (!headSha) throw new OpError(`ref ${head} not found`, 'notfound');
-
-  const ancestor = await execGitStatus(repoDir, ['merge-base', '--is-ancestor', headSha, baseSha]);
-  if (ancestor.code === 0) return { status: 'up-to-date' };
-
-  const canFastForward = await execGitStatus(repoDir, ['merge-base', '--is-ancestor', baseSha, headSha]);
-  if (canFastForward.code === 0) {
-    await moveBranch(repoDir, base, headSha, baseSha);
-    return { status: 'merged', sha: headSha, before: baseSha, fastForward: true };
-  }
-
-  const merged = await execGitStatus(repoDir, ['merge-tree', '--write-tree', '--name-only', baseSha, headSha]);
-  const lines = merged.stdout.split('\n');
-  const tree = (lines[0] ?? '').trim();
-  if (merged.code !== 0 || !isValidSha(tree)) {
-    // Exit 1 with a tree means conflicts: the conflicting paths follow the
-    // tree, one per line, and a blank line ends them before git's own
-    // narration of the merge, which is not for this page.
-    if (merged.code === 1 && isValidSha(tree)) {
-      const paths: string[] = [];
-      for (const line of lines.slice(1)) {
-        if (line.trim() === '') break;
-        paths.push(line);
-      }
-      return { status: 'conflict', paths };
-    }
-    throw new OpError(merged.stderr.trim() || 'the merge could not be computed');
+  const plan = await planMerge(repoDir, base, head);
+  if (plan.status !== 'clean') return plan;
+  if (plan.fastForward) {
+    await moveBranch(repoDir, base, plan.headSha, plan.baseSha);
+    return { status: 'merged', sha: plan.headSha, before: plan.baseSha, fastForward: true };
   }
   const sha = (
-    await execGit(repoDir, ['commit-tree', tree, '-p', baseSha, '-p', headSha, '-m', message], {
+    await execGit(repoDir, ['commit-tree', plan.tree!, '-p', plan.baseSha, '-p', plan.headSha, '-m', message], {
       env: authorEnv(author),
     })
   )
     .toString('utf8')
     .trim();
-  await moveBranch(repoDir, base, sha, baseSha);
-  return { status: 'merged', sha, before: baseSha, fastForward: false };
+  await moveBranch(repoDir, base, sha, plan.baseSha);
+  return { status: 'merged', sha, before: plan.baseSha, fastForward: false };
 }
 
 /** Move a branch, refusing if it is no longer where the caller last saw it. */

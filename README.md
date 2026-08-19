@@ -43,7 +43,7 @@ The `.git` suffix on repository directory names is optional; it is stripped for 
 - A language breakdown in the About panel: the share of the source each language holds, drawn as GitHub's bar in Linguist's colours
 - Sign-in with username and token; operations happen directly in the web interface:
   - creating repositories (with an optional initial README)
-  - editing, creating, and deleting files, committed straight to a branch
+  - editing, creating, renaming, and deleting files, committed straight to a branch or to a new one made from it
   - creating and deleting branches and tags
   - repository settings: description, default branch, renaming or moving to another collection, and deletion
   - user administration: creating users, granting scopes, minting tokens

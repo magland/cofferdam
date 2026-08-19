@@ -182,6 +182,51 @@ body_has "diff offers the whole file" 'View file'
 body_lacks "no diff header noise" 'index 0000000'
 body_lacks "no hints on commit page" 'cmd-hint'
 
+# ---- renaming a file, and committing to a new branch, from the editor ----
+
+check "edit form offers the path" 200 -b "$JAR" "$BASE/demo/proj/edit/main/README.md"
+body_has "path field present" 'name="path"'
+body_has "new branch choice present" 'name="newBranchWanted"'
+CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
+check "rename a file while editing" 302 -b "$JAR" "$BASE/demo/proj/edit/main/README.md" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
+  --data-urlencode "path=docs/README.md" --data-urlencode "content=# proj
+
+Edited via the web interface.
+" --data-urlencode "message=Move the README under docs"
+check "the file is at its new path" 200 "$BASE/demo/proj/blob/main/docs/README.md"
+check "the old path is gone" 404 "$BASE/demo/proj/blob/main/README.md"
+check "edit the moved file" 200 -b "$JAR" "$BASE/demo/proj/edit/main/docs/README.md"
+CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
+check "rename back" 302 -b "$JAR" "$BASE/demo/proj/edit/main/docs/README.md" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
+  --data-urlencode "path=README.md" --data-urlencode "content=# proj
+
+Edited via the web interface.
+" --data-urlencode "message=Move the README back"
+check "README is home again" 200 "$BASE/demo/proj/blob/main/README.md"
+
+check "edit form again" 200 -b "$JAR" "$BASE/demo/proj/edit/main/README.md"
+CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
+check "commit to a new branch" 302 -D "$TMP/headers" -b "$JAR" "$BASE/demo/proj/edit/main/README.md" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
+  --data-urlencode "path=README.md" --data-urlencode "content=# proj
+
+Edited on a branch.
+" --data-urlencode "message=Edit on a branch" --data-urlencode "newBranchWanted=1" --data-urlencode "newBranch=web-edit"
+grep -qi 'location:.*compare/main\.\.\.web-edit' "$TMP/headers" || { echo "FAIL: a new branch does not land on the comparison"; exit 1; }
+PASS=$((PASS+1)); echo "ok: a new branch lands on the comparison"
+check "the new branch has the edit" 200 "$BASE/demo/proj/blob/web-edit/README.md"
+body_has "the branch carries the new content" 'Edited on a branch'
+check "the old branch is untouched" 200 "$BASE/demo/proj/blob/main/README.md"
+body_has "main still has its own content" 'Edited via the web interface'
+check "a branch name already taken is refused" 409 -b "$JAR" "$BASE/demo/proj/edit/main/README.md" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" --data-urlencode "content=x" \
+  --data-urlencode "newBranchWanted=1" --data-urlencode "newBranch=web-edit"
+check "an unnamed new branch is refused" 400 -b "$JAR" "$BASE/demo/proj/edit/main/README.md" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" --data-urlencode "content=x" \
+  --data-urlencode "newBranchWanted=1" --data-urlencode "newBranch="
+
 # ---- create and delete a file ----
 
 check "new file form" 200 -b "$JAR" "$BASE/demo/proj/new/main"

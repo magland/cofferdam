@@ -144,7 +144,7 @@ UI operation routes (session + CSRF; all POSTs follow POST-redirect-GET):
 | `GET/POST /login`, `POST /logout` | Sign in with username and token; sign out | nothing / session |
 | `GET/POST /new` (optional `?collection=`) | Create a repository, optionally with an initial README | push scope over `collection/name` |
 | `GET /import` (optional `?collection=`, `?src=`) | Writes the one-line command that imports an existing repository (section 3.10); performs nothing | session, push scope over the target |
-| `GET/POST /:collection/:repo/edit/:branch/*path` | Edit a text file (≤ 1 MB), commit to the branch | push scope |
+| `GET/POST /:collection/:repo/edit/:branch/*path` | Edit a text file (≤ 1 MB); a changed `path` renames or moves it in the same commit, and `newBranchWanted` commits to a branch created from the same base and lands on the comparison | push scope |
 | `GET/POST /:collection/:repo/new/:branch[/*dir]` | Create a file; on an empty repository this creates the branch | push scope |
 | `GET/POST /:collection/:repo/delete/:branch/*path` | Delete a file with a confirm step | push scope |
 | `POST /:collection/:repo/branches/create` `branches/delete` | Branch operations (default branch is not deletable) | push scope |
