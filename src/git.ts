@@ -192,8 +192,10 @@ export class GitRepo {
     return found;
   }
 
-  async commitCount(ref: string): Promise<number> {
-    const out = (await execGit(this.dir, ['rev-list', '--count', ref, '--'])).toString('utf8').trim();
+  async commitCount(ref: string, path?: string): Promise<number> {
+    const args = ['rev-list', '--count', ref, '--'];
+    if (path) args.push(path);
+    const out = (await execGit(this.dir, args)).toString('utf8').trim();
     return parseInt(out, 10);
   }
 

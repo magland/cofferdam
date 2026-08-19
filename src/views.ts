@@ -96,11 +96,12 @@ function copyText(btn, text) {
     navigator.clipboard.writeText(text).then(done, function () { fallback(); done(); });
   } else { fallback(); done(); }
 }
-// The text to copy is whatever sits just before the button: a <code>, or an
-// <input> holding a URL.
+// The text to copy is the button's own data-copy when it carries one, and
+// otherwise whatever sits just before it: a <code>, or an <input> holding a URL.
 function copyCmd(btn) {
   var el = btn.previousElementSibling;
-  copyText(btn, el && el.tagName === 'INPUT' ? el.value : el.textContent);
+  var own = btn.getAttribute('data-copy');
+  copyText(btn, own !== null ? own : (el && el.tagName === 'INPUT' ? el.value : el.textContent));
 }
 // A file view is one element per line, so its text is gathered rather than
 // read off one node; the line numbers are separate elements and stay out.
@@ -152,12 +153,19 @@ export function repoOpts(ctx: RepoCtx, path?: string): PageOpts {
  * the idle and copied faces are both in the page and neither needs escaping
  * at click time.
  */
-export function copyButton(label = ''): string {
-  const face = (glyph: IconName, text: string, cls: string) =>
-    `<span class="${cls}">${icon(glyph)}${label ? `<span>${esc(text)}</span>` : ''}</span>`;
-  return `<button class="copy-btn" type="button" onclick="copyCmd(this)" aria-label="Copy${
-    label ? ` ${esc(label.toLowerCase())}` : ''
-  }">${face('copy', label, 'copy-idle')}${face('check', 'Copied', 'copy-done')}</button>`;
+export function copyButton(label = '', text?: string, title = ''): string {
+  const face = (glyph: IconName, caption: string, cls: string) =>
+    `<span class="${cls}">${icon(glyph)}${label ? `<span>${esc(caption)}</span>` : ''}</span>`;
+  // With no text of its own the button copies the element before it, which is
+  // how the command rows and the clone box use it.
+  const payload = text === undefined ? '' : ` data-copy="${esc(text)}"`;
+  return `<button class="copy-btn" type="button" onclick="copyCmd(this)"${payload}${
+    title ? ` title="${esc(title)}"` : ''
+  } aria-label="Copy${label ? ` ${esc(label.toLowerCase())}` : ''}">${face('copy', label, 'copy-idle')}${face(
+    'check',
+    'Copied',
+    'copy-done'
+  )}</button>`;
 }
 
 export function copyRow(cmd: string): string {
@@ -425,6 +433,11 @@ export function treePage(ctx: RepoCtx, view: TreeView): string {
 </div>`
     : '';
   const addFileUrl = `${base}/new/${encPath(ctx.ref)}${atRoot ? '' : `/${encPath(path)}`}`;
+  // The history of this directory, which at the root is the history of the
+  // repository: the same button GitHub puts above a listing.
+  const historyBtn = `<a class="btn" href="${base}/commits/${encPath(ctx.ref)}${
+    atRoot ? '' : `/${encPath(path)}`
+  }" title="Commits touching this directory">${icon('history')}<span>History</span></a>`;
   const addFileBtn =
     ctx.canPush && ctx.refIsBranch ? `<a class="btn" href="${addFileUrl}">${icon('plus')}<span>Add file</span></a>` : '';
   const readmePath = atRoot ? view.readmeName : `${path}/${view.readmeName}`;
@@ -438,7 +451,7 @@ export function treePage(ctx: RepoCtx, view: TreeView): string {
   const content = `${repoHeader(ctx, 'code')}
 <div class="toolbar">
   <div class="left">${refPicker(ctx, (ref) => `${base}/tree/${encPath(ref)}`)}${breadcrumb(ctx, path)}</div>
-  <div class="right-group">${addFileBtn}${cloneMenu(ctx)}</div>
+  <div class="right-group">${historyBtn}${addFileBtn}${cloneMenu(ctx)}</div>
 </div>
 <div class="repo-layout">
 <div class="repo-main">
@@ -490,8 +503,11 @@ export function blobPage(
       )}</span>`
     : '';
   let body = '';
+  const historyBtn = `<a class="btn" href="${base}/commits/${encPath(ctx.ref)}/${encPath(
+    path
+  )}" title="Commits touching this file">${icon('history')}<span>History</span></a>`;
   const meta = (left: string, extra = '') =>
-    `<div class="code-meta"><span class="muted small">${left}</span><span class="right-group">${toggle}${extra}<a class="btn" href="${rawUrl}" title="View the file as it was committed">${icon(
+    `<div class="code-meta"><span class="muted small">${left}</span><span class="right-group">${toggle}${extra}${historyBtn}<a class="btn" href="${rawUrl}" title="View the file as it was committed">${icon(
       'download'
     )}<span>Raw</span></a>${editBtns}</span></div>`;
   if (view.kind === 'code') {
@@ -537,33 +553,54 @@ ${body}`;
 
 export function commitsPage(
   ctx: RepoCtx,
+  path: string,
   commits: CommitSummary[],
   page: number,
   totalPages: number,
   totalCount: number
 ): string {
   const base = repoUrl(ctx);
+  const suffix = path === '' ? '' : `/${encPath(path)}`;
+  // Each row carries what a reader might want next from that commit: to read
+  // it, to take its id, or to browse the tree as it stood then.
   const rows = commits
     .map(
       (c) =>
-        `<div class="commit-row"><span><a class="title" href="${base}/commit/${c.sha}">${esc(
+        `<div class="commit-row"><span class="commit-main"><a class="title" href="${base}/commit/${c.sha}">${esc(
           c.subject
-        )}</a><div class="muted small">${esc(c.author)} committed ${timeTag(c.date)}</div></span><a class="sha" href="${base}/commit/${
+        )}</a><div class="muted small">${esc(c.author)} committed ${timeTag(c.date)}</div></span><span class="commit-actions"><a class="sha" href="${base}/commit/${
           c.sha
-        }">${c.sha.slice(0, 7)}</a></div>`
+        }">${c.sha.slice(0, 7)}</a>${copyButton('', c.sha, 'Copy the full commit id')}<a class="btn" href="${base}/tree/${
+          c.sha
+        }" title="Browse the repository at this commit" aria-label="Browse the repository at this commit">${icon(
+          'code'
+        )}</a></span></div>`
     )
     .join('');
   const pager: string[] = [];
-  const pageUrl = (p: number) => `${base}/commits/${encPath(ctx.ref)}?page=${p}`;
+  const pageUrl = (p: number) => `${base}/commits/${encPath(ctx.ref)}${suffix}?page=${p}`;
   if (page > 1) pager.push(`<a class="btn" href="${pageUrl(page - 1)}">&larr; Newer</a>`);
   if (page < totalPages) pager.push(`<a class="btn" href="${pageUrl(page + 1)}">Older &rarr;</a>`);
+  const scope =
+    path === ''
+      ? `<span class="muted small">${count(totalCount)} commit${totalCount === 1 ? '' : 's'}</span>`
+      : `${breadcrumb(ctx, path)}<span class="muted small">${count(totalCount)} commit${
+          totalCount === 1 ? '' : 's'
+        } touching this path</span>`;
+  const empty =
+    path === '' ? 'No commits on this ref.' : `Nothing in this ref's history touches ${esc(path)}.`;
   const content = `${repoHeader(ctx, 'commits')}
-<div class="toolbar"><div class="left">${refPicker(ctx, (ref) => `${base}/commits/${encPath(ref)}`)}<span class="muted small">${count(
-    totalCount
-  )} commit${totalCount === 1 ? '' : 's'}</span></div></div>
-${rows || '<div class="empty-state">No commits on this ref.</div>'}
+<div class="toolbar"><div class="left">${refPicker(
+    ctx,
+    (ref) => `${base}/commits/${encPath(ref)}${suffix}`
+  )}${scope}</div></div>
+${rows || `<div class="empty-state">${empty}</div>`}
 ${pager.length ? `<div class="pagination">${pager.join('')}</div>` : ''}`;
-  return layout(`Commits at ${ctx.ref} - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, `${base}/commits/${encPath(ctx.ref)}`));
+  return layout(
+    `Commits${path ? ` for ${path}` : ''} at ${ctx.ref} - ${ctx.collection}/${ctx.repo}`,
+    content,
+    repoOpts(ctx, `${base}/commits/${encPath(ctx.ref)}${suffix}`)
+  );
 }
 
 export function commitPage(ctx: RepoCtx, detail: CommitDetail, diffHtml: string): string {

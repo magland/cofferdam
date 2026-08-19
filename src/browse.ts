@@ -356,24 +356,28 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
       const viewer = getViewer(req, root);
       const loaded = await loadRepo(root, req, res, viewer);
       if (!loaded) return;
-      const { ref, path: rest } = loaded.repo.resolveRefAndPath(wildcard(req), loaded.refNames);
-      if (!isValidRefName(ref) || rest !== '') {
+      // A path after the ref narrows the history to that file or directory,
+      // which is what the History button on a blob or tree page asks for.
+      const { ref, path: histPath } = loaded.repo.resolveRefAndPath(wildcard(req), loaded.refNames);
+      if (!isValidRefName(ref) || !isValidRepoPath(histPath)) {
         send404(res, 'Not found', viewer);
         return;
       }
       const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1);
       let total: number;
       try {
-        total = await loaded.repo.commitCount(ref);
+        total = await loaded.repo.commitCount(ref, histPath || undefined);
       } catch {
         send404(res, `Ref ${ref} not found`, viewer);
         return;
       }
       const totalPages = Math.max(1, Math.ceil(total / COMMITS_PER_PAGE));
-      const commits = await loaded.repo.log(ref, (page - 1) * COMMITS_PER_PAGE, COMMITS_PER_PAGE);
+      const commits = await loaded.repo.log(ref, (page - 1) * COMMITS_PER_PAGE, COMMITS_PER_PAGE, histPath || undefined);
       res
         .type('html')
-        .send(views.commitsPage(await makeCtx(root, req, loaded, ref, viewer), commits, page, totalPages, total));
+        .send(
+          views.commitsPage(await makeCtx(root, req, loaded, ref, viewer), histPath, commits, page, totalPages, total)
+        );
     })
   );
 

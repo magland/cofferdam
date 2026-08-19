@@ -420,4 +420,10 @@ textarea.code-editor {
 .artifacts a.artifact { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--fg); }
 .artifacts a.artifact:hover { background: var(--surface); text-decoration: none; }
 .artifacts p { margin: 4px 0 0; }
+
+/* --- history: a commit row carries actions on its right --- */
+.commit-main { min-width: 0; }
+.commit-main .title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.commit-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.commit-actions .btn { padding: 4px 8px; }
 `;

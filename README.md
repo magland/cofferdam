@@ -27,7 +27,7 @@ The `.git` suffix on repository directory names is optional; it is stripped for 
 - A branch and tag picker with a filter box, and an About panel on the repository page
 - Markdown files rendered as documents, with a Preview/Code toggle (`?plain=1` for the source, as on GitHub); READMEs shown on directory pages
 - The GitHub markdown feature set: highlighted code with a copy button, LaTeX math through KaTeX (`$…$`, `$$…$$`, and ```` ```math ```` blocks), tables, task lists, footnotes, alert callouts (`> [!NOTE]`), emoji shortcodes, heading anchors, and a sanitized subset of inline HTML
-- Commit history with pagination, and per-commit diff views
+- Commit history with pagination, and per-commit diff views; the History button on any file or directory narrows it to that path
 - Source downloads: `.tar.gz` or `.zip` of any branch, tag, or commit, from the Code button or straight from `/<collection>/<repo>/archive/<ref>.zip`
 - Sign-in with username and token; operations happen directly in the web interface:
   - creating repositories (with an optional initial README)

@@ -421,6 +421,15 @@ grep -qi 'content-security-policy: sandbox' "$TMP/headers" || { echo "FAIL: raw 
 grep -qi 'content-type: text/plain' "$TMP/headers" || { echo "FAIL: raw content-type not text/plain"; exit 1; }
 PASS=$((PASS+2)); echo "ok: raw CSP and content-type"
 
+# ---- history for one path ----
+
+check "history of a file" 200 "$BASE/demo/proj/commits/main/README.md"
+body_has "history names the path" 'touching this path'
+body_has "history row links the commit" 'class="title" href="/demo/proj/commit/'
+check "history of a path that was never in the repository" 200 "$BASE/demo/proj/commits/main/nothing-here.txt"
+body_has "empty history says so" "Nothing in this ref's history touches"
+check "history of a bad ref 404s" 404 "$BASE/demo/proj/commits/no-such-ref"
+
 # ---- source archives ----
 
 check "source archive as tar.gz" 200 -D "$TMP/headers" "$BASE/demo/proj/archive/main.tar.gz"
