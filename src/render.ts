@@ -106,3 +106,60 @@ export function formatDate(iso: string): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** "19 Aug 2026, 01:04" - the exact time, shown as the tooltip on a relative one. */
+export function formatDateFull(iso: string): string {
+  const d = new Date(iso);
+  if (!iso || isNaN(d.getTime())) return iso;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Thresholds for timeAgo, coarsest last: below `limit` seconds, divide by
+// `secs` (rounding down, so an age never reads older than it is) and name the
+// unit. A dedicated "yesterday" sits between hours and days because that is
+// what the reader would say.
+const AGO_UNITS: { limit: number; secs: number; unit: string }[] = [
+  { limit: 3600, secs: 60, unit: 'minute' },
+  { limit: 24 * 3600, secs: 3600, unit: 'hour' },
+  { limit: 30 * 86400, secs: 86400, unit: 'day' },
+  { limit: 365 * 86400, secs: 30 * 86400, unit: 'month' },
+  { limit: Infinity, secs: 365 * 86400, unit: 'year' },
+];
+
+/**
+ * A relative time in words: "now", "3 minutes ago", "yesterday", "2 years
+ * ago". Dates the clock puts in the future (skew, or a rewritten commit) read
+ * as "in 3 minutes" rather than as an absurd age. The exact time is never
+ * lost: timeTag() keeps it in the tooltip and in the datetime attribute.
+ */
+export function timeAgo(iso: string, now: Date = new Date()): string {
+  const d = new Date(iso);
+  if (!iso || isNaN(d.getTime())) return iso;
+  const delta = (now.getTime() - d.getTime()) / 1000;
+  const secs = Math.abs(delta);
+  const future = delta < 0;
+  if (secs < 60) return 'now';
+  if (!future && secs >= 24 * 3600 && secs < 48 * 3600) return 'yesterday';
+  const step = AGO_UNITS.find((u) => secs < u.limit)!;
+  const n = Math.floor(secs / step.secs);
+  const phrase = `${n} ${step.unit}${n === 1 ? '' : 's'}`;
+  return future ? `in ${phrase}` : `${phrase} ago`;
+}
+
+/**
+ * A relative time as a <time> element, with the exact time in its tooltip.
+ * Rendering is server-side and so is the "now" it counts from, which is why
+ * the datetime attribute carries the original timestamp: a reader who wants
+ * precision hovers, and a machine reading the page gets ISO 8601.
+ */
+export function timeTag(iso: string, cls = 'muted'): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return esc(iso);
+  return `<time class="${cls}" datetime="${esc(d.toISOString())}" title="${esc(formatDateFull(iso))}">${esc(
+    timeAgo(iso)
+  )}</time>`;
+}

@@ -38,11 +38,23 @@ h2 { font-family: var(--font-head); font-size: 18px; }
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
 .page-head h1, .page-head h2 { margin: 0; }
 
-.repo-title { font-size: 18px; margin-bottom: 8px; }
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
-.tab { padding: 8px 14px; color: var(--fg-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
-.tab:hover { color: var(--fg); text-decoration: none; }
-.tab.active { color: var(--fg); font-weight: 600; border-bottom-color: var(--tab-marker); }
+/* Icons are inline SVG (see icons.ts). text-bottom is what sits a 16px glyph
+   on the same baseline as the label beside it; flex:none keeps one from being
+   squeezed when it sits in a flex row. */
+.octicon { display: inline-block; vertical-align: text-bottom; flex: none; overflow: visible; }
+
+.repo-title { display: flex; align-items: center; gap: 8px; font-size: 18px; margin-bottom: 8px; }
+.repo-title .icon { color: var(--fg-muted); margin-right: 0; }
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 16px; overflow-x: auto; }
+.tab {
+  display: flex; align-items: center; gap: 8px; white-space: nowrap; padding: 8px 12px;
+  color: var(--fg); border-bottom: 2px solid transparent; margin-bottom: -1px;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.tab .octicon { color: var(--fg-muted); }
+.tab:hover { background: var(--surface); text-decoration: none; }
+.tab.active { font-weight: 600; border-bottom-color: var(--tab-marker); }
+.tab.active .octicon { color: var(--fg); }
 .counter { display: inline-block; background: var(--chip-bg); border-radius: 2em; padding: 0 6px; font-size: 12px; color: var(--fg-muted); margin-left: 4px; }
 
 .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -61,9 +73,9 @@ h2 { font-family: var(--font-head); font-size: 18px; }
   border-radius: var(--radius); background: var(--surface); color: var(--fg); font-family: var(--font-mono);
 }
 .btn {
-  display: inline-block; padding: 4px 12px; font-size: 13px; border: 1px solid var(--border);
-  border-radius: var(--radius); background: var(--surface); color: var(--fg); cursor: pointer;
-  font-family: inherit; line-height: 1.5;
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: 13px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+  color: var(--fg); cursor: pointer; font-family: inherit; line-height: 1.5; white-space: nowrap;
 }
 .btn:hover { background: var(--surface-hover); text-decoration: none; }
 .btn-primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); font-weight: 600; }

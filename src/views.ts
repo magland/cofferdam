@@ -1,8 +1,9 @@
 import { CommitDetail, CommitSummary, RefInfo, TreeEntry } from './git';
-import { esc, formatDate, formatSize } from './render';
+import { esc, formatSize, timeTag } from './render';
 import { Viewer, viewerIsAdmin } from './session';
 import { activeTheme } from './themes';
 import { WORDMARK } from './logo';
+import { IconName, icon } from './icons';
 
 export interface RepoCtx {
   collection: string;
@@ -42,10 +43,9 @@ export function csrfField(viewer: Viewer): string {
   return `<input type="hidden" name="csrf" value="${esc(viewer.csrf)}">`;
 }
 
-const FOLDER_ICON =
-  '<svg class="icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75Z"/></svg>';
-const FILE_ICON =
-  '<svg class="icon file" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 9 4.25V1.5Zm6.75.062V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z"/></svg>';
+const FOLDER_ICON = icon('file-directory-fill', 'icon');
+const FILE_ICON = icon('file', 'icon file');
+const REPO_ICON = icon('repo', 'icon');
 
 function userBox(opts: PageOpts): string {
   const viewer = opts.viewer ?? null;
@@ -129,21 +129,21 @@ export function repoHeader(
   active: 'code' | 'commits' | 'actions' | 'branches' | 'tags' | 'settings'
 ): string {
   const base = repoUrl(ctx);
-  const tab = (id: string, label: string, href: string, count?: number) =>
-    `<a class="tab${active === id ? ' active' : ''}" href="${href}">${label}${
+  const tab = (id: string, label: string, href: string, glyph: IconName, count?: number) =>
+    `<a class="tab${active === id ? ' active' : ''}" href="${href}">${icon(glyph)}<span>${label}</span>${
       count !== undefined ? `<span class="counter">${count}</span>` : ''
     }</a>`;
-  return `<div class="repo-title"><a href="/${encodeURIComponent(ctx.collection)}">${esc(ctx.collection)}</a> / <a href="${base}"><b>${esc(
-    ctx.repo
-  )}</b></a></div>
+  return `<div class="repo-title">${REPO_ICON}<a href="/${encodeURIComponent(ctx.collection)}">${esc(
+    ctx.collection
+  )}</a> <span class="muted">/</span> <a href="${base}"><b>${esc(ctx.repo)}</b></a></div>
 <nav class="tabs">
-${tab('code', 'Code', base)}
-${tab('commits', 'Commits', `${base}/commits/${encPath(ctx.ref)}`)}
-${ctx.hasCi || active === 'actions' ? tab('actions', 'Actions', `${base}/actions`) : ''}
-${tab('branches', 'Branches', `${base}/branches`, ctx.branches.length)}
-${tab('tags', 'Tags', `${base}/tags`, ctx.tags.length)}
-${ctx.hasSite ? tab('site', 'Site', `${base}/site/`) : ''}
-${ctx.canPush || ctx.canAdmin ? tab('settings', 'Settings', `${base}/settings`) : ''}
+${tab('code', 'Code', base, 'code')}
+${tab('commits', 'Commits', `${base}/commits/${encPath(ctx.ref)}`, 'history')}
+${ctx.hasCi || active === 'actions' ? tab('actions', 'Actions', `${base}/actions`, 'play') : ''}
+${tab('branches', 'Branches', `${base}/branches`, 'git-branch', ctx.branches.length)}
+${tab('tags', 'Tags', `${base}/tags`, 'tag', ctx.tags.length)}
+${ctx.hasSite ? tab('site', 'Site', `${base}/site/`, 'globe') : ''}
+${ctx.canPush || ctx.canAdmin ? tab('settings', 'Settings', `${base}/settings`, 'gear') : ''}
 </nav>`;
 }
 
@@ -198,10 +198,10 @@ export function collectionPage(
   const rows = repoList
     .map(
       (r) =>
-        `<tr><td>${FILE_ICON}<a href="/${encodeURIComponent(collection)}/${encodeURIComponent(r.name)}"><b>${esc(
+        `<tr><td>${REPO_ICON}<a href="/${encodeURIComponent(collection)}/${encodeURIComponent(r.name)}"><b>${esc(
           r.name
-        )}</b></a>${r.description ? `<div class="muted small">${esc(r.description)}</div>` : ''}</td><td class="right muted small">${
-          r.updated ? `Updated ${esc(formatDate(r.updated))}` : ''
+        )}</b></a>${r.description ? `<div class="muted small">${esc(r.description)}</div>` : ''}</td><td class="right small">${
+          r.updated ? `Updated ${timeTag(r.updated)}` : ''
         }</td></tr>`
     )
     .join('');
@@ -264,8 +264,8 @@ export function treePage(
   const latestBar = latest
     ? `<div class="latest-commit"><span><a href="${base}/commit/${latest.sha}"><b>${esc(
         latest.subject
-      )}</b></a> <span class="muted small">by ${esc(latest.author)}</span></span><span class="muted small">${esc(
-        formatDate(latest.date)
+      )}</b></a> <span class="muted small">by ${esc(latest.author)}</span></span><span class="small">${timeTag(
+        latest.date
       )} <a class="sha" href="${base}/commit/${latest.sha}">${latest.sha.slice(0, 7)}</a></span></div>`
     : '';
   const addFileUrl = `${base}/new/${encPath(ctx.ref)}${path === '' ? '' : `/${encPath(path)}`}`;
@@ -374,7 +374,7 @@ export function commitsPage(
       (c) =>
         `<div class="commit-row"><span><a class="title" href="${base}/commit/${c.sha}">${esc(
           c.subject
-        )}</a><div class="muted small">${esc(c.author)} committed ${esc(formatDate(c.date))}</div></span><a class="sha" href="${base}/commit/${
+        )}</a><div class="muted small">${esc(c.author)} committed ${timeTag(c.date)}</div></span><a class="sha" href="${base}/commit/${
           c.sha
         }">${c.sha.slice(0, 7)}</a></div>`
     )
@@ -404,7 +404,7 @@ export function commitPage(ctx: RepoCtx, detail: CommitDetail, diffHtml: string)
   ${body ? `<div class="body">${esc(body)}</div>` : ''}
   <div class="meta">
     <span><b>${esc(detail.author)}</b> &lt;${esc(detail.email)}&gt;</span>
-    <span>${esc(formatDate(detail.date))}</span>
+    <span>committed ${timeTag(detail.date, '')}</span>
     <span>commit <span class="sha">${detail.sha.slice(0, 12)}</span></span>
     ${parents ? `<span>parent${detail.parents.length > 1 ? 's' : ''} ${parents}</span>` : ''}
     <span><a href="${base}/tree/${detail.sha}">Browse files</a></span>
@@ -431,9 +431,7 @@ export function refListPage(ctx: RepoCtx, kind: 'branches' | 'tags'): string {
       }
       return `<tr><td><a href="${base}/tree/${encPath(r.name)}"><b>${esc(r.name)}</b></a>${
         kind === 'branches' && r.name === ctx.defaultBranch ? ' <span class="counter">default</span>' : ''
-      }<div class="muted small">${esc(r.subject)}</div></td><td class="right muted small">${esc(
-        formatDate(r.date)
-      )}</td><td class="right"><a class="sha" href="${base}/commit/${r.sha}">${r.sha.slice(0, 7)}</a></td><td class="right">${action}</td></tr>`;
+      }<div class="muted small">${esc(r.subject)}</div></td><td class="right small">${timeTag(r.date)}</td><td class="right"><a class="sha" href="${base}/commit/${r.sha}">${r.sha.slice(0, 7)}</a></td><td class="right">${action}</td></tr>`;
     })
     .join('');
   const body = rows

@@ -1,4 +1,4 @@
-import { esc, formatDate, formatSize } from '../render';
+import { esc, formatSize, timeTag } from '../render';
 import { Viewer } from '../session';
 import { RepoCtx, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from '../views';
 import { ArtifactInfo } from './artifacts';
@@ -67,13 +67,13 @@ export function runsPage(
   const rows = runs
     .map((r) => {
       const s = statusOf(r);
-      const when = r.createdAt ? formatDate(r.createdAt) : '';
+      const when = r.createdAt ? timeTag(r.createdAt) : '';
       const dur = duration(r.startedAt, r.completedAt);
       return `<tr>
 <td class="run-cell">${statusIcon(s)}<span><a href="${actionsBase}/runs/${r.number}"><b>${esc(runTitle(r))}</b></a>
 <div class="muted small">${esc(r.workflowName)} #${r.number}: ${esc(r.event)} by ${esc(r.actor)}</div></span></td>
 <td class="right muted small"><span class="chip">${esc(r.refName)}</span></td>
-<td class="right muted small">${esc(when)}${dur ? ` &middot; ${esc(dur)}` : ''}</td>
+<td class="right muted small">${when}${dur ? ` &middot; ${esc(dur)}` : ''}</td>
 </tr>`;
     })
     .join('');
@@ -338,7 +338,7 @@ ${summaryBox}`;
   &middot; <span class="chip">${esc(run.refName)}</span>
   ${run.sha ? `&middot; <a class="sha" href="${base}/commit/${esc(run.sha)}">${esc(run.sha.slice(0, 7))}</a>` : ''}
   &middot; <a href="${base}/blob/${encPath(run.refName)}/${encPath(run.workflowPath)}">${esc(run.workflowPath)}</a>
-  ${run.createdAt ? `&middot; ${esc(formatDate(run.createdAt))}` : ''}
+  ${run.createdAt ? `&middot; ${timeTag(run.createdAt, '')}` : ''}
 </div>
 <div class="run-body">
   <div class="job-list">${jobList}</div>
@@ -360,7 +360,7 @@ export function runnersPage(
     .map(
       (r) =>
         `<tr><td><b>${esc(r.name)}</b><div class="muted small">registered by ${esc(r.createdBy)}${
-          r.createdAt ? ` on ${esc(formatDate(r.createdAt))}` : ''
+          r.createdAt ? ` ${timeTag(r.createdAt, '')}` : ''
         }</div></td>
 <td class="small">${r.labels.map((l) => `<span class="chip">${esc(l)}</span>`).join(' ')}</td>
 <td class="small mono">${esc(r.allow.join(' '))}</td>

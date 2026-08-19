@@ -82,6 +82,7 @@ First start against a directory with no `vault.json` initializes one and prints 
 | `src/render.ts` | highlight.js by extension, HTML escaping, binary sniffing, size and date formatting |
 | `src/diff.ts` | Unified-diff to HTML (line classification, per-file boxes) |
 | `src/style.ts` | The single structural CSS string; every color and font is a `var(--…)` from the active theme |
+| `src/icons.ts` | The icon set: 16-pixel Octicons inlined as SVG, and the `icon()` wrapper |
 | `scripts/create-example.sh` | Builds the example vault, including its `vault.json` with the fixed dev user |
 | `scripts/smoke.sh` | The end-to-end smoke test |
 | `scripts/deploy-fly.sh` | Idempotent create-app/create-volume/deploy/print-token for Fly |
