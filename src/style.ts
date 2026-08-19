@@ -712,6 +712,18 @@ textarea {
 .with-avatar-row { display: flex; align-items: flex-start; gap: 8px; }
 .with-avatar-row .icon { margin-right: 0; color: var(--fg-muted); }
 
+/* One runner's facts: a label column narrow enough that the values line up,
+   collapsing to stacked rows where that column would crowd the value. */
+.facts { display: grid; grid-template-columns: 160px 1fr; gap: 8px 16px; max-width: 880px; margin: 16px 0; }
+.facts .fact { display: contents; }
+.facts .k { color: var(--fg-muted); font-size: 13px; }
+.facts .v { min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .facts { grid-template-columns: 1fr; gap: 2px; }
+  .facts .fact + .fact .k { margin-top: 10px; }
+}
+.runner-status { display: inline-flex; align-items: center; gap: 6px; }
+
 .card-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; max-width: 760px; }
 .card-list a.card { display: block; border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; color: var(--fg); }
 .card-list a.card:hover { background: var(--surface); text-decoration: none; }

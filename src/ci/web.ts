@@ -4,11 +4,11 @@ import * as path from 'path';
 import { findRepo, isValidName } from '../scan';
 import { Viewer, getViewer, viewerIsAdmin } from '../session';
 import { canAdmin } from '../vault';
-import { ah, fail, field, loadRepo, makeCtx, requireViewerPost, send404, urlencodedForm } from '../web';
+import { ah, baseUrlOf, fail, field, loadRepo, makeCtx, requireViewerPost, send404, urlencodedForm } from '../web';
 import { artifactPath, isValidArtifactName, listArtifacts } from './artifacts';
 import { CiEngine, listWorkflowsAt } from './engine';
 import { JobRecord, RunRecord, jobLogPath, listRuns } from './runs';
-import { loadRunners, registerRunner, removeRunner } from './runners';
+import { loadRunners, regenerateRunnerToken, registerRunner, removeRunner, runnerLastSeen } from './runners';
 import { dispatchWorkflow } from './dispatch';
 import * as ciViews from './views';
 
@@ -330,6 +330,23 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
 
   // ---- runners, under Admin ----
 
+  // Registration says what a runner may do; the engine and the last-seen map
+  // say whether it is there and what it is doing, which is what an operator
+  // looking at a runner actually wants to know.
+  function runnerViews(): ciViews.RunnerView[] {
+    const load = engine.runnerLoad();
+    return Object.entries(loadRunners(root).runners).map(([name, r]) => ({
+      name,
+      labels: r.labels,
+      allow: r.allow,
+      createdBy: r.createdBy,
+      createdAt: r.createdAt,
+      tokenUpdatedAt: r.tokenUpdatedAt,
+      lastSeen: runnerLastSeen(name),
+      running: load.running[name] ?? null,
+    }));
+  }
+
   app.get('/admin/runners', (req, res) => {
     const viewer = getViewer(req, root);
     if (!viewer) {
@@ -340,16 +357,33 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
       fail(res, 403, 'Admin access is required to manage runners.', viewer);
       return;
     }
-    const registry = loadRunners(root);
-    const runners = Object.entries(registry.runners).map(([name, r]) => ({
-      name,
-      labels: r.labels,
-      allow: r.allow,
-      createdBy: r.createdBy,
-      createdAt: r.createdAt,
-    }));
     const flash = typeof req.query.flash === 'string' ? req.query.flash : undefined;
-    res.type('html').send(ciViews.runnersPage(viewer, runners, flash));
+    res.type('html').send(ciViews.runnersPage(viewer, runnerViews(), flash));
+  });
+
+  app.get('/admin/runners/:name', (req, res) => {
+    const viewer = getViewer(req, root);
+    if (!viewer) {
+      res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
+      return;
+    }
+    if (!viewerIsAdmin(viewer)) {
+      fail(res, 403, 'Admin access is required to manage runners.', viewer);
+      return;
+    }
+    const view = runnerViews().find((r) => r.name === req.params.name);
+    if (!view) {
+      send404(res, `No runner named ${req.params.name} is registered.`, viewer);
+      return;
+    }
+    // The scope check is the same one removal and regeneration make: a
+    // delegated administrator sees only the runners their scope covers.
+    if (!canAdmin(viewer.auth, view.allow)) {
+      fail(res, 403, `Your admin scope does not cover: ${view.allow.join(', ')}`, viewer, '/admin/runners');
+      return;
+    }
+    const flash = typeof req.query.flash === 'string' ? req.query.flash : undefined;
+    res.type('html').send(ciViews.runnerPage(viewer, view, baseUrlOf(req), flash));
   });
 
   app.post('/admin/runners', form, (req, res) => {
@@ -368,14 +402,7 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
       .filter((s) => s.length > 0 && s.length < 200);
     const registry = loadRunners(root);
     const showError = (msg: string) => {
-      const runners = Object.entries(registry.runners).map(([n, r]) => ({
-        name: n,
-        labels: r.labels,
-        allow: r.allow,
-        createdBy: r.createdBy,
-        createdAt: r.createdAt,
-      }));
-      res.status(400).type('html').send(ciViews.runnersPage(viewer, runners, undefined, msg));
+      res.status(400).type('html').send(ciViews.runnersPage(viewer, runnerViews(), undefined, msg));
     };
     if (!isValidName(name)) {
       showError('A runner needs a simple name (letters, digits, dot, dash, underscore).');
@@ -398,8 +425,32 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
       allow,
       createdBy: viewer.auth.username,
     });
-    const host = `${req.protocol}://${req.get('host')}`;
-    res.type('html').send(ciViews.runnerTokenPage(viewer, name, token, host));
+    res.type('html').send(ciViews.runnerTokenPage(viewer, name, token, baseUrlOf(req)));
+  });
+
+  app.post('/admin/runners/:name/token', form, (req, res) => {
+    const viewer = requireViewerPost(root, req, res);
+    if (!viewer) return;
+    if (!viewerIsAdmin(viewer)) {
+      fail(res, 403, 'Admin access is required to manage runners.', viewer);
+      return;
+    }
+    const name = req.params.name;
+    const existing = loadRunners(root).runners[name];
+    if (!existing) {
+      send404(res, `No runner named ${name} is registered.`, viewer);
+      return;
+    }
+    if (!canAdmin(viewer.auth, existing.allow)) {
+      fail(res, 403, `Your admin scope does not cover: ${existing.allow.join(', ')}`, viewer, '/admin/runners');
+      return;
+    }
+    const issued = regenerateRunnerToken(root, name);
+    if (!issued) {
+      send404(res, `No runner named ${name} is registered.`, viewer);
+      return;
+    }
+    res.type('html').send(ciViews.runnerTokenPage(viewer, name, issued.token, baseUrlOf(req), true));
   });
 
   app.post('/admin/runners/:name/remove', form, (req, res) => {

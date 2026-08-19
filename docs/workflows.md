@@ -85,7 +85,9 @@ cofferdam runner add laptop --allow 'mycollection/*' --labels ubuntu-latest
 
 `--allow` takes globs over `collection/repo` and is the security boundary that matters: **a runner executes whatever those repositories' workflows contain, on the machine you start it on.** Registering one requires admin scope over exactly the globs being granted, the same rule that governs handing out push access. Grant a runner the repositories you would let run code on that machine, and no more. Docker is isolation against accidents, not against someone who wants your laptop.
 
-The token is shown once, and only its hash is stored, as with user tokens. `--save` writes it to `~/.config/cofferdam/runner.json` (mode 0600) so later runs need no arguments. Registration is also available under **Admin > Runners** in the web interface.
+The token is shown once, and only its hash is stored, as with user tokens. `--save` writes it to `~/.config/cofferdam/runner.json` (mode 0600) so later runs need no arguments. Registration is also available under **Admin > Runners** in the web interface, where each runner also has a page of its own showing its labels, the repositories it serves, whether the vault has heard from it, and the job it is running now.
+
+Because only the hash is kept, a token that has been lost cannot be recovered, and the honest answer is to issue a new one. **Regenerate token** on a runner's page does that, keeping the runner's labels and allow list and printing the full `cofferdam runner run` command to start it with. The old token stops working the moment the new one is issued, so a runner already running with it will start failing to poll and has to be restarted.
 
 Running one:
 

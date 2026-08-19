@@ -24,6 +24,10 @@ export interface RunnerRecord {
   allow: string[];
   createdBy: string;
   createdAt: string;
+  // When the token was last replaced, absent for a runner whose token is still
+  // the one it was registered with. Kept because the useful question about a
+  // runner that stopped working is often "was its token rotated under it".
+  tokenUpdatedAt?: string;
 }
 
 export interface RunnerRegistry {
@@ -55,6 +59,7 @@ function normalize(parsed: unknown): RunnerRegistry {
       allow: strings(r.allow, 'allow'),
       createdBy: typeof r.createdBy === 'string' ? r.createdBy : '',
       createdAt: typeof r.createdAt === 'string' ? r.createdAt : '',
+      ...(typeof r.tokenUpdatedAt === 'string' ? { tokenUpdatedAt: r.tokenUpdatedAt } : {}),
     };
   }
   return { runners };
@@ -111,6 +116,10 @@ export function hashRunnerToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
+function newRunnerToken(): string {
+  return 'cofferdam_runner_' + crypto.randomBytes(32).toString('hex');
+}
+
 export function registerRunner(
   root: string,
   name: string,
@@ -118,13 +127,37 @@ export function registerRunner(
 ): { token: string; runner: RunnerRecord } {
   return editRunners(root, () => {
     const registry = loadRunners(root);
-    const token = 'cofferdam_runner_' + crypto.randomBytes(32).toString('hex');
+    const token = newRunnerToken();
     const runner: RunnerRecord = {
       hash: hashRunnerToken(token),
       labels: opts.labels,
       allow: opts.allow,
       createdBy: opts.createdBy,
       createdAt: new Date().toISOString(),
+    };
+    registry.runners[name] = runner;
+    write(root, registry);
+    return { token, runner };
+  });
+}
+
+/**
+ * Issue a new token for an existing runner, keeping its labels and allow list.
+ *
+ * The old token stops working the moment this returns, so a runner still
+ * polling with it gets a 401 and must be restarted with the new one. Returns
+ * null if no runner by that name is registered.
+ */
+export function regenerateRunnerToken(root: string, name: string): { token: string; runner: RunnerRecord } | null {
+  return editRunners(root, () => {
+    const registry = loadRunners(root);
+    const existing = registry.runners[name];
+    if (!existing) return null;
+    const token = newRunnerToken();
+    const runner: RunnerRecord = {
+      ...existing,
+      hash: hashRunnerToken(token),
+      tokenUpdatedAt: new Date().toISOString(),
     };
     registry.runners[name] = runner;
     write(root, registry);

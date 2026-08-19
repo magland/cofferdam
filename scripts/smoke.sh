@@ -2733,6 +2733,45 @@ PASS=$((PASS+1)); echo "ok: registering a runner shows its token once"
 grep -q "$RUNNER_TOKEN" "$VAULT/runners.json" && { echo "FAIL: the runner token was stored in the clear"; exit 1; }
 PASS=$((PASS+1)); echo "ok: only the runner token's hash is stored"
 
+# The detail page for one runner: what it may do, whether it is there, and the
+# start command, which can only carry a placeholder because the token itself is
+# not recoverable from the registry.
+check "runner detail page" 200 -b "$JAR" "$BASE/admin/runners/smoke"
+body_has "naming the repositories it serves" 'demo/\*'
+body_has "with the start command" 'cofferdam runner run --host'
+body_has "and a placeholder for the unrecoverable token" '&lt;token&gt;'
+body_has "offering to regenerate the token" 'Regenerate token'
+check "an unknown runner is a 404" 404 -b "$JAR" "$BASE/admin/runners/nosuchrunner"
+check "the runners listing again" 200 -b "$JAR" "$BASE/admin/runners"
+body_has "linking each runner to its detail page" 'href="/admin/runners/smoke"'
+
+# Regenerating a token, on a runner of its own so the one above keeps working.
+check "register a second runner" 200 -b "$JAR" "$BASE/admin/runners" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode name=spare --data-urlencode labels=ubuntu-latest \
+  --data-urlencode "allow=demo/*"
+SPARE_TOKEN="$({ grep -o 'cofferdam_runner_[0-9a-f]\{64\}' "$BODY" || true; } | head -1)"
+[ -n "$SPARE_TOKEN" ] || { echo "FAIL: no token shown for the second runner"; exit 1; }
+check "the second runner can authenticate" 200 -H "Authorization: Bearer $SPARE_TOKEN" "$BASE/api/runner/whoami"
+check "regenerate its token" 200 -b "$JAR" "$BASE/admin/runners/spare/token" --data-urlencode "csrf=$CSRF"
+body_has "saying the old one is gone" 'previous token no longer works'
+body_has "and giving the command to start with the new one" 'cofferdam runner run --host'
+SPARE_TOKEN2="$({ grep -o 'cofferdam_runner_[0-9a-f]\{64\}' "$BODY" || true; } | head -1)"
+[ -n "$SPARE_TOKEN2" ] || { echo "FAIL: no new token shown after regeneration"; exit 1; }
+[ "$SPARE_TOKEN2" != "$SPARE_TOKEN" ] || { echo "FAIL: regeneration reissued the same token"; exit 1; }
+PASS=$((PASS+1)); echo "ok: regeneration issues a different token"
+# The old token is checked against the registry rather than by presenting it,
+# so this does not spend an attempt against the authentication limiter.
+grep -q "$(printf %s "$SPARE_TOKEN" | sha256sum | cut -d' ' -f1)" "$VAULT/runners.json" && {
+  echo "FAIL: the old token's hash survived regeneration"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the old token's hash is gone from the registry"
+check "the new token works" 200 -H "Authorization: Bearer $SPARE_TOKEN2" "$BASE/api/runner/whoami"
+body_has "for the same runner, with its labels kept" '"ubuntu-latest"'
+check "the detail page notes the rotation" 200 -b "$JAR" "$BASE/admin/runners/spare"
+body_has "saying when" 'regenerated'
+check "regenerating an unknown runner is a 404" 404 -b "$JAR" "$BASE/admin/runners/nosuchrunner/token" \
+  --data-urlencode "csrf=$CSRF"
+check "remove the second runner" 302 -b "$JAR" "$BASE/admin/runners/spare/remove" --data-urlencode "csrf=$CSRF"
+
 check "runner whoami" 200 -H "Authorization: Bearer $RUNNER_TOKEN" "$BASE/api/runner/whoami"
 body_has "runner identity" '"smoke"'
 check "a user token is not a runner token" 401 -H "Authorization: Bearer $OWNER_TOKEN" "$BASE/api/runner/whoami"

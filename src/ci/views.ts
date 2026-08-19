@@ -3,7 +3,7 @@ import { IconName, icon } from '../icons';
 import { esc, formatSize, timeTag } from '../render';
 import { Viewer } from '../session';
 import { adminShell } from '../forms';
-import { RepoCtx, copyButton, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from '../views';
+import { RepoCtx, copyRow, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from '../views';
 import { ArtifactInfo } from './artifacts';
 import { DispatchableWorkflow } from './engine';
 import { JobRecord, RunRecord, StepState } from './runs';
@@ -375,27 +375,51 @@ ${artifactBox}`;
 
 // ---- runners, under Admin ----
 
-export function runnersPage(
-  viewer: Viewer,
-  runners: { name: string; labels: string[]; allow: string[]; createdBy: string; createdAt: string }[],
-  flash?: string,
-  error?: string
-): string {
+export interface RunnerView {
+  name: string;
+  labels: string[];
+  allow: string[];
+  createdBy: string;
+  createdAt: string;
+  tokenUpdatedAt?: string;
+  // Where the runner is now, as far as the server can tell: when it last
+  // spoke, and the job it holds a lease on. Both are in-memory facts, so a
+  // runner that has not polled since the server started reads as absent.
+  lastSeen: string | null;
+  running: { collection: string; repo: string; run: number; job: string } | null;
+}
+
+// A runner is either working on something, idle but in touch, or not there at
+// all. The third case is the one an operator is usually looking for, so it gets
+// a plain word rather than an empty cell.
+function runnerStatus(r: RunnerView): string {
+  if (r.running) {
+    const at = `/${encodeURIComponent(r.running.collection)}/${encodeURIComponent(
+      r.running.repo
+    )}/actions/runs/${r.running.run}?job=${encodeURIComponent(r.running.job)}`;
+    return `${statusIcon('running')}<span>running <a href="${at}">${esc(r.running.collection)}/${esc(
+      r.running.repo
+    )} #${r.running.run}</a> ${esc(r.running.job)}</span>`;
+  }
+  if (r.lastSeen) {
+    return `${statusIcon('success')}<span>idle, last heard from ${timeTag(r.lastSeen, '')}</span>`;
+  }
+  return `${statusIcon('queued')}<span class="muted">not seen since the vault restarted</span>`;
+}
+
+export function runnersPage(viewer: Viewer, runners: RunnerView[], flash?: string, error?: string): string {
   const rows = runners
     .map(
       (r) =>
-        `<tr><td class="with-avatar-row">${icon('server', 'icon')}<span><b>${esc(r.name)}</b><div class="muted small">registered by ${esc(r.createdBy)}${
+        `<tr><td class="with-avatar-row">${icon('server', 'icon')}<span><b><a href="/admin/runners/${encodeURIComponent(
+          r.name
+        )}">${esc(r.name)}</a></b><div class="muted small">registered by ${esc(r.createdBy)}${
           r.createdAt ? ` ${timeTag(r.createdAt, '')}` : ''
         }</div></span></td>
+<td class="small"><div class="runner-status">${runnerStatus(r)}</div></td>
 <td class="small">${r.labels.map((l) => `<span class="chip">${esc(l)}</span>`).join(' ')}</td>
 <td class="small mono">${esc(r.allow.join(' '))}</td>
-<td class="right"><form method="post" action="/admin/runners/${encodeURIComponent(
-          r.name
-        )}/remove" onsubmit="return confirm('Remove runner ${esc(r.name)}? It will stop being able to take jobs.')">${csrfField(
-          viewer
-        )}<button type="submit" class="btn btn-danger-outline" title="Remove this runner">${icon(
-          'trash'
-        )}<span>Remove</span></button></form></td></tr>`
+<td class="right"><a class="btn" href="/admin/runners/${encodeURIComponent(r.name)}">Details</a></td></tr>`
     )
     .join('');
   const content = `<div class="page-head"><h1>Runners</h1></div>
@@ -423,16 +447,87 @@ ${csrfField(viewer)}
   return adminShell(viewer, 'runners', 'Runners', '/admin/runners', content);
 }
 
-export function runnerTokenPage(viewer: Viewer, name: string, token: string, host: string): string {
+// One runner: what it is allowed to do, whether it is there, and the two
+// operations an operator comes here for, which are getting the start command
+// and replacing a token that was lost or leaked.
+export function runnerPage(viewer: Viewer, r: RunnerView, host: string, flash?: string): string {
+  const fact = (label: string, value: string) =>
+    value ? `<div class="fact"><span class="k">${esc(label)}</span><span class="v">${value}</span></div>` : '';
+  const facts = `<div class="facts">
+${fact('Status', `<span class="runner-status">${runnerStatus(r)}</span>`)}
+${fact(
+    'Labels',
+    r.labels.length ? r.labels.map((l) => `<span class="chip">${esc(l)}</span>`).join(' ') : '<span class="muted">none</span>'
+  )}
+${fact('Repositories', `<span class="mono">${esc(r.allow.join(' '))}</span>`)}
+${fact('Registered', `by ${esc(r.createdBy)}${r.createdAt ? ` ${timeTag(r.createdAt, '')}` : ''}`)}
+${fact('Token', r.tokenUpdatedAt ? `regenerated ${timeTag(r.tokenUpdatedAt, '')}` : 'the one issued at registration')}
+</div>`;
+  const content = `<div class="page-head"><h1>${icon('server', 'icon')}${esc(r.name)}</h1></div>
+${flash ? `<div class="flash">${esc(flash)}</div>` : ''}
+<p class="muted"><a href="/admin/runners">Runners</a> &middot; a machine that takes jobs for ${esc(
+    r.allow.join(', ')
+  )} and runs them under Docker.</p>
+${facts}
+<div class="form-box wide" style="margin-top:24px">
+<h2>Start this runner</h2>
+<p class="muted">On the machine that will execute the jobs, with Docker installed and running, and the <code>cofferdam</code> CLI on the path (<code>npm install -g @magland/cofferdam</code>):</p>
+${copyRow(`cofferdam runner run --host ${host} --runner-token <token>`)}
+<p class="muted small">The token is shown only when it is issued, so if you no longer have it, regenerate it below and the command will be filled in for you. Adding <code>--save</code> writes the host and token to <code>~/.config/cofferdam/runner.json</code>, after which <code>cofferdam runner run</code> needs no arguments; <code>COFFERDAM_RUNNER_TOKEN</code> supplies the token where a command line is the wrong place for it, as in a systemd unit. Leave the process running; it polls for work and exits only when you stop it.</p>
+<p class="muted small">Jobs are matched by label, so this runner will be offered jobs whose <code>runs-on</code> names ${
+    r.labels.length ? r.labels.map((l) => `<code>${esc(l)}</code>`).join(' or ') : 'nothing yet'
+  }.</p>
+</div>
+<div class="form-box wide" style="margin-top:24px">
+<h2>Regenerate token</h2>
+<p class="muted">Issues a new token for ${esc(
+    r.name
+  )} and invalidates the current one. Its labels and repositories are kept, but a runner still running with the old token will start failing to poll and has to be restarted.</p>
+<form method="post" action="/admin/runners/${encodeURIComponent(
+    r.name
+  )}/token" onsubmit="return confirm('Regenerate the token for ${esc(
+    r.name
+  )}? The current token stops working immediately.')">
+${csrfField(viewer)}
+<button type="submit" class="btn">${icon('sync')}<span>Regenerate token</span></button>
+</form>
+</div>
+<div class="form-box wide" style="margin-top:24px">
+<h2>Remove runner</h2>
+<p class="muted">Removes ${esc(
+    r.name
+  )} from the registry. It stops being able to take jobs; a job it is running now will be handed back to the queue when its lease expires.</p>
+<form method="post" action="/admin/runners/${encodeURIComponent(
+    r.name
+  )}/remove" onsubmit="return confirm('Remove runner ${esc(r.name)}? It will stop being able to take jobs.')">
+${csrfField(viewer)}
+<button type="submit" class="btn btn-danger-outline">${icon('trash')}<span>Remove runner</span></button>
+</form>
+</div>`;
+  return adminShell(viewer, 'runners', `Runner ${r.name}`, '/admin/runners', content);
+}
+
+export function runnerTokenPage(
+  viewer: Viewer,
+  name: string,
+  token: string,
+  host: string,
+  regenerated = false
+): string {
+  const heading = regenerated ? `New token for ${name}` : 'Runner registered';
   const content = `<div class="form-box wide">
-<h1>Runner registered</h1>
-<p>The token for <b>${esc(name)}</b> is shown once; only its hash is stored.</p>
-<div class="token-box"><code>${esc(token)}</code></div>
+<h1>${esc(heading)}</h1>
+<p>The token for <b>${esc(name)}</b> is shown once; only its hash is stored.${
+    regenerated ? ' The previous token no longer works.' : ''
+  }</p>
+${copyRow(token)}
 <h2>Start it</h2>
 <p class="muted">On a machine with Docker:</p>
-<div class="cmd-row"><code>cofferdam runner run --host ${esc(host)} --runner-token ${esc(token)}</code>${copyButton()}</div>
-<p class="muted small">Or save it with <code>cofferdam runner login</code> once and run <code>cofferdam runner run</code> with no arguments afterwards.</p>
-<p><a class="btn" href="/admin/runners">Back to runners</a></p>
+${copyRow(`cofferdam runner run --host ${host} --runner-token ${token}`)}
+<p class="muted small">Adding <code>--save</code> keeps the host and token in <code>~/.config/cofferdam/runner.json</code>, so <code>cofferdam runner run</code> needs no arguments afterwards.${
+    regenerated ? ' If the runner is already running with the old token, restart it now.' : ''
+  }</p>
+<p><a class="btn" href="/admin/runners/${encodeURIComponent(name)}">Back to ${esc(name)}</a> <a class="btn" href="/admin/runners">All runners</a></p>
 </div>`;
-  return layout('Runner registered', content, { viewer, path: '/admin/runners' });
+  return layout(heading, content, { viewer, path: '/admin/runners' });
 }
