@@ -314,6 +314,15 @@ async function fetchManifest(target: RemoteTarget, exclude: string[], hash: bool
     } catch {
       // not JSON; the status is all there is to say
     }
+    // A vault that answers other routes and not this one does not have these
+    // routes, which means it is older than this client. Worth saying, because a
+    // bare 404 here reads as "no such vault" and sends the reader looking at the
+    // URL and the token, neither of which is the problem.
+    if (resp.status === 404) {
+      message =
+        `${target.host} has no /api/backup/manifest route, so it is running a cofferdam older than this ` +
+        'command. Deploy the vault again from a version that has it, then run this.';
+    }
     // The same status-to-code mapping every other command uses, so that a
     // caller branching on the exit code does not have to learn a second table.
     throw new CliError(message, exitCodeForStatus(resp.status));
@@ -463,8 +472,22 @@ function writeVia(dest: string, mode: number, fill: (write: (b: Buffer) => void)
     });
 }
 
+/** The same chunked hash the vault computes, so a --checksum run of a large vault
+ * costs a fixed amount of memory on this end too. */
 function sha256Of(file: string): string {
-  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  const h = crypto.createHash('sha256');
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buf = Buffer.allocUnsafe(1 << 16);
+    for (;;) {
+      const n = fs.readSync(fd, buf, 0, buf.length, null);
+      if (n === 0) break;
+      h.update(buf.subarray(0, n));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return h.digest('hex');
 }
 
 // ---- snapshots ----
@@ -1399,11 +1422,15 @@ function rememberBackup(dir: string, host: string): void {
   }
 }
 
-/** What to say about a vault's backup on this machine, if it has one. */
-export function backupLineFor(host: string): string | null {
-  const wanted = host.replace(/\/+$/, '');
+/**
+ * What to say about a vault's backup on this machine, if it has one. Several
+ * hosts may name one vault, since a Fly app with a domain of its own answers on
+ * both, and the backup records whichever name it was given.
+ */
+export function backupLineFor(hosts: string | string[]): string | null {
+  const wanted = new Set((Array.isArray(hosts) ? hosts : [hosts]).map((h) => h.replace(/\/+$/, '')));
   for (const b of knownBackups()) {
-    if (b.host.replace(/\/+$/, '') !== wanted) continue;
+    if (!wanted.has(b.host.replace(/\/+$/, ''))) continue;
     const state = loadState(b.dir);
     const last = state.runs[state.runs.length - 1];
     if (!last) return `${b.dir} (never run)`;

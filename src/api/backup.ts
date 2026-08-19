@@ -63,9 +63,25 @@ function isTempName(name: string): boolean {
   return /\.tmp-\d+$/.test(name);
 }
 
+/**
+ * A file's SHA-256, read in chunks. Bounded memory rather than one Buffer per
+ * file: this runs on a 512mb machine, and an LFS object on the volume can be
+ * gigabytes, so reading a whole file to hash it would be the one place a backup
+ * could take the vault down.
+ */
 function sha256File(file: string): string {
   const h = crypto.createHash('sha256');
-  h.update(fs.readFileSync(file));
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buf = Buffer.allocUnsafe(1 << 16);
+    for (;;) {
+      const n = fs.readSync(fd, buf, 0, buf.length, null);
+      if (n === 0) break;
+      h.update(buf.subarray(0, n));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
   return h.digest('hex');
 }
 

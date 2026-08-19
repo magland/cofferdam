@@ -271,6 +271,18 @@ async function machines(app: string): Promise<MachineInfo[]> {
   return (await flyJson<MachineInfo[]>(['machines', 'list', '-a', app])) ?? [];
 }
 
+/**
+ * The hostnames Fly serves this app under besides <app>.fly.dev, from its
+ * certificates. A vault with a domain of its own is reached by that name, so
+ * anything asking "is this app the one at <url>" has to know both.
+ */
+async function certHostnames(app: string): Promise<string[]> {
+  const certs = (await flyJson<{ hostname?: string }[]>(['certs', 'list', '-a', app])) ?? [];
+  // A wildcard covers each repository's site rather than the vault itself, so it
+  // is not a name the vault answers on.
+  return certs.map((c) => c.hostname ?? '').filter((h) => h !== '' && !h.startsWith('*.'));
+}
+
 async function secretNames(app: string): Promise<string[]> {
   const secrets = (await flyJson<{ Name?: string; name?: string }[]>(['secrets', 'list', '-a', app])) ?? [];
   return secrets.map((s) => s.Name ?? s.name ?? '').filter(Boolean);
@@ -747,7 +759,11 @@ export async function deployShowCmd(args: string[], usage: () => never): Promise
   // Fly's own volume snapshots live at the same provider as the volume, so they
   // are a complement to a backup on a disk of your own rather than a substitute
   // for one. Whether this machine keeps such a copy is worth one line.
-  const backup = backupLineFor(url);
+  //
+  // Both names are offered, because a vault with a domain of its own was almost
+  // certainly backed up by that name rather than by <app>.fly.dev, and a report
+  // that said "none" in that case would be worse than no report at all.
+  const backup = backupLineFor([url, ...(await certHostnames(app)).map((h) => `https://${h}`)]);
   console.log(backup ? `  backup    ${backup}` : '  backup    none on this machine (cofferdam backup <dir>)');
   console.log('');
   console.log(`  fly logs -a ${app}`);

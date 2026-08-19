@@ -96,7 +96,7 @@ cofferdam backup verify ~/backups/myvault    # against the vault, and against gi
 cofferdam backup prune ~/backups/myvault     # retention, without syncing
 ```
 
-`verify` runs `git fsck --connectivity-only` over every mirror, asks the vault for hashes, and reports anything missing, extra, or different, including the hardlink check above. It exits non-zero when there is something to report, so cron will tell you. `--connectivity-only` skips re-hashing every blob, which turns an hour into a minute and still catches the failure that matters, an object the history refers to and the backup does not have.
+`verify` runs `git fsck --connectivity-only` over every mirror, asks the vault for hashes, and reports anything missing, extra, or different, including the hardlink check above. Note that it makes the vault read every byte it holds, so it is a thing to run when something is suspected or on a schedule of its own, not after every sync. It exits non-zero when there is something to report, so cron will tell you. `--connectivity-only` skips re-hashing every blob, which turns an hour into a minute and still catches the failure that matters, an object the history refers to and the backup does not have.
 
 ## What a backup does not promise
 
