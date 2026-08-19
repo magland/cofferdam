@@ -114,7 +114,10 @@ function usage(code = 0): never {
       github.com (--actions-url changes that) and cached under
       ~/.cache/cofferdam (--cache-dir changes that), keyed by the commit the ref
       resolves to, so a moved branch or tag is picked up on the next run;
-      --no-action-cache downloads every time.
+      --no-action-cache downloads every time. --work-dir sets where job
+      workspaces are made, --network which Docker network the container
+      joins, and COFFERDAM_RUNNER_TOKEN supplies the token instead of
+      --runner-token.
 
   cofferdam runner list
   cofferdam runner remove <name>

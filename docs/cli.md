@@ -27,7 +27,7 @@ cofferdam collection add mycollection
 cofferdam import https://github.com/owner/repo mycollection
 ```
 
-There is one way to configure the CLI and it is `cofferdam login`: no environment variables, and no token to re-supply per command. The vault URL is remembered in `~/.config/cofferdam/login.json` (mode 0600) and the token goes to git's own credential store, which is where git needs it anyway for pushing, so a token is kept in one place rather than two (see [Not typing the token every time](#not-typing-the-token-every-time)). `cofferdam logout` undoes both.
+There is one way to configure the CLI and it is `cofferdam login`: nothing to set in the environment, and no token to re-supply per command. (`cofferdam runner run` is the exception, since a runner holds a token that is not any user's; it reads `COFFERDAM_RUNNER_TOKEN`.) The vault URL is remembered in `~/.config/cofferdam/login.json` (mode 0600) and the token goes to git's own credential store, which is where git needs it anyway for pushing, so a token is kept in one place rather than two (see [Not typing the token every time](#not-typing-the-token-every-time)). `cofferdam logout` undoes both.
 
 `cofferdam deploy fly <app>` is the exception to the division above in one respect: it drives flyctl rather than a vault, since at the moment it runs there is no vault yet. It creates a vault on Fly.io, or deploys an update to an existing one, and on a new one it mints the owner token locally and logs you in when the server answers, so nothing needs to be read out of a log (see [Deploying a vault](deploying.md)).
 

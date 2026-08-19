@@ -32,7 +32,7 @@ Within a step: `run` with `shell` and `working-directory`, the file commands (`G
 
 Steps that `use:` an action run too. JavaScript actions (`node16`, `node20`, `node24`) and composite actions work, nested to any depth, with their `pre` and `post` scripts; actions are fetched from github.com as source tarballs and cached on the runner. A local action (`uses: ./.github/actions/thing`) comes from the repository being built. Docker actions (`runs.using: docker`) are not implemented and fail the step with a message saying so, as do reusable workflows, `container:` jobs, and `services:`.
 
-Not implemented: secrets, `actions/cache` and the cache service, `hashFiles()`, and a token for the run (so an action that calls a forge API gets no credential, and one that needs it will say so).
+Not implemented: secrets, `actions/cache` and the cache service, `hashFiles()`, and a token for the run (so an action that calls a forge API gets no credential, and one that needs it will say so). A matrix given as an expression rather than as literal values, typically `fromJSON` over a `needs` output, would have to be expanded when the job starts rather than when the run is planned; it is refused at planning time with a message saying so.
 
 ### Actions cofferdam implements itself
 
@@ -87,6 +87,8 @@ cofferdam runner run --labels ubuntu-latest --image ubuntu-latest=ghcr.io/me/ci:
 
 The runner long-polls for a job, so it needs no inbound connectivity and works behind NAT and through any ordinary HTTP proxy. It takes one job at a time, runs the whole job in a single container (steps `exec` into it, so what one step installs is there for the next), streams logs back as it goes, and reports the result. Ctrl-C finishes the current job and stops.
 
+Job workspaces are made under the system temporary directory, which `--work-dir` changes, and the container joins Docker's default network unless `--network` names another. `COFFERDAM_RUNNER_TOKEN` supplies the runner's token where a command line is the wrong place for it, as in a systemd unit or a container.
+
 Actions named by `uses:` are downloaded from `https://github.com` and cached under `~/.cache/cofferdam`, which `--actions-url` and `--cache-dir` change. The ref is resolved to a commit first, with one `git ls-remote`, and the cache entry is keyed by that commit: a branch or tag that has moved is picked up on the next run, and one that has not is never downloaded again. The log says which commit an action resolved to and whether the copy came from the cache, so a run that used an old copy is not mistaken for one that used the tip. A forge that cannot answer `ls-remote` falls back to keying by name and re-fetching after a day, and says so. `--no-action-cache` downloads every time.
 
 `runs-on` labels map to images. The defaults cover `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, and `self-hosted` with the [`catthehacker`](https://github.com/catthehacker/docker_images) images that `act` also uses; `--image <label>=<image>` overrides any of them, and an unmapped label that looks like an image name (`runs-on: node:24`) is used as one. Note that the images decide what your workflows can assume: a bare `ubuntu:24.04` has no node, no python, and no compilers.
@@ -100,8 +102,8 @@ Run state is files, like everything else:
 ```
 <vault>/mycollection/myrepo.runs/
   12/
-    run.json          the run: trigger, ref, sha, status, job order
-    jobs/build.json   one per job: steps, timings, outputs
+    run.json          the run: event, ref, sha, status, job order
+    jobs/build.json   one per job: steps, start and finish times, outputs
     jobs/build.log    the log, one JSON object per line
 ```
 

@@ -67,7 +67,7 @@ my-vault-name  https://my-vault-name.fly.dev
   login     this is the vault cofferdam commands use
 ```
 
-`cofferdam deploy destroy my-vault-name` removes the app, the volume, and with them the vault; it asks you to type the app name first, and also drops the stored credential for a vault that no longer exists. Anything else is flyctl's job, and flyctl is already on your machine: `fly logs -a my-vault-name`, `fly ssh console -a my-vault-name`, `fly certs add vault.example.org` for a domain of your own.
+`cofferdam deploy destroy my-vault-name` removes the app, the volume, and with them the vault; it asks you to type the app name first (`--yes` skips the prompt, for a script that means it), and also drops the stored credential for a vault that no longer exists. Anything else is flyctl's job, and flyctl is already on your machine: `fly logs -a my-vault-name`, `fly ssh console -a my-vault-name`, `fly certs add vault.example.org` for a domain of your own.
 
 ### LFS objects in a bucket
 
@@ -107,6 +107,10 @@ primary_region = "ewr"
   auto_stop_machines = "stop"
   auto_start_machines = true
   min_machines_running = 0
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 250
+    soft_limit = 200
 
 [[vm]]
   cpu_kind = "shared"
