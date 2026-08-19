@@ -2,6 +2,7 @@ import express, { Express, Request, Response } from 'express';
 import { CiEngine } from './ci/engine';
 import { loadConfig, saveConfig } from './config';
 import { isValidRefName, isValidRepoPath, isValidSha } from './git';
+import { firePush } from './ci/trigger';
 import { AuthLimiter } from './limit';
 import { LfsContext } from './lfsstore';
 import { looksLikePointer } from './pointer';
@@ -90,23 +91,16 @@ export function registerWebOps(
   lfs: LfsContext | null = null,
   engine?: CiEngine
 ): void {
-  // A commit made in the browser is a push like any other as far as
-  // workflows are concerned, so the same event goes to the CI engine. A
-  // failure here is logged and never allowed to affect the operation the
-  // user asked for, which has already been committed by this point.
-  function firePush(repo: { dir: string; collection: string; name: string }, branch: string, before: string | null, after: string, actor: string): void {
-    if (!engine) return;
-    const gitRepo = findRepo(root, repo.collection, repo.name);
-    if (!gitRepo) return;
-    engine
-      .handlePush(gitRepo, {
-        ref: `refs/heads/${branch}`,
-        before: before ?? '0'.repeat(40),
-        after,
-        actor,
-      })
-      .catch((e) => console.error(`CI trigger failed: ${e instanceof Error ? e.message : e}`));
-  }
+  // A commit made in the browser is a push like any other as far as workflows
+  // are concerned, so the same event goes to the CI engine, through the same
+  // function the API write paths use.
+  const fire = (
+    repo: { dir: string; collection: string; name: string },
+    branch: string,
+    before: string | null,
+    after: string,
+    actor: string
+  ) => firePush(root, engine, repo, branch, before, after, actor);
 
   /**
    * Where a commit from the editor should land. Ticking "commit to a new
@@ -363,7 +357,7 @@ export function registerWebOps(
           expectedHead: null,
           action: { kind: 'create', content: Buffer.from(`# ${name}\n${description ? `\n${description}\n` : ''}`) },
         });
-        firePush(repo, 'main', null, sha, viewer.auth.username);
+        fire(repo, 'main', null, sha, viewer.auth.username);
       }
       res.redirect(`/${encodeURIComponent(collection)}/${encodeURIComponent(name)}`);
     })
@@ -528,7 +522,7 @@ export function registerWebOps(
           expectedHead: expected,
           action: { kind: 'edit', content: Buffer.from(content, 'utf8'), toPath },
         });
-        firePush(loaded.repo, onto, expected, sha, viewer.auth.username);
+        fire(loaded.repo, onto, expected, sha, viewer.auth.username);
       } catch (e) {
         await handleOpError(e, req, res, viewer, target, retryUrl);
         return;
@@ -645,7 +639,7 @@ export function registerWebOps(
           author: authorFor(viewer, req),
           expectedHead: expected,
         });
-        firePush(loaded.repo, onto, expected, sha, viewer.auth.username);
+        fire(loaded.repo, onto, expected, sha, viewer.auth.username);
       } catch (e) {
         await handleOpError(e, req, res, viewer, target, retryUrl);
         return;
@@ -712,7 +706,7 @@ export function registerWebOps(
           expectedHead: expected,
           action: { kind: 'create', content: Buffer.from(content, 'utf8') },
         });
-        firePush(loaded.repo, onto, expected, sha, viewer.auth.username);
+        fire(loaded.repo, onto, expected, sha, viewer.auth.username);
       } catch (e) {
         await handleOpError(e, req, res, viewer, target, retryUrl);
         return;
@@ -768,7 +762,7 @@ export function registerWebOps(
           expectedHead: expected,
           action: { kind: 'delete' },
         });
-        firePush(loaded.repo, branch, expected, sha, viewer.auth.username);
+        fire(loaded.repo, branch, expected, sha, viewer.auth.username);
       } catch (e) {
         await handleOpError(e, req, res, viewer, target, retryUrl);
         return;
@@ -805,7 +799,7 @@ export function registerWebOps(
         await ops.createBranch(loaded.repo.dir, name, from);
         const created = loaded.branches.find((b) => b.name === from);
         const tip = created?.sha ?? loaded.tags.find((t) => t.name === from)?.sha;
-        if (tip) firePush(loaded.repo, name, null, tip, viewer.auth.username);
+        if (tip) fire(loaded.repo, name, null, tip, viewer.auth.username);
       } catch (e) {
         if (e instanceof OpError) {
           fail(res, e.kind === 'notfound' ? 404 : 400, e.message, viewer, backUrl);

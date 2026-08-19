@@ -1,15 +1,15 @@
 import { Express, Request, Response } from 'express';
 import { avatar } from './avatar';
 import { CiEngine } from './ci/engine';
+import { firePush } from './ci/trigger';
 import { renderDiff } from './diff';
 import { CommitSummary, isValidRefName } from './git';
 import { icon } from './icons';
 import { renderMarkdown } from './markdown';
-import { OpError, deleteBranch, mergeBranch, previewMerge, MergePreview } from './ops';
+import { OpError, previewMerge, MergePreview } from './ops';
 import * as pulls from './pulls';
 import { Pull, PullSummary } from './pulls';
 import { esc, timeTag } from './render';
-import { findRepo } from './scan';
 import { Viewer, getViewer } from './session';
 import { RepoCtx, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from './views';
 import {
@@ -322,23 +322,6 @@ ${
 }
 
 export function registerPulls(app: Express, root: string, engine?: CiEngine): void {
-  // A merge moves a branch, which is a push as far as workflows are
-  // concerned, so the same event goes to the CI engine. A failure there is
-  // logged and never allowed to affect the merge, which has already happened.
-  function firePush(
-    repo: { collection: string; name: string },
-    branch: string,
-    before: string,
-    after: string,
-    actor: string
-  ): void {
-    if (!engine) return;
-    const gitRepo = findRepo(root, repo.collection, repo.name);
-    if (!gitRepo) return;
-    engine
-      .handlePush(gitRepo, { ref: `refs/heads/${branch}`, before, after, actor })
-      .catch((e) => console.error(`CI trigger failed: ${e instanceof Error ? e.message : e}`));
-  }
 
   /** The repository context plus the pull request named in the URL. */
   async function withPull(req: Request, res: Response, viewer: Viewer | null) {
@@ -431,21 +414,16 @@ export function registerPulls(app: Express, root: string, engine?: CiEngine): vo
       const ctx = await makeCtx(root, req, loaded, loaded.defaultBranch ?? '', viewer);
       const baseRef = field(req, 'base');
       const headRef = field(req, 'head');
-      const names = ctx.branches.map((b) => b.name);
-      if (!names.includes(baseRef) || !names.includes(headRef)) {
-        fail(res, 400, 'Both the base and the compare branch must exist.', viewer, `${pullsUrl(ctx)}/new`);
-        return;
-      }
       const title = field(req, 'title');
       const text = field(req, 'body');
       try {
-        const created = pulls.createPull(root, ctx.collection, ctx.repo, {
-          title,
-          body: text,
-          author: viewer.auth.username,
-          base: baseRef,
-          head: headRef,
-        });
+        const created = pulls.openPull(
+          root,
+          ctx.collection,
+          ctx.repo,
+          { title, body: text, author: viewer.auth.username, base: baseRef, head: headRef },
+          ctx.branches.map((b) => b.name)
+        );
         res.redirect(`${pullsUrl(ctx)}/${created.number}`);
       } catch (e) {
         const message = e instanceof OpError ? e.message : 'Could not open the pull request.';
@@ -567,18 +545,8 @@ export function registerPulls(app: Express, root: string, engine?: CiEngine): vo
         fail(res, 403, `You do not have push access to ${ctx.collection}/${ctx.repo}.`, viewer, back);
         return;
       }
-      // Only the branch this pull request proposed, only once it is over, and
-      // never the branch it was merged into.
-      if (pull.state !== 'merged') {
-        fail(res, 400, 'The branch can be deleted once this pull request is merged.', viewer, back);
-        return;
-      }
-      if (pull.head === ctx.defaultBranch) {
-        fail(res, 400, 'The default branch cannot be deleted.', viewer, back);
-        return;
-      }
       try {
-        await deleteBranch(loaded.repo.dir, pull.head);
+        await pulls.deletePullBranch(root, loaded.repo, pull.number, { defaultBranch: ctx.defaultBranch });
       } catch (e) {
         fail(res, 400, e instanceof OpError ? e.message : 'Could not delete the branch.', viewer, back);
         return;
@@ -608,44 +576,26 @@ export function registerPulls(app: Express, root: string, engine?: CiEngine): vo
         return;
       }
       const method = field(req, 'method') === 'squash' ? 'squash' : 'merge';
-      const message =
-        method === 'squash'
-          ? `${pull.title} (#${pull.number})\n\n${pull.body.trim()}`.trimEnd()
-          : `Merge pull request #${pull.number} from ${pull.head}\n\n${pull.title}`;
       const host = (req.get('host') ?? 'localhost').replace(/:\d+$/, '');
-      let outcome;
+      let result;
       try {
-        outcome = await mergeBranch(
-          loaded.repo.dir,
-          pull.base,
-          pull.head,
-          message,
-          { name: viewer.auth.username, email: `${viewer.auth.username}@noreply.${host}` },
-          method
+        result = await pulls.mergePull(
+          root,
+          loaded.repo,
+          pull.number,
+          { username: viewer.auth.username, email: `${viewer.auth.username}@noreply.${host}` },
+          { method },
+          { defaultBranch: ctx.defaultBranch }
         );
       } catch (e) {
+        if (e instanceof pulls.MergeConflict) {
+          fail(res, 409, e.message, viewer, back);
+          return;
+        }
         fail(res, 400, e instanceof OpError ? e.message : 'The merge failed.', viewer, back);
         return;
       }
-      if (outcome.status === 'conflict') {
-        fail(res, 409, 'This branch has conflicts that must be resolved before it can be merged.', viewer, back);
-        return;
-      }
-      if (outcome.status === 'up-to-date') {
-        fail(res, 400, `${pull.base} already contains everything on ${pull.head}.`, viewer, back);
-        return;
-      }
-      pulls.recordMerge(root, ctx.collection, ctx.repo, pull.number, {
-        actor: viewer.auth.username,
-        sha: outcome.sha,
-      });
-      firePush(
-        { collection: ctx.collection, name: ctx.repo },
-        pull.base,
-        outcome.before,
-        outcome.sha,
-        viewer.auth.username
-      );
+      firePush(root, engine, { collection: ctx.collection, name: ctx.repo }, pull.base, result.before, result.sha, viewer.auth.username);
       res.redirect(back);
     })
   );

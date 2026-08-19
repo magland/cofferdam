@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { writeFileAtomic } from './atomic';
-import { OpError } from './ops';
+import { MergeMethod, OpError, deleteBranch, mergeBranch } from './ops';
 import { displayName, isValidName } from './scan';
 
 // Pull requests, stored in the vault beside the issues.
@@ -380,4 +380,124 @@ export function editPull(
 function touchPulls(root: string, collection: string, repo: string): void {
   const dir = pullsDir(root, collection, repo);
   if (dir) touch(dir);
+}
+
+
+// ---- the operations a transport performs, rather than the state it stores ----
+//
+// Opening and merging a pull request are each a sequence: validate against the
+// branches the repository really has, write the record, move a branch, write the
+// record again. Those sequences lived inside the web handlers, which made the web
+// the only place that could perform them correctly. They take plain values and
+// throw OpError, so the web handler and the API handler are transports over one
+// implementation rather than two implementations that ought to agree.
+//
+// The actor is the one thing the two transports genuinely disagree about: a
+// Viewer resolved from a session cookie on the web, an AuthResult from a bearer
+// token on the API. Both carry a username, so that is all these take.
+
+/**
+ * A merge refused because it does not apply. Separate from a plain OpError
+ * because the caller has something useful to say: which paths conflict.
+ */
+export class MergeConflict extends OpError {
+  readonly paths: string[];
+  constructor(paths: string[]) {
+    super('This branch has conflicts that must be resolved before it can be merged.', 'conflict');
+    this.paths = paths;
+  }
+}
+
+/**
+ * Open a pull request, having checked that both refs are branches this
+ * repository actually has. The caller supplies the branch names because it has
+ * already listed them; asking git again here would be a second answer to a
+ * question already asked.
+ */
+export function openPull(
+  root: string,
+  collection: string,
+  repo: string,
+  input: { title: string; body: string; author: string; base: string; head: string },
+  branches: string[]
+): PullSummary {
+  if (!branches.includes(input.base) || !branches.includes(input.head)) {
+    throw new OpError('Both the base and the compare branch must exist.');
+  }
+  return createPull(root, collection, repo, input);
+}
+
+/** The commit message a merge gets when the caller does not supply one. */
+export function defaultMergeMessage(pull: Pull | PullSummary, method: MergeMethod, body = ''): string {
+  return method === 'squash'
+    ? `${pull.title} (#${pull.number})\n\n${body.trim()}`.trimEnd()
+    : `Merge pull request #${pull.number} from ${pull.head}\n\n${pull.title}`;
+}
+
+export interface MergeResult {
+  sha: string;
+  before: string;
+  fastForward: boolean;
+  branchDeleted: boolean;
+}
+
+/**
+ * Merge a pull request: check it is open, merge its head into its base, record
+ * the merge, and optionally delete the head branch.
+ *
+ * The caller fires the push event afterwards, since it holds the CI engine, and
+ * moving a branch is a push whichever transport did it.
+ */
+export async function mergePull(
+  root: string,
+  repo: { dir: string; collection: string; name: string },
+  n: number,
+  actor: { username: string; email: string },
+  request: { method: MergeMethod; message?: string; deleteBranch?: boolean },
+  opts: { defaultBranch: string | null }
+): Promise<MergeResult> {
+  const pull = readPull(root, repo.collection, repo.name, n);
+  if (!pull) throw new OpError(`Pull request ${n} does not exist.`, 'notfound');
+  if (pull.state !== 'open') throw new OpError('This pull request is not open.');
+  const message = request.message?.trim() || defaultMergeMessage(pull, request.method, pull.body);
+  const outcome = await mergeBranch(repo.dir, pull.base, pull.head, message, {
+    name: actor.username,
+    email: actor.email,
+  }, request.method);
+  if (outcome.status === 'conflict') throw new MergeConflict(outcome.paths);
+  if (outcome.status === 'up-to-date') {
+    throw new OpError(`${pull.base} already contains everything on ${pull.head}.`, 'nochange');
+  }
+  recordMerge(root, repo.collection, repo.name, n, { actor: actor.username, sha: outcome.sha });
+  let branchDeleted = false;
+  if (request.deleteBranch) {
+    // A failure to delete the branch must not read as a failure to merge, which
+    // has already happened and cannot be undone. It is reported as part of the
+    // result instead.
+    try {
+      await deletePullBranch(root, repo, n, opts);
+      branchDeleted = true;
+    } catch (e) {
+      console.error(`merged #${n} but could not delete ${pull.head}: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+  return { sha: outcome.sha, before: outcome.before, fastForward: outcome.fastForward, branchDeleted };
+}
+
+/**
+ * Delete the branch a pull request proposed: only that branch, only once the
+ * pull request is over, and never the branch it was merged into.
+ */
+export async function deletePullBranch(
+  root: string,
+  repo: { dir: string; collection: string; name: string },
+  n: number,
+  opts: { defaultBranch: string | null }
+): Promise<string> {
+  const pull = readPull(root, repo.collection, repo.name, n);
+  if (!pull) throw new OpError(`Pull request ${n} does not exist.`, 'notfound');
+  if (pull.state !== 'merged') throw new OpError('The branch can be deleted once this pull request is merged.');
+  if (pull.head === opts.defaultBranch) throw new OpError('The default branch cannot be deleted.');
+  await deleteBranch(repo.dir, pull.head);
+  return pull.head;
 }
