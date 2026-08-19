@@ -18,7 +18,7 @@ Workflows are read from two directories:
 .github/workflows/*.yml     also read, so repositories work unchanged
 ```
 
-Both are collected. A file in `.cofferdam/workflows` shadows one with the same basename in `.github/workflows`, which is how a repository adapts a single workflow for cofferdam without forking the rest of them. The workflow syntax is GitHub's, the context is spelled `github`, and the environment variables are the `GITHUB_*` ones, because compatibility is the whole point of the layer.
+Both are collected. A file in `.cofferdam/workflows` shadows one of the same name in `.github/workflows`, which is how a repository adapts a single workflow for cofferdam without forking the rest of them. The name has to match in full, extension included, so a `build.yml` here does not shadow a `build.yaml` there and both would run. The workflow syntax is GitHub's, the context is spelled `github`, and the environment variables are the `GITHUB_*` ones, because compatibility is the whole point of the layer.
 
 ### What runs today
 
@@ -103,10 +103,10 @@ Run state is files, like everything else:
     jobs/build.log    the log, one JSON object per line
 ```
 
-Runs are the one part of a vault that grows without bound, so they are pruned. The default keeps the last 100 completed runs per repository; `config.json` tunes it:
+Runs are the one part of a vault that grows without bound, so they are pruned. The defaults keep the last 100 completed runs per repository, apply no age rule, and cap a single artifact upload at 500 MB, which is `{ "runs": 100, "days": 0, "artifactMb": 500 }`. `config.json` tunes any of them:
 
 ```json
-{ "theme": "paper", "ci": { "runs": 100, "days": 30, "artifactMb": 500 } }
+{ "theme": "paper", "ci": { "runs": 50, "days": 30, "artifactMb": 200 } }
 ```
 
-`days` of `0` disables the age rule. Active runs are never pruned. `artifactMb` caps a single artifact upload.
+That keeps fewer runs than the default, and also drops completed runs older than 30 days; `days` of `0`, the default, disables the age rule. Active runs are never pruned.

@@ -7,6 +7,7 @@ A vault is a plain directory. Each subdirectory of it is a collection, and each 
 ```
 <vault>/
   vault.json              (users and hashed tokens; created on first start)
+  config.json             (vault settings: theme, and CI run retention)
   .secret                 (session-cookie signing key; created on first need)
   runners.json            (registered workflow runners; created when you add one)
   alice/
@@ -28,7 +29,7 @@ There is nothing else: no database, and no state outside this directory. That is
 
 ## Signing in on the web
 
-Users sign in with their username and an existing token, the same credential git uses for pushing; there are no passwords and no separate web credential. The server sets a signed, stateless session cookie (30 days, `HttpOnly`, `SameSite=Lax`, `Secure` over HTTPS). The signing key lives in `<vault>/.secret`; rotating that file invalidates every session at once, and permissions are re-derived from `vault.json` on every request, so removing a user's tokens cuts off their sessions immediately.
+Users sign in with their username and an existing token, the same credential git uses for pushing; there are no passwords and no separate web credential. The server sets a signed, stateless session cookie (30 days, `HttpOnly`, `SameSite=Lax`, `Secure` over HTTPS). The signing key lives in `<vault>/.secret`; rotating that file invalidates every session at once, and permissions are re-derived from `vault.json` on every request, so a scope taken away from a user applies to their open session on their next click. Note the one thing this does not give you: a session records who signed in, not which of that user's tokens they signed in with, so deleting a single token does not end a session it started. Removing a user's last token, or the user, does end their sessions. Until then the way to cut off one session is to rotate `.secret`, which ends all of them.
 
 Abilities in the interface mirror the token model exactly. Push scope over a repository enables creating it, editing files, and managing branches and tags; admin scope enables user management and repository deletion. Signing in with a restricted (token-scoped) token carries that restriction into the session, and such sessions have no admin rights. Controls a user cannot use are simply not shown.
 

@@ -170,13 +170,18 @@ Note that `--scope` on `cofferdam user add` applies only when creating a user; o
 The CLI is a thin client over a small API, authenticated with `Authorization: Bearer <token>`:
 
 ```
-GET  /api/whoami                user, scopes, and restriction of the presented token
-GET  /api/collections           collections and how many repositories each holds
-GET  /api/collections/:name     one collection and the repositories in it
-POST /api/collections           create an empty collection      {name}
-GET  /api/users                 list users (admin required)
-POST /api/users                 create a user or mint a token  {username, scope?, admin?, tokenScope?}
-POST /api/users/:name/grant     extend a user's scopes         {scope?, admin?}
+GET    /api/whoami              user, scopes, and restriction of the presented token
+GET    /api/collections         collections and how many repositories each holds
+GET    /api/collections/:name   one collection and the repositories in it
+POST   /api/collections         create an empty collection      {name}
+GET    /api/users               list users (admin required)
+POST   /api/users               create a user or mint a token  {username, scope?, admin?, tokenScope?}
+POST   /api/users/:name/grant   extend a user's scopes         {scope?, admin?}
+GET    /api/runners             list registered runners (admin required)
+POST   /api/runners             register a runner, returning its token once  {name, labels?, allow}
+DELETE /api/runners/:name       remove a runner (admin over what it serves)
 ```
 
 The API accepts only bearer tokens and git accepts only Basic auth; session cookies never authorize either. The two credential presentations stay deliberately distinct.
+
+A runner authenticates with its own token rather than a user's, and the endpoints it uses to take jobs and report on them (`/api/runner/*`) are a protocol between the vault and the runner rather than an interface to program against, so they are not listed here. [Workflows](workflows.md) describes what a runner is and what it does.
