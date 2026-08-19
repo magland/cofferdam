@@ -4,8 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { GitRepo, execGit, execGitStatus, isValidRefName, isValidRepoPath, isValidSha } from './git';
 import type { LfsStore } from './lfsstore';
-import { runsDir } from './ci/runs';
-import { findRepo, isValidName, siteDir } from './scan';
+import { displayName, findRepo, isValidName } from './scan';
 
 // The shared write-operations layer. Every function takes explicit arguments
 // and enforces no authorization: the route layer knows the actor and decides.
@@ -508,15 +507,31 @@ export function containedIn(rootReal: string, target: string): boolean {
   return real.startsWith(rootReal + path.sep);
 }
 
+// The directories a repository accumulates beside its bare repository, by the
+// suffix each one carries. Every feature has its own helper for the directory
+// it owns (siteDir, runsDir, issuesDir, pullsDir, releasesDir), but rename and
+// delete are the two places that need the whole set, and a set spelled out in
+// two places is a set one of them falls behind on. The list therefore lives
+// here, where both read it, so a sibling added later is added once.
+//
+// LFS objects are not in the list. Without a bucket they do sit in a sibling
+// <repo>.lfs, but with one they do not sit on disk at all, so the store is
+// asked to move or drop them rather than having its path assumed.
+export const repoSiblingSuffixes = ['.site', '.runs', '.issues', '.pulls', '.releases'];
+
+function siblingDir(root: string, collection: string, name: string, suffix: string): string {
+  return path.join(root, collection, `${displayName(name)}${suffix}`);
+}
+
 /**
  * Rename a repository, or move it to another collection - the two are one
  * operation, since both are a directory rename.
  *
  * Everything that belongs to the repository moves with it: the bare
- * repository, its static site, its workflow runs, its issues, its releases,
- * and its LFS objects. Leaving any of them behind would strand state that
- * only that repository can reach, and worse, a repository later created under
- * the old name would inherit it.
+ * repository, its static site, its workflow runs, its issues, its pull
+ * requests, its releases, and its LFS objects. Leaving any of them behind
+ * would strand state that only that repository can reach, and worse, a
+ * repository later created under the old name would inherit it.
  *
  * The move is a sequence of renames rather than one atomic act, which is the
  * honest limit of a filesystem-backed store. The repository itself moves
@@ -554,18 +569,17 @@ export async function renameRepo(
   fs.renameSync(repo.dir, destRepo);
 
   // The siblings, each moved only if it is there and inside the vault.
-  const move = (from: string | null, to: string) => {
-    if (!from || !containedIn(rootReal, from)) return;
+  // containedIn resolves the path first, so a sibling that was never created
+  // fails the same check as one pointing out of the vault, and is skipped.
+  const move = (from: string, to: string) => {
+    if (!containedIn(rootReal, from)) return;
     if (fs.existsSync(to)) {
       throw new OpError(`${path.basename(to)} already exists next to ${toCollection}/${toName}`, 'exists');
     }
     fs.renameSync(from, to);
   };
-  move(siteDir(root, collection, name), path.join(destCollection, `${toName}.site`));
-  move(runsDir(root, collection, name), path.join(destCollection, `${toName}.runs`));
-  for (const kind of ['issues', 'releases']) {
-    const from = path.join(root, collection, `${name}.${kind}`);
-    move(fs.existsSync(from) ? from : null, path.join(destCollection, `${toName}.${kind}`));
+  for (const suffix of repoSiblingSuffixes) {
+    move(siblingDir(root, collection, name, suffix), path.join(destCollection, `${toName}${suffix}`));
   }
   // LFS objects carry the repository in their key or their path, so the store
   // moves them itself. Unlike deletion this is not best-effort: an object left
@@ -573,6 +587,11 @@ export async function renameRepo(
   if (lfs) await lfs.renameRepo(collection, name, toCollection, toName);
 }
 
+/**
+ * Delete a repository and everything it accumulated: the bare repository, its
+ * static site, its workflow runs, its issues, its pull requests, its
+ * releases, and its LFS objects.
+ */
 export async function deleteRepo(
   root: string,
   collection: string,
@@ -586,16 +605,16 @@ export async function deleteRepo(
     throw new OpError('repository directory is outside the vault; refusing to delete');
   }
   fs.rmSync(repo.dir, { recursive: true, force: true });
-  const site = siteDir(root, collection, name);
-  if (site && containedIn(rootReal, site)) {
-    fs.rmSync(site, { recursive: true, force: true });
-  }
-  // Workflow runs go too. Leaving them would orphan the history, and worse,
-  // a repository later created under the same name would inherit it, with
-  // run numbers continuing from someone else's runs.
-  const runs = runsDir(root, collection, name);
-  if (runs && containedIn(rootReal, runs)) {
-    fs.rmSync(runs, { recursive: true, force: true });
+  // The siblings go too: the site, the workflow runs, the issues, the pull
+  // requests, and the releases. Leaving any of them would orphan a history
+  // nothing can reach, and worse, a repository later created under the same
+  // name would inherit it, with run, issue, and pull numbers continuing from
+  // someone else's.
+  for (const suffix of repoSiblingSuffixes) {
+    const dir = siblingDir(root, collection, name, suffix);
+    if (containedIn(rootReal, dir)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   }
   // Stored LFS objects go too, best-effort: by this point the repository is
   // gone and the objects are unreachable garbage, so a storage failure is

@@ -138,6 +138,26 @@ body_lacks() {
   if grep -q -e "$pattern" "$BODY"; then echo "FAIL: $desc (pattern unexpectedly found: $pattern)"; exit 1; fi
   PASS=$((PASS+1)); echo "ok: $desc"
 }
+# A repository is a bare repository plus the sibling directories it
+# accumulates beside it: .site, .runs, .issues, .pulls, .releases. Renaming
+# one must take all of them along and deleting one must take all of them away,
+# or a repository later created under the old name inherits somebody else's
+# issues and pull request numbers. Asking about the whole set by glob rather
+# than naming each directory is deliberate: a check that names them dates the
+# moment a sixth is added, which is how .pulls came to be missed by both.
+dir_exists() {
+  local desc="$1" dir="$2"
+  [ -d "$dir" ] || { echo "FAIL: $desc (no such directory: $dir)"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: $desc"
+}
+no_trace_of() {
+  local desc="$1" collection="$2" name="$3" left
+  left="$(ls -d "$VAULT/$collection/$name" "$VAULT/$collection/$name."* 2>/dev/null || true)"
+  if [ -n "$left" ]; then
+    echo "FAIL: $desc (left behind in the vault:)"; echo "$left"; exit 1
+  fi
+  PASS=$((PASS+1)); echo "ok: $desc"
+}
 csrf_of() { { grep -o 'name="csrf" value="[^"]*"' "$BODY" || true; } | head -1 | sed 's/.*value="//;s/"$//'; }
 expected_of() { { grep -o 'name="expected" value="[^"]*"' "$BODY" || true; } | head -1 | sed 's/.*value="//;s/"$//'; }
 
@@ -609,9 +629,8 @@ check "renaming to its own name is refused" 400 -b "$JAR" "$BASE/demo/renamed/se
 check "move to another collection" 302 -b "$JAR" "$BASE/demo/renamed/settings/rename" \
   --data-urlencode "csrf=$CSRF" --data-urlencode collection=moved --data-urlencode name=proj
 check "the repository is in the new collection" 200 "$BASE/moved/proj"
-[ -d "$VAULT/moved/proj.issues" ] || { echo "FAIL: issues did not move to the new collection"; exit 1; }
-[ -d "$VAULT/demo/proj.issues" ] && { echo "FAIL: issues left behind in the old collection"; exit 1; }
-PASS=$((PASS+2)); echo "ok: the issue directory moved with the repository"
+dir_exists "the issue directory moved to the new collection" "$VAULT/moved/proj.issues"
+no_trace_of "nothing of the repository is left in the old collection" demo proj
 check "move it back" 302 -b "$JAR" "$BASE/moved/proj/settings/rename" \
   --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=proj
 check "back at its old address" 200 "$BASE/demo/proj"
@@ -2073,6 +2092,32 @@ check "delete the ci repo" 302 -b "$JAR" "$BASE/demo/ci/settings/delete" \
 [ ! -e "$VAULT/demo/ci.runs" ] || { echo "FAIL: .runs directory survived repository deletion"; exit 1; }
 PASS=$((PASS+1)); echo "ok: repository deletion removed its run history"
 
+# ---- renaming a repository that has accumulated everything ----
+
+# The rename earlier in this suite ran before this repository had pull requests
+# or releases, which is how a rename that moved four of its five siblings and
+# stranded the fifth went unnoticed. By now demo/proj has issues, a merged pull
+# request, and a release, so the round trip here is the one that asks whether
+# all of them travel.
+
+dir_exists "the repository has pull requests to move" "$VAULT/demo/proj.pulls"
+check "settings before the round trip" 200 -b "$JAR" "$BASE/demo/proj/settings"
+CSRF="$(csrf_of)"
+check "rename a repository with everything on it" 302 -b "$JAR" "$BASE/demo/proj/settings/rename" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=fullhouse
+check "the renamed repository serves" 200 "$BASE/demo/fullhouse"
+# Each of these asks for a specific stored thing rather than for the list that
+# would hold it, because an empty list answers 200 just as happily.
+check "its issues came along" 200 "$BASE/demo/fullhouse/issues/1"
+check "its pull requests came along" 200 "$BASE/demo/fullhouse/pulls/1"
+check "its releases came along" 200 "$BASE/demo/fullhouse/releases/tag/v2.0.0"
+no_trace_of "nothing of the repository is left under the old name" demo proj
+check "settings after the round trip" 200 -b "$JAR" "$BASE/demo/fullhouse/settings"
+CSRF="$(csrf_of)"
+check "rename it back" 302 -b "$JAR" "$BASE/demo/fullhouse/settings/rename" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=proj
+check "back at its old address" 200 "$BASE/demo/proj/pulls/1"
+
 # ---- repository deletion ----
 
 check "settings for deletion" 200 -b "$JAR" "$BASE/demo/proj/settings"
@@ -2082,8 +2127,9 @@ check "wrong confirm refused" 400 -b "$JAR" "$BASE/demo/proj/settings/delete" \
 check "delete repo" 302 -b "$JAR" "$BASE/demo/proj/settings/delete" \
   --data-urlencode "csrf=$CSRF" --data-urlencode confirm=demo/proj
 check "deleted repo is gone" 404 "$BASE/demo/proj"
-[ ! -e "$VAULT/demo/proj.git" ] || { echo "FAIL: repo directory still on disk"; exit 1; }
-PASS=$((PASS+1)); echo "ok: repo directory removed"
+# Not only the bare repository: a sibling left behind here would be inherited,
+# issue and pull request numbers included, by the next repository of this name.
+no_trace_of "deletion removed the repository and every sibling of it" demo proj
 
 # ---- an owner token supplied to a new vault ----
 
