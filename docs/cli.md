@@ -75,6 +75,8 @@ Failures are also JSON when `--json` was asked for: `{"error": "..."}` on stderr
 
 4 and 5 are the two worth branching on, since "does this exist" and "did someone else get there first" are the questions a retrying caller asks.
 
+## The commands
+
 ### Working on a repository
 
 The repository commands read and write a repository over the API, so they need no clone:
@@ -353,21 +355,10 @@ Note that `--scope` on `cofferdam user add` applies only when creating a user; o
 
 ### JSON API
 
-The CLI is a thin client over a small API, authenticated with `Authorization: Bearer <token>`:
+The CLI is a thin client over the JSON API, authenticated with `Authorization: Bearer <token>`. Every operation the web interface offers has a route, and [The JSON API](api.md) is the reference: every route, its body, its response, and what it requires of the caller.
 
-```
-GET    /api/whoami              user, scopes, and restriction of the presented token
-GET    /api/collections         collections and how many repositories each holds
-GET    /api/collections/:name   one collection and the repositories in it
-POST   /api/collections         create an empty collection      {name}
-GET    /api/users               list users (admin required)
-POST   /api/users               create a user or mint a token  {username, scope?, admin?, tokenScope?}
-POST   /api/users/:name/grant   extend a user's scopes         {scope?, admin?}
-GET    /api/runners             list registered runners (admin required)
-POST   /api/runners             register a runner, returning its token once  {name, labels?, allow}
-DELETE /api/runners/:name       remove a runner (admin over what it serves)
-```
+The API accepts only bearer tokens and git accepts only Basic auth; session cookies never authorize either. The three credential presentations stay deliberately distinct.
 
-The API accepts only bearer tokens and git accepts only Basic auth; session cookies never authorize either. The two credential presentations stay deliberately distinct.
+A runner authenticates with its own token rather than a user's, and the endpoints it uses to take jobs and report on them (`/api/runner/*`) are a protocol between the vault and the runner rather than an interface to program against. [Workflows](workflows.md) describes what a runner is and what it does.
 
-A runner authenticates with its own token rather than a user's, and the endpoints it uses to take jobs and report on them (`/api/runner/*`) are a protocol between the vault and the runner rather than an interface to program against, so they are not listed here. [Workflows](workflows.md) describes what a runner is and what it does.
+If you are writing something that will drive this rather than reading it yourself, [cofferdam for an agent](agents.md) is a page and a half, and includes an honest list of what cofferdam does not have.

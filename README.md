@@ -44,7 +44,7 @@ That is a vault anyone can read, only your users can write, and you can send som
 - **Workflows.** GitHub Actions workflows, planned by the server and executed by a runner you start elsewhere with Docker.
 - **Sites.** A static site per repository, published by a workflow or by copying files in. Sandboxed by default so a site's script cannot act as a signed-in visitor, and optionally given a hostname of its own.
 - **Git.** Anonymous `git clone` over smart HTTP, token-authenticated `git push` including push-to-create, and Git LFS with objects in an S3-compatible bucket or inside the vault.
-- **A CLI and a JSON API** for users, collections, and importing existing repositories.
+- **A CLI and a JSON API** covering everything the web interface can do: repositories, files and commits, issues, pull requests, releases, workflow runs, users, and the vault's own settings, with a generic `cofferdam api` for anything a typed command has not reached. Meant to be usable by a program: `--json` everywhere, distinct exit codes, and nothing that prompts.
 
 The frontend has no build step and no client framework: the server renders plain HTML, with small amounts of vanilla JavaScript where a control needs it.
 
@@ -71,10 +71,12 @@ There is no database and no state outside this directory, so backing up a vault 
 
 - [Getting started](docs/getting-started.md): a local vault, a vault on the internet, and a domain of your own
 - [The vault](docs/vault.md): the layout on disk, and how signing in relates to the tokens git uses
-- [The command line](docs/cli.md): the `cofferdam` command, `cofferdam login`, pushing, importing, users, scopes, and the JSON API
+- [The command line](docs/cli.md): the `cofferdam` command, `cofferdam login`, pushing, importing, and the commands over repositories, issues, pull requests, releases, and runs
 - [Deploying a vault](docs/deploying.md): `cofferdam deploy fly`, a domain of your own, Docker, and automatic HTTPS with Caddy
 - [Workflows](docs/workflows.md): what runs today, runners, artifacts, and the divergences from GitHub
 - [Git LFS](docs/lfs.md): storage backends, bucket configuration, and limitations
+- [The JSON API](docs/api.md): every route, its body, its response, and what it requires of the caller
+- [cofferdam for an agent](docs/agents.md): short enough to paste into a context window, including an honest list of what is not there
 - [Issues and pull requests](docs/issues-and-pull-requests.md), [Sites](docs/sites.md), [Themes](docs/themes.md)
 
 ## Development
@@ -86,14 +88,13 @@ npm run dev        # serves example-root/ at http://127.0.0.1:3000
 npm run smoke      # end to end: browsing, sessions, UI operations, the API, git over HTTP
 ```
 
-The example vault includes a user `dev` with the fixed token `cofferdam_example_dev_token` (full push and admin scope, example vault only). The smoke test leaves out one thing, executing workflow jobs in containers, which needs Docker and takes minutes where the rest takes seconds; `npm run smoke:slow` includes it.
+The example vault includes a user `dev` with the fixed token `cofferdam_example_dev_token` (full push and admin scope, example vault only) and a read-only `reader` with `cofferdam_example_reader_token`. The smoke test leaves out one thing, executing workflow jobs in containers, which needs Docker and takes minutes where the rest takes seconds; `npm run smoke:slow` includes it.
 
 ## Roadmap
 
 - Secrets, and a scoped token for the run, so a workflow can push back to its own repository and call the vault's API
 - `actions/cache`, so dependency installs stop being repeated on every run
 - Docker actions, `container:` jobs, and service containers
-- JSON responses on the read routes via content negotiation, and UI operations mirrored into the API
 
 ## License
 
