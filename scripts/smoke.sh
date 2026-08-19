@@ -93,9 +93,11 @@ fi
 
 SERVER_PID=""
 FORGE_PID=""
+PRESET_PID=""
 cleanup() {
   [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true
   [ -n "$FORGE_PID" ] && kill "$FORGE_PID" 2>/dev/null || true
+  [ -n "$PRESET_PID" ] && kill "$PRESET_PID" 2>/dev/null || true
   rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -2082,6 +2084,54 @@ check "delete repo" 302 -b "$JAR" "$BASE/demo/proj/settings/delete" \
 check "deleted repo is gone" 404 "$BASE/demo/proj"
 [ ! -e "$VAULT/demo/proj.git" ] || { echo "FAIL: repo directory still on disk"; exit 1; }
 PASS=$((PASS+1)); echo "ok: repo directory removed"
+
+# ---- an owner token supplied to a new vault ----
+
+# What `cofferdam deploy` relies on: a fresh vault adopts the owner token given
+# to it, rather than minting one and printing it. The token is then already in
+# the operator's hands, so the server has no reason to log it, and this asserts
+# that it does not.
+
+PRESET_VAULT="$TMP/preset-vault"
+PRESET_LOG="$TMP/preset.log"
+PRESET_PORT=$((PORT + 2))
+PRESET_BASE="http://127.0.0.1:$PRESET_PORT"
+PRESET_TOKEN="cofferdam_$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+mkdir -p "$PRESET_VAULT"
+
+COFFERDAM_OWNER_TOKEN="$PRESET_TOKEN" node dist/index.js serve "$PRESET_VAULT" \
+  --port "$PRESET_PORT" > "$PRESET_LOG" 2>&1 &
+PRESET_PID=$!
+
+started=0
+for _ in $(seq 1 50); do
+  if curl -s -o /dev/null "$PRESET_BASE/"; then started=1; break; fi
+  sleep 0.2
+done
+[ "$started" = 1 ] || { echo "FAIL: server with a supplied owner token did not start"; cat "$PRESET_LOG"; exit 1; }
+
+check "supplied owner token works" 200 -H "authorization: Bearer $PRESET_TOKEN" "$PRESET_BASE/api/whoami"
+body_has "it belongs to the owner" '"username":"owner"'
+body_has "and the owner may do anything" '"\*"'
+check "another token is still refused" 401 -H "authorization: Bearer cofferdam_wrong" "$PRESET_BASE/api/whoami"
+grep -q "$PRESET_TOKEN" "$PRESET_LOG" && { echo "FAIL: the server logged the supplied owner token"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the supplied token was not echoed into the log"
+grep -q "COFFERDAM_OWNER_TOKEN" "$PRESET_LOG" || { echo "FAIL: the log did not say where the owner token came from"; cat "$PRESET_LOG"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the log says the token came from the environment"
+
+kill "$PRESET_PID" 2>/dev/null || true
+PRESET_PID=""
+
+# A token too short to resist guessing is refused rather than accepted quietly:
+# it would otherwise become the owner's credential on a public vault.
+mkdir -p "$TMP/short-vault"
+if COFFERDAM_OWNER_TOKEN=short node dist/index.js serve "$TMP/short-vault" \
+     --port $((PORT + 3)) > "$TMP/short.log" 2>&1; then
+  echo "FAIL: a too-short owner token was accepted"; cat "$TMP/short.log"; exit 1
+fi
+grep -q "not usable" "$TMP/short.log" || { echo "FAIL: no explanation for the refused owner token"; cat "$TMP/short.log"; exit 1; }
+[ ! -e "$TMP/short-vault/vault.json" ] || { echo "FAIL: the vault was initialized despite the refused token"; exit 1; }
+PASS=$((PASS+1)); echo "ok: a too-short supplied owner token is refused"
 
 # ---- sign out ----
 

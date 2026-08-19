@@ -16,6 +16,7 @@ import {
 } from './credentials';
 import { api, remoteTarget } from './cli-api';
 import { collectionAddCmd, collectionListCmd, importCmd } from './import-cli';
+import { deployDestroyCmd, deployFlyCmd, deployShowCmd } from './deploy-cli';
 import { runnerAddCmd, runnerListCmd, runnerRemoveCmd, runnerRunCmd } from './runner-cli';
 import { createApp } from './server';
 import { isValidName } from './scan';
@@ -79,6 +80,24 @@ function usage(code = 0): never {
   cofferdam logout [<vault-url>]
       Remove this vault's stored credential again, and forget it as the
       vault later commands talk to.
+
+  cofferdam deploy fly <app> [--region <r>] [--volume <gb>] [--vm-size <s>]
+                            [--vm-memory <m>] [--lfs-bucket] [--image <ref>] [--org <o>]
+      Put a vault on Fly.io, or deploy an update to one, from one command.
+      Needs flyctl installed, and fly auth login done. The app name is
+      globally unique on Fly and becomes the URL, https://<app>.fly.dev.
+      Creating one mints the owner token here, hands it to the server as a
+      secret, and logs you in when it answers, so there is no token to copy
+      out of a log. Run it again to deploy a new version; settings not named
+      by a flag keep whatever the live app has, so a single flag changes a
+      single thing. A vault is a directory on one volume, so the app runs as
+      exactly one machine: a busier vault wants a bigger one, not more.
+
+  cofferdam deploy show <app>
+      What Fly has for this app, and whether the vault on it answers.
+
+  cofferdam deploy destroy <app> [--yes]
+      Destroy the app and its volume, and with them the vault. No undo.
 
   cofferdam runner add <name> --allow <glob>... [--labels <l,...>] [--save]
       Register a machine that will execute workflow jobs, and print its
@@ -148,11 +167,23 @@ function serveCmd(args: string[]) {
     console.error(`Vault directory does not exist: ${vault}`);
     process.exit(1);
   }
-  const boot = bootstrapVault(vault);
+  // A vault with no vault.json is initialized on first start. The owner token
+  // is normally minted here and printed once; COFFERDAM_OWNER_TOKEN lets the
+  // operator supply it instead, which is how `cofferdam deploy` hands a remote
+  // vault a token it already holds. A supplied token is not printed: it is
+  // already where it needs to be, and a hosted server's log is not a good
+  // place to leave a copy.
+  const boot = bootstrapVault(vault, process.env.COFFERDAM_OWNER_TOKEN ?? null);
   const app = createApp(vault);
   app.listen(port, host, () => {
     const url = `http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`;
-    if (boot) {
+    if (boot && boot.preset) {
+      console.log('');
+      console.log('Initialized a new vault (no vault.json found).');
+      console.log(`Owner '${boot.username}' was given the token from COFFERDAM_OWNER_TOKEN, so it is`);
+      console.log('not repeated here; only its hash is stored.');
+      console.log('');
+    } else if (boot) {
       console.log('');
       console.log('Initialized a new vault (no vault.json found).');
       console.log(`Owner token for user '${boot.username}' (shown once; only its hash is stored):`);
@@ -464,6 +495,13 @@ async function main() {
   else if (cmd === 'whoami') await whoamiCmd(args.slice(1));
   else if (cmd === 'login') await loginCmd(args.slice(1));
   else if (cmd === 'logout') await logoutCmd(args.slice(1));
+  else if (cmd === 'deploy' && args[1] === 'fly') await deployFlyCmd(args.slice(2), usage);
+  else if (cmd === 'deploy' && args[1] === 'show') await deployShowCmd(args.slice(2), usage);
+  else if (cmd === 'deploy' && args[1] === 'destroy') await deployDestroyCmd(args.slice(2), usage);
+  else if (cmd === 'deploy') {
+    console.error('Usage: cofferdam deploy <fly|show|destroy> ... (see cofferdam --help)');
+    process.exit(1);
+  }
   else if (cmd === 'runner' && args[1] === 'add') await runnerAddCmd(args.slice(2), usage);
   else if (cmd === 'runner' && args[1] === 'run') await runnerRunCmd(args.slice(2), usage);
   else if (cmd === 'runner' && args[1] === 'list') await runnerListCmd(args.slice(2), usage);

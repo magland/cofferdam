@@ -1,0 +1,118 @@
+# Publishes the container image that `cofferdam deploy fly` deploys.
+#
+# Two kinds of push produce an image. A version tag, which the publish workflow
+# creates after a successful npm release, is tagged with that version and moves
+# `latest`; every other push to main is tagged `main` and nothing else. So the
+# image tags follow the released versions rather than tracking them separately,
+# and `deploy` can pin to the CLI's own version and expect to find it.
+#
+# The image is linux/amd64, which is what Fly machines run. Anyone wanting
+# another architecture builds the Dockerfile, which is the same one used here.
+#
+# One thing this workflow cannot do for you: a newly created GitHub package is
+# private, and Fly pulls anonymously. After the first successful run, set the
+# package to public under Packages > cofferdam > Package settings, or deploys
+# will fail to pull the image.
+name: image
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write # to push to ghcr.io
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # A version tag is a release: it gets the bare version, and takes over
+      # `latest`. Everything else is main, and is not a release.
+      - name: Work out the tags
+        id: tags
+        run: |
+          image=ghcr.io/${{ github.repository_owner }}/cofferdam
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+            echo "tags=$image:$version,$image:latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "tags=$image:main" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The tag must match the version in package.json, since that version is
+      # what the CLI asks the registry for. A mismatch would publish an image
+      # under a tag no `cofferdam deploy` will ever request.
+      - name: Check the tag against package.json
+        if: github.ref_type == 'tag'
+        run: |
+          version=$(node -p "require('./package.json').version")
+          [ "v$version" = "$GITHUB_REF_NAME" ] || {
+            echo "tag $GITHUB_REF_NAME does not match package.json version $version"
+            exit 1
+          }
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # An image that cannot serve a vault is worse than no image, and this is
+      # the last point where that is cheap to find out.
+      - name: Run the image and check it serves a fresh vault
+        run: |
+          tag=$(echo "${{ steps.tags.outputs.tags }}" | cut -d, -f1)
+          docker run -d --name check -p 3000:3000 "$tag"
+          for _ in $(seq 1 60); do
+            curl -fsS -o /dev/null http://127.0.0.1:3000/ && break
+            sleep 1
+          done
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/)
+          docker logs check
+          docker rm -f check >/dev/null
+          [ "$code" = "200" ] || { echo "the image did not answer 200"; exit 1; }
+
+      # The path `cofferdam deploy` relies on: the server adopts an owner token
+      # supplied in the environment, rather than minting one and printing it.
+      - name: Check the owner token can be supplied to the image
+        run: |
+          tag=$(echo "${{ steps.tags.outputs.tags }}" | cut -d, -f1)
+          token="cofferdam_$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          docker run -d --name preset -p 3001:3000 -e "COFFERDAM_OWNER_TOKEN=$token" "$tag"
+          for _ in $(seq 1 60); do
+            curl -fsS -o /dev/null http://127.0.0.1:3001/ && break
+            sleep 1
+          done
+          who=$(curl -s -H "authorization: Bearer $token" http://127.0.0.1:3001/api/whoami)
+          logs=$(docker logs preset 2>&1)
+          docker rm -f preset >/dev/null
+          echo "$logs"
+          echo "$who" | grep -q '"username":"owner"' || {
+            echo "the supplied owner token was not adopted: $who"
+            exit 1
+          }
+          # The token was handed in, so the server has no reason to log it.
+          if echo "$logs" | grep -q "$token"; then
+            echo "the server echoed the supplied owner token into its log"
+            exit 1
+          fi

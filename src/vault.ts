@@ -196,7 +196,7 @@ function writeVault(file: string, vault: Vault): void {
 export function addUserToken(
   root: string,
   username: string,
-  opts: { scope?: string[]; admin?: string[]; tokenScope?: string[] } = {}
+  opts: { scope?: string[]; admin?: string[]; tokenScope?: string[]; token?: string } = {}
 ): { token: string; created: boolean; user: UserRecord } {
   const file = vaultFilePath(root);
   let vault: Vault = { users: {} };
@@ -213,7 +213,10 @@ export function addUserToken(
       `user ${username} already exists; use 'cofferdam user grant ${username} --scope <glob>' to extend its scope`
     );
   }
-  const { token, hash } = mintToken();
+  // A caller may supply the token instead of taking a minted one, which is how
+  // a vault can be bootstrapped with a token its operator already holds. Only
+  // the hash is stored either way, so the two cases differ in nothing else.
+  const { token, hash } = opts.token ? { token: opts.token, hash: hashToken(opts.token) } : mintToken();
   const rec: TokenRecord =
     opts.tokenScope && opts.tokenScope.length ? { hash, scope: opts.tokenScope } : { hash };
   user.tokens.push(rec);
@@ -245,8 +248,39 @@ export function grantScope(
   return user;
 }
 
-export function bootstrapVault(root: string): { username: string; token: string } | null {
+/**
+ * Initialize a vault that has none, creating the owner and its first token.
+ * Returns null when there is already a vault.json, since a vault is
+ * initialized once and everything after that is the operator's own doing.
+ *
+ * `presetToken` lets the token be handed in rather than minted, which is what
+ * `cofferdam deploy` does: it mints the token on the operator's machine and
+ * passes it to the server as an environment secret, so a fresh remote vault can
+ * be logged in to without reading a token back out of the logs. A preset token
+ * is never echoed by the caller, so it does not reach the log at all.
+ */
+export function bootstrapVault(
+  root: string,
+  presetToken?: string | null
+): { username: string; token: string; preset: boolean } | null {
   if (fs.existsSync(vaultFilePath(root))) return null;
-  const { token } = addUserToken(root, 'owner', { scope: ['*'], admin: ['*'] });
-  return { username: 'owner', token };
+  const preset = (presetToken ?? '').trim();
+  if (presetToken !== undefined && presetToken !== null && presetToken !== '' && !preset) {
+    throw new Error('the owner token given for a new vault is blank');
+  }
+  // A token travels as a Basic-auth password and lands in URLs' credential
+  // slots, so a supplied one is held to the shape of a minted one rather than
+  // taken as given: printable, no spaces, and long enough not to be guessed.
+  if (preset && !/^[\x21-\x7e]{24,256}$/.test(preset)) {
+    throw new Error(
+      'the owner token given for a new vault is not usable: it must be 24 to 256 characters, ' +
+        'printable, and contain no spaces'
+    );
+  }
+  const { token } = addUserToken(root, 'owner', {
+    scope: ['*'],
+    admin: ['*'],
+    ...(preset ? { token: preset } : {}),
+  });
+  return { username: 'owner', token, preset: preset !== '' };
 }
