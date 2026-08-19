@@ -1,10 +1,19 @@
 # Publishes the container image that `cofferdam deploy fly` deploys.
 #
-# Two kinds of push produce an image. A version tag, which the publish workflow
-# creates after a successful npm release, is tagged with that version and moves
-# `latest`; every other push to main is tagged `main` and nothing else. So the
-# image tags follow the released versions rather than tracking them separately,
-# and `deploy` can pin to the CLI's own version and expect to find it.
+# Two kinds of event produce an image. A version tag, which the publish
+# workflow creates after a successful npm release, is tagged with that version
+# and moves `latest`; a successful ci run on main is tagged `main` and nothing
+# else. So the image tags follow the released versions rather than tracking
+# them separately, and `deploy` can pin to the CLI's own version and expect to
+# find it.
+#
+# Nothing is pushed to the registry until the tests that cover it have passed.
+# For main that means waiting on the ci workflow and building the commit ci
+# actually tested, rather than whatever is at the head of the branch by then.
+# For a version tag the gate is publish.yml, which builds and smoke-tests
+# before it publishes to npm and only then creates the tag, so a tag that
+# exists is already a tag that passed. Note that ci does not run on tags, so
+# a workflow_run gate would never fire for them.
 #
 # The image is linux/amd64, which is what Fly machines run. Anyone wanting
 # another architecture builds the Dockerfile, which is the same one used here.
@@ -16,24 +25,36 @@
 name: image
 
 on:
-  push:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
     branches: [main]
+  push:
     tags: ['v*']
   workflow_dispatch:
 
 concurrency:
-  group: image-${{ github.ref }}
+  group: image-${{ github.event.workflow_run.head_branch || github.ref }}
   cancel-in-progress: true
 
 jobs:
   image:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # A failed, cancelled, or skipped ci run must not publish an image. The
+    # other two triggers carry no ci run to consult and are allowed through.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     permissions:
       contents: read
       packages: write # to push to ghcr.io
     steps:
+      # On a workflow_run event the default ref is the head of the default
+      # branch, which need not be the commit ci tested. Build that commit.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - uses: docker/setup-buildx-action@v3
 
