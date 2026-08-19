@@ -8,26 +8,44 @@ cd "$(dirname "$0")/.."
 
 PORT="${SMOKE_PORT:-$((RANDOM % 2000 + 42000))}"
 BASE="http://127.0.0.1:$PORT"
-# The credential checks below assert that git's store wrote 0600, so the
-# scratch tree has to sit on a filesystem that can actually keep a file
-# private. In some containers /tmp cannot: a file created under umask 077
-# comes back 646, and the assertion fails for a reason that has nothing to do
-# with hubbit. Probe, and fall back rather than making the check weaker.
+# The scratch tree needs two things from its filesystem, and a container is
+# not guaranteed to offer both:
+#
+#  - it must be able to execute a script, because git silently skips a hook it
+#    cannot execute. git-lfs uploads objects from a pre-push hook, so on a
+#    filesystem mounted noexec the LFS checks below see a pointer pushed, no
+#    object uploaded, and a download that 404s, none of which is hubbit's
+#    doing. The vault lives here too, and its repositories have hooks of their
+#    own.
+#  - it should be able to keep a file private, because `git credential-store`
+#    writes 0600 and one check asserts it. Some overlay and container mounts
+#    force a mode (646, 666) whatever the umask.
+#
+# Executing wins when only one is on offer: it decides what the suite can test
+# at all, while the other costs a single assertion, which is then skipped and
+# says so. The function prints the directory and whether it is private, since
+# a command substitution cannot hand back a variable.
 smoke_tmp() {
-  local base d mode
+  local base d mode exec_ok private_ok fallback=""
   for base in "${TMPDIR:-/tmp}" /dev/shm; do
     [ -d "$base" ] && [ -w "$base" ] || continue
     d="$(mktemp -d "$base/hubbit-smoke.XXXXXX" 2>/dev/null)" || continue
-    ( umask 077; : > "$d/probe" )
-    mode="$(stat -c '%a' "$d/probe" 2>/dev/null || stat -f '%Lp' "$d/probe")"
-    rm -f "$d/probe"
-    if [ "$mode" = 600 ]; then printf '%s\n' "$d"; return 0; fi
+    printf '#!/bin/sh\nexit 0\n' > "$d/probe.sh"; chmod +x "$d/probe.sh"
+    if "$d/probe.sh" 2>/dev/null; then exec_ok=1; else exec_ok=0; fi
+    ( umask 077; : > "$d/probe.mode" )
+    mode="$(stat -c '%a' "$d/probe.mode" 2>/dev/null || stat -f '%Lp' "$d/probe.mode")"
+    [ "$mode" = 600 ] && private_ok=1 || private_ok=0
+    rm -f "$d/probe.sh" "$d/probe.mode"
+    if [ "$exec_ok" = 1 ] && [ "$private_ok" = 1 ]; then printf '%s 1\n' "$d"; return 0; fi
+    if [ "$exec_ok" = 1 ] && [ -z "$fallback" ]; then fallback="$d"; continue; fi
     rm -rf "$d"
   done
-  echo "no writable directory that can hold a 0600 file (tried \$TMPDIR and /dev/shm); set TMPDIR to one" >&2
+  if [ -n "$fallback" ]; then printf '%s 0\n' "$fallback"; return 0; fi
+  echo "no writable directory that can execute a script (tried \$TMPDIR and /dev/shm); set TMPDIR to one" >&2
   return 1
 }
-TMP="$(smoke_tmp)"
+read -r TMP TMP_PRIVATE <<<"$(smoke_tmp)"
+[ -n "$TMP" ] || exit 1
 VAULT="$TMP/vault"
 LOG="$TMP/server.log"
 JAR="$TMP/owner.jar"
@@ -958,9 +976,13 @@ PASS=$((PASS+1)); echo "ok: nothing stored for a rejected token"
 run_ok "login stores the token" cli login --host "$BASE" --token "$OWNER_TOKEN" --helper store
 grep -q "$OWNER_TOKEN" "$CRED_HOME/.git-credentials" || { echo "FAIL: token not in the credential store"; exit 1; }
 PASS=$((PASS+1)); echo "ok: token is in the credential store"
-CRED_MODE="$(stat -c '%a' "$CRED_HOME/.git-credentials" 2>/dev/null || stat -f '%Lp' "$CRED_HOME/.git-credentials")"
-[ "$CRED_MODE" = 600 ] || { echo "FAIL: credential file is mode $CRED_MODE, not 0600"; exit 1; }
-PASS=$((PASS+1)); echo "ok: credential file is mode 0600"
+if [ "$TMP_PRIVATE" = 1 ]; then
+  CRED_MODE="$(stat -c '%a' "$CRED_HOME/.git-credentials" 2>/dev/null || stat -f '%Lp' "$CRED_HOME/.git-credentials")"
+  [ "$CRED_MODE" = 600 ] || { echo "FAIL: credential file is mode $CRED_MODE, not 0600"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: credential file is mode 0600"
+else
+  echo "skip: this filesystem forces file modes, so 0600 on the credential file cannot be checked here"
+fi
 # Recorded for this host alone, so other remotes keep whatever they use now.
 cred_env git config --global --get-regexp '^credential\.' | grep -q "credential.$BASE.helper store" \
   || { echo "FAIL: helper not recorded for this host alone"; exit 1; }
