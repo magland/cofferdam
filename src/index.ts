@@ -54,7 +54,7 @@ Vault layout:
   <vault>/<collection>/<repo>.runs   workflow run history and logs
   <vault>/vault.json                 users and hashed tokens (server-managed)
   <vault>/runners.json               registered runners (server-managed)
-  <vault>/config.json                vault settings: theme, and CI run retention
+  <vault>/config.json                vault settings: theme, sites host, CI retention, limits
   <vault>/.secret                    session-cookie signing key (server-managed)
 
 Themes: ${themeNames().join(', ')} (default ${DEFAULT_THEME}). Pick one under

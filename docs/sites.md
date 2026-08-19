@@ -41,13 +41,13 @@ The absence of `allow-same-origin` is the point: it places the document in an op
 
 A sandbox is the right default because it needs no configuration and works on a bare `*.fly.dev` name. It is also blunt: a site that wants storage, or a service worker, or a cookie of its own has no way to get one. The alternative is to give each site a real origin, which is what a hostname does.
 
-Set one in the vault's `config.json`:
+Set one on the vault, from wherever you administer it:
 
-```json
-{
-  "sites": { "host": "vault-sites.example.org" }
-}
+```bash
+cofferdam config set --sites-host vault-sites.example.org
 ```
+
+That writes `sites.host` in the vault's `config.json`, which is read per request, so it is in effect on the next one; `--sites-host ''` clears it again. Hand-editing the file does the same thing, and is what a vault with no CLI to hand still supports.
 
 Each eligible repository's site is then served from `<repo>--<collection>.<sites host>`, so `webapp` in collection `alice` becomes `webapp--alice.vault-sites.example.org`. On that hostname the repository is the origin root: `/index.html` is the site's own, and so are `/assets/style.css` and `/favicon.svg`, which the forge does not shadow there. No session is ever resolved on a sites hostname and no cookie is set on one, so a site cannot see a visitor's session even in principle. Responses carry `X-Content-Type-Options: nosniff` and nothing else; the sandbox is gone, because the origin is now doing that work.
 

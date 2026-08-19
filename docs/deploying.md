@@ -174,21 +174,16 @@ fly certs check '*.vault-sites.example.org' -a my-vault-name
 
 A wildcard cannot be validated over HTTP-01, since there is no single name for the app to answer on, so it needs DNS-01. That is the difference from the plain name, and it means `fly certs setup` asks for two kinds of record rather than one: the records pointing `*.vault-sites.example.org` at the app, and an `_acme-challenge.vault-sites` record proving you control the name. `fly certs show '*.vault-sites.example.org' -a my-vault-name` prints the challenge target again if you need to look it up later.
 
-Then set the host in the vault's `config.json`, which lives on the volume rather than in the image:
+Then tell the vault to use it. This is a setting rather than a deployment, so it is one command from your own machine, against the running vault:
 
 ```bash
-fly ssh console -a my-vault-name -C 'cat /vault/config.json'   # what is there now
-fly ssh console -a my-vault-name                               # then edit /vault/config.json
+cofferdam config set --sites-host vault-sites.example.org
+cofferdam config view                                    # what the vault thinks now
 ```
 
-```json
-{
-  "network": { "trustProxy": true },
-  "sites": { "host": "vault-sites.example.org" }
-}
-```
+Every reader of that setting consults `config.json` per request, so it is in effect on the next one and no restart is involved. `cofferdam config set --sites-host ''` puts sites back on the vault's own hostname under the sandbox, equally immediately, which is what makes this safe to try: if the certificate turns out not to cover what you thought, one command undoes it.
 
-Keep whatever `deploy fly` seeded there, which is `network.trustProxy`. Leave the file owned by `node`, the user the server runs as. No restart is needed: the config file is re-read when it changes, and a value that is not a plausible hostname is ignored in favour of the default, so a typo serves sites from the vault's own hostname as before rather than from a name no certificate covers.
+Set it only once the wildcard resolves to the vault and its certificate is issued. Sites stop being served on the forge hostname the moment it is set, redirecting to the new origin instead, so setting it early means sites that are unreachable until DNS catches up rather than sites that are merely still sandboxed. A value that is not a plausible hostname is refused by the command rather than stored, so a typo costs you a message and not an outage.
 
 This is one Fly app with two hostnames, not two apps. Sites hosts must differ per vault in any case, because two Fly apps cannot hold a certificate for the same hostname.
 

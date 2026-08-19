@@ -1,9 +1,10 @@
 import { Express } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
-import { CiConfig, loadConfig, saveConfig } from '../config';
+import { CiConfig, SitesConfig, isPlausibleHostname, loadConfig, saveConfig } from '../config';
 import { AuthLimiter } from '../limit';
 import { isValidName, listRepoDirs } from '../scan';
+import { normalizeHostname } from '../siteshost';
 import { DEFAULT_THEME, findTheme, themeNames } from '../themes';
 import { canAdmin, loadVault, removeUser, revokeToken, tokenId } from '../vault';
 import { apiError, bodyOf, requireApiAuth } from './auth';
@@ -202,7 +203,7 @@ export function registerAdminApi(app: Express, root: string, limiter: AuthLimite
     const auth = requireOwner(req, res);
     if (!auth) return;
     const body = bodyOf(req);
-    const changes: { theme?: string; ci?: CiConfig } = {};
+    const changes: { theme?: string; ci?: CiConfig; sites?: SitesConfig } = {};
     if (body.theme !== undefined) {
       if (typeof body.theme !== 'string' || !findTheme(body.theme)) {
         apiError(res, 400, `"theme" must be one of: ${themeNames().join(', ')} (default ${DEFAULT_THEME})`);
@@ -225,8 +226,38 @@ export function registerAdminApi(app: Express, root: string, limiter: AuthLimite
         artifactMb: number(ci.artifactMb, current.artifactMb, 1),
       };
     }
+    // The hostname whose subdomains serve repository sites. Every reader of it
+    // calls loadConfig per request, so a change here is in effect on the next
+    // one; it is the setting a hosted vault most needs to change, and reaching a
+    // volume to edit config.json by hand is the worst step in that whole path.
+    if (body.sites !== undefined) {
+      if (typeof body.sites !== 'object' || body.sites === null || Array.isArray(body.sites)) {
+        apiError(res, 400, '"sites" must be an object');
+        return;
+      }
+      const sites = body.sites as Record<string, unknown>;
+      if (typeof sites.host !== 'string') {
+        apiError(res, 400, '"sites" takes a "host" string; send "" to serve sites on the forge host again');
+        return;
+      }
+      const host = normalizeHostname(sites.host);
+      // loadConfig ignores a value that is not a hostname and uses the default,
+      // which is right for a hand-edited file and wrong here: a caller who just
+      // asked for a change should be told it was not one, rather than reading
+      // back a value they did not send.
+      if (host !== '' && !isPlausibleHostname(host)) {
+        apiError(
+          res,
+          400,
+          `"${sites.host}" is not a hostname: give at least two labels of letters, digits, and interior hyphens, ` +
+            'with no scheme, port, or path'
+        );
+        return;
+      }
+      changes.sites = { host };
+    }
     if (Object.keys(changes).length === 0) {
-      apiError(res, 400, 'nothing to change; provide "theme" and/or "ci"');
+      apiError(res, 400, 'nothing to change; provide "theme", "ci", and/or "sites"');
       return;
     }
     // network and limits are deliberately not writable here: they are read once

@@ -19,7 +19,13 @@ export function isSiteLabelSafe(name: string): boolean {
 /** The DNS limit on one label, which <repo>--<collection> has to fit inside. */
 const MAX_LABEL = 63;
 
-function normalizeHostname(hostname: string): string {
+/**
+ * The one normalization a hostname gets, wherever one is read. Exported because
+ * the configured sites host and the request's own hostname are compared against
+ * each other: if the two were normalized differently, a trailing dot or a
+ * capital letter on one side would stop every site being found.
+ */
+export function normalizeHostname(hostname: string): string {
   return hostname.trim().toLowerCase().replace(/\.$/, '');
 }
 

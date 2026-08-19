@@ -169,18 +169,33 @@ refused rather than emptied.`,
       console.log(`themes: ${(data.themes as string[]).join(', ')}`);
       // Saying which of these a write can reach saves a caller discovering it by
       // being refused.
-      console.log('Only theme and ci can be set here; network, limits, and sites are read at startup.');
-      console.log('Edit config.json in the vault and restart the server to change those.');
+      console.log('theme, ci, and sites.host can be set with `cofferdam config set`.');
+      console.log('network and limits are read once at startup: edit config.json in the vault and restart.');
     },
   },
   {
     path: ['config', 'set'],
-    summary: 'Change the theme or the CI retention settings',
-    description: `Only these two: network.trustProxy, the limits block, and sites.host are read
-once when the server starts, so a command that changed them would report a change
-the running server had not made. Edit config.json in the vault and restart.`,
+    summary: 'Change the theme, the sites hostname, or the CI retention settings',
+    description: `Writes config.json in the vault, so a hosted vault is configured the same way as
+one on your desk and there is no reason to reach its disk by hand.
+
+--sites-host gives each repository's static site an origin of its own at
+<repo>--<collection>.<host>, in place of the sandbox they are served under on the
+vault's own hostname. Set it only once that hostname resolves to this vault and a
+wildcard certificate covers it, since sites stop being served anywhere else the
+moment it is set. --sites-host '' puts them back.
+
+network.trustProxy and the limits block are not here. They are read once when the
+server starts, so a command that changed them would report a change the running
+server had not made. Edit config.json in the vault and restart.`,
     options: [
       { name: 'theme', type: 'string', value: '<t>', summary: 'Theme name' },
+      {
+        name: 'sites-host',
+        type: 'string',
+        value: '<host>',
+        summary: "Hostname whose subdomains serve sites; '' to serve them sandboxed on the forge host",
+      },
       { name: 'ci-runs', type: 'int', value: '<n>', summary: 'Completed runs to keep per repository' },
       { name: 'ci-days', type: 'int', value: '<n>', summary: 'Also drop runs older than this; 0 disables' },
       { name: 'ci-artifact-mb', type: 'int', value: '<n>', summary: 'Largest artifact a job may upload' },
@@ -189,12 +204,16 @@ the running server had not made. Edit config.json in the vault and restart.`,
     ],
     async run(inv) {
       const theme = inv.str('theme');
+      // An empty string is a value here rather than an absence: it is how the
+      // sites hostname is cleared, and str() returns null only when the option
+      // was not given at all.
+      const sitesHost = inv.str('sites-host');
       const runs = inv.int('ci-runs');
       const days = inv.int('ci-days');
       const artifactMb = inv.int('ci-artifact-mb');
-      if (theme === null && runs === null && days === null && artifactMb === null) {
+      if (theme === null && sitesHost === null && runs === null && days === null && artifactMb === null) {
         throw new CliError(
-          'Nothing to change. Pass --theme, --ci-runs, --ci-days, or --ci-artifact-mb.',
+          'Nothing to change. Pass --theme, --sites-host, --ci-runs, --ci-days, or --ci-artifact-mb.',
           EXIT_USAGE
         );
       }
@@ -210,7 +229,11 @@ the running server had not made. Edit config.json in the vault and restart.`,
           artifactMb: artifactMb ?? current.artifactMb,
         };
       }
-      const data = await api(target, 'PATCH', '/api/config', { theme: theme ?? undefined, ci });
+      const data = await api(target, 'PATCH', '/api/config', {
+        theme: theme ?? undefined,
+        ci,
+        sites: sitesHost === null ? undefined : { host: sitesHost },
+      });
       const json = jsonMode(inv);
       if (json.enabled) {
         printJson(pickObject(data, json.fields));
@@ -219,6 +242,16 @@ the running server had not made. Edit config.json in the vault and restart.`,
       console.log(`theme: ${data.theme}`);
       const saved = data.ci as Record<string, unknown>;
       console.log(`ci: keep ${saved.runs} runs, ${saved.days} days, artifacts up to ${saved.artifactMb} MB`);
+      const host = String(((data.sites ?? {}) as Record<string, unknown>).host ?? '');
+      console.log(
+        host
+          ? `sites: served from <repo>--<collection>.${host}`
+          : "sites: served sandboxed on the vault's own hostname"
+      );
+      // Every reader of this setting calls loadConfig per request, so there is
+      // nothing further to do; saying so is worth a line, because the settings
+      // next to it in the same file do need a restart.
+      if (sitesHost !== null) console.log('In effect now; no restart needed.');
     },
   },
 ];

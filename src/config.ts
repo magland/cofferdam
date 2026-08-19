@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { writeFileAtomic } from './atomic';
+import { normalizeHostname } from './siteshost';
 import { DEFAULT_THEME, findTheme } from './themes';
 
 // Vault-level settings, kept in <vault>/config.json next to vault.json. Like
@@ -59,6 +60,16 @@ export interface VaultConfig {
 // hyphens. A value carrying a scheme, a port, or a single label is not one, and
 // is treated as a typo rather than obeyed.
 const HOSTNAME_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
+
+/**
+ * Whether a string is usable as a hostname in this file's settings. Exported so
+ * that a route accepting one refuses a typo with a message, rather than storing
+ * it and leaving loadConfig to fall back to the default silently: a setting
+ * written through the API is being watched by someone who wants to know.
+ */
+export function isPlausibleHostname(value: string): boolean {
+  return HOSTNAME_RE.test(value);
+}
 
 export function configFilePath(root: string): string {
   return path.join(root, CONFIG_FILE);
@@ -119,8 +130,8 @@ export function loadConfig(root: string): VaultConfig {
     // certificate covers.
     if (typeof parsed.sites === 'object' && parsed.sites !== null) {
       const sites = parsed.sites as Record<string, unknown>;
-      const raw = typeof sites.host === 'string' ? sites.host.trim().toLowerCase().replace(/\.$/, '') : '';
-      config.sites = { host: HOSTNAME_RE.test(raw) ? raw : DEFAULTS.sites.host };
+      const raw = typeof sites.host === 'string' ? normalizeHostname(sites.host) : '';
+      config.sites = { host: isPlausibleHostname(raw) ? raw : DEFAULTS.sites.host };
     }
     // Whether the forwarded headers may be believed. False by default, because
     // believing them on a directly exposed vault lets any client claim any

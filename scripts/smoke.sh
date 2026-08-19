@@ -1514,6 +1514,26 @@ api_as "vault settings need admin over everything" 403 "$COLLECTION_TOKEN" "$BAS
 body_has "saying as much" 'whole vault'
 api "put the theme back" 200 -X PATCH -H "$JSON_CT" --data '{"theme":"paper"}' "$BASE/api/config"
 
+# The hostname sites are served from is the setting a hosted vault most needs to
+# change, and every reader of it calls loadConfig per request, so it is writable
+# here: reaching a volume to edit config.json by hand is the worst step in that
+# whole path.
+api "api sets the hostname sites are served from" 200 -X PATCH -H "$JSON_CT" \
+  --data '{"sites":{"host":"Sites.Example.Org."}}' "$BASE/api/config"
+body_has "normalizing it the way a hostname is normalized" '"host":"sites.example.org"'
+check "in effect on the next request, with no restart" 404 "$BASE/" -H 'Host: nosuchrepo--demo.sites.example.org'
+# loadConfig ignores an unusable value and serves the default, which is right for
+# a hand-edited file and wrong for a caller who just asked for a change.
+api "a value that is not a hostname is refused rather than quietly ignored" 400 -X PATCH -H "$JSON_CT" \
+  --data '{"sites":{"host":"https://nope:3000/x"}}' "$BASE/api/config"
+body_has "saying what was wrong with it" 'not a hostname'
+api "and the refusal stored nothing" 200 "$BASE/api/config"
+body_has "leaving the working hostname in place" '"host":"sites.example.org"'
+api "an empty host serves sites on the forge hostname again" 200 -X PATCH -H "$JSON_CT" \
+  --data '{"sites":{"host":""}}' "$BASE/api/config"
+body_has "reporting the cleared value" '"host":""'
+check "which also takes effect on the next request" 200 "$BASE/" -H 'Host: nosuchrepo--demo.sites.example.org'
+
 # ---- cofferdam login: the token in git's credential store ----
 
 # An isolated HOME so this never touches the developer's own git configuration,
@@ -1788,9 +1808,15 @@ check "and the collection is gone" 404 "$BASE/throwaway"
 
 run_ok "config view" cli config view
 body_has "naming the theme" 'theme'
-body_has "and saying which settings a write cannot reach" 'read at startup'
+body_has "and saying which settings a write cannot reach" 'read once at startup'
 run_ok "config set" cli config set --ci-runs 11
 body_has "reporting what it kept" 'keep 11 runs'
+run_ok "config set gives sites a hostname of their own" cli config set --sites-host sites.example.org
+body_has "naming the origin each site gets" 'sites.example.org'
+body_has "and saying that no restart is needed" 'In effect now'
+run_code "a sites host that is not a hostname is refused" 1 cli config set --sites-host 'not a host'
+run_ok "and an empty one puts sites back on the forge host" cli config set --sites-host ''
+body_has "saying which of the two arrangements is in force" 'sandboxed'
 run_code "and a conflict is reported with its paths" 5 cli pr merge 2 --repo apis/repo
 err_has "naming the file that conflicts" 'This pull request is not open'
 
@@ -2422,17 +2448,22 @@ RUNS="$VAULT/demo/ci.runs"
 
 run_field() { python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2],''))" "$1" "$2"; }
 job_field() { python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2],''))" "$1" "$2"; }
+# The run numbers of every run of one workflow, oldest first. Sorted numerically
+# and not as text: with ten runs in a repository, "9" sorts after "10" as a
+# string, and a caller taking the last field would get the wrong one.
 runs_named() {
   python3 - "$RUNS" "$1" <<'PY'
 import json, os, sys
 base, name = sys.argv[1], sys.argv[2]
 out = []
-for e in sorted(os.listdir(base)):
+for e in os.listdir(base):
+    if not e.isdigit():
+        continue
     f = os.path.join(base, e, 'run.json')
     if os.path.exists(f):
         r = json.load(open(f))
-        if r['workflowName'] == name: out.append(e)
-print(' '.join(out))
+        if r['workflowName'] == name: out.append(int(e))
+print(' '.join(str(n) for n in sorted(out)))
 PY
 }
 # The engine plans a push's runs after git-receive-pack has already answered
