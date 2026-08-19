@@ -492,6 +492,10 @@ async function main() {
   else if (cmd === 'user' && args[1] === 'add') await userAddCmd(args.slice(2));
   else if (cmd === 'user' && args[1] === 'grant') await userGrantCmd(args.slice(2));
   else if (cmd === 'user' && args[1] === 'list') await userListCmd(args.slice(2));
+  else if (cmd === 'user') {
+    console.error('Usage: cofferdam user <add|grant|list> ... (see cofferdam --help)');
+    process.exit(1);
+  }
   else if (cmd === 'whoami') await whoamiCmd(args.slice(1));
   else if (cmd === 'login') await loginCmd(args.slice(1));
   else if (cmd === 'logout') await logoutCmd(args.slice(1));
@@ -509,11 +513,10 @@ async function main() {
   else if (cmd === 'runner') {
     console.error('Usage: cofferdam runner <add|run|list|remove> ... (see cofferdam --help)');
     process.exit(1);
-  }
-  else if (cmd === 'user') {
-    console.error('Usage: cofferdam user <add|grant|list> ... (see cofferdam --help)');
+  } else {
+    console.error(`Unknown command: ${cmd} (see cofferdam --help)`);
     process.exit(1);
-  } else serveCmd(args);
+  }
 }
 
 main().catch((e) => {
