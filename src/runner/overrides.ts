@@ -47,11 +47,6 @@ function git(args: string[], cwd?: string): Promise<string> {
   });
 }
 
-function boolInput(v: string | undefined, dflt: boolean): boolean {
-  if (v === undefined || v.trim() === '') return dflt;
-  return v.trim().toLowerCase() === 'true';
-}
-
 // ---- actions/checkout ----
 
 // cofferdam checks the repository out before the job starts, so this is usually
@@ -529,8 +524,3 @@ export function findOverride(ref: ActionRef): Override | null {
   return OVERRIDES[key] ?? null;
 }
 
-export function registerOverride(key: string, override: Override): void {
-  OVERRIDES[key.toLowerCase()] = override;
-}
-
-export { boolInput };

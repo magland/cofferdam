@@ -53,22 +53,13 @@ const reservedRepoSuffixes = [...repoSiblingSuffixes, '.lfs', '.git'];
 /**
  * The reserved suffix a proposed repository name ends in, or null if it ends
  * in none. Callers report the suffix, since a name is much easier to fix when
- * the refusal says which part of it is the problem.
+ * the refusal says which part of it is the problem. Asked only where a
+ * repository comes into being: reading stays more permissive, so a repository
+ * created before this check existed keeps working.
  */
 export function reservedRepoSuffix(name: string): string | null {
   const lower = name.toLowerCase();
   return reservedRepoSuffixes.find((s) => lower.endsWith(s)) ?? null;
-}
-
-/**
- * Whether a repository may be created under this name. This is isValidName
- * plus the sibling suffixes, and it is asked only where a repository comes
- * into being. Reading is deliberately more permissive: a repository created
- * before this check existed keeps working, and listRepoDirs still has to
- * accept the .git suffix its directory entries carry.
- */
-export function isValidNewRepoName(name: string): boolean {
-  return isValidName(name) && reservedRepoSuffix(name) === null;
 }
 
 export function isBareRepo(dir: string): boolean {
