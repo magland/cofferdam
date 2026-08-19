@@ -269,6 +269,54 @@ mkdir -p "$ROOT/bob"
 git init -q --bare -b main "$ROOT/bob/empty.git"
 echo "An empty repository for testing" > "$ROOT/bob/empty.git/description"
 
+# ---- issues on alice/hello-numerics ----
+
+# Issues are files, so the example vault seeds them the same way it seeds
+# repositories: by writing the directories out.
+
+issue() {
+  local repo="$1" n="$2" state="$3" title="$4" author="$5" label="$6" body="$7"
+  mkdir -p "$ROOT/$repo.issues/$n/comments"
+  cat > "$ROOT/$repo.issues/$n/issue.md" <<EOF
+---
+title: $title
+state: $state
+author: $author
+created: 2026-02-11T09:14:00.000Z
+updated: 2026-02-12T16:02:00.000Z
+labels:
+  - $label
+---
+$body
+EOF
+}
+
+issue alice/hello-numerics 1 open "variance() divides by zero for a single sample" author bug \
+"Calling \`variance([1])\` raises \`ZeroDivisionError\` instead of returning 0 or raising
+something the caller can read.
+
+\`\`\`python
+>>> from src.compute import variance
+>>> variance([1])
+ZeroDivisionError: division by zero
+\`\`\`
+
+The guard in \`mean()\` is the shape this wants."
+
+cat > "$ROOT/alice/hello-numerics.issues/1/comments/1.md" <<'EOF'
+---
+author: dev
+created: 2026-02-12T16:02:00.000Z
+---
+Agreed. Sample variance of one sample is undefined, so raising `ValueError`
+with a sentence in it seems better than returning zero.
+EOF
+
+issue alice/hello-numerics 2 closed "Document the Makefile targets" dev documentation \
+"The README shows the Python usage but never says that \`make test\` exists."
+sed -i 's/^state: closed$/state: closed\nclosedBy: author\nclosedAt: 2026-02-13T11:20:00.000Z/' \
+  "$ROOT/alice/hello-numerics.issues/2/issue.md"
+
 # ---- vault.json with a dev user (fixed token, example vault only) ----
 
 DEV_TOKEN="hubbit_example_dev_token"

@@ -161,15 +161,43 @@ export function listIssues(root: string, collection: string, repo: string): Issu
   return out.sort((a, b) => b.number - a.number);
 }
 
+// Counting open issues means reading every issue's header, and the Issues tab
+// asks for that count on every page of a repository. So the answer is
+// memoized against the issues directory's modification time, and every write
+// below touches that directory - including a state change inside a
+// subdirectory, which would not otherwise move it. One read per change rather
+// than one per page view, and a vault with no issues never pays anything.
+const countMemo = new Map<string, { mtimeMs: number; counts: { open: number; closed: number } }>();
+
+function touch(dir: string): void {
+  try {
+    const now = new Date();
+    fs.utimesSync(dir, now, now);
+  } catch {
+    // A directory we just wrote into; if this fails the cache simply misses.
+  }
+}
+
 /** Open and closed counts, for the tab and the list's filter. */
 export function issueCounts(root: string, collection: string, repo: string): { open: number; closed: number } {
-  let open = 0;
-  let closed = 0;
-  for (const issue of listIssues(root, collection, repo)) {
-    if (issue.state === 'open') open++;
-    else closed++;
+  const dir = issuesDir(root, collection, repo);
+  if (!dir) return { open: 0, closed: 0 };
+  let mtimeMs: number;
+  try {
+    mtimeMs = fs.statSync(dir).mtimeMs;
+  } catch {
+    return { open: 0, closed: 0 };
   }
-  return { open, closed };
+  const cached = countMemo.get(dir);
+  if (cached && cached.mtimeMs === mtimeMs) return cached.counts;
+  const counts = { open: 0, closed: 0 };
+  for (const issue of listIssues(root, collection, repo)) {
+    if (issue.state === 'open') counts.open++;
+    else counts.closed++;
+  }
+  if (countMemo.size > 2000) countMemo.clear();
+  countMemo.set(dir, { mtimeMs, counts });
+  return counts;
 }
 
 export function readIssue(root: string, collection: string, repo: string, n: number): Issue | null {
@@ -251,6 +279,7 @@ export function createIssue(
       { title, state: 'open', author: input.author, created: now, updated: now, labels },
       body
     );
+    touch(dir);
     return {
       number: n,
       title,
@@ -296,6 +325,7 @@ export function addComment(
     if (fs.existsSync(file)) continue;
     writeDoc(file, { author: input.author, created: now }, body);
     writeDoc(path.join(dir, 'issue.md'), { ...doc.meta, updated: now }, doc.body);
+    touchIssues(root, collection, repo);
     return { id, author: input.author, created: now, body };
   }
   throw new OpError('Could not add the comment; try again.', 'conflict');
@@ -320,6 +350,7 @@ export function setIssueState(
     delete meta.closedAt;
   }
   writeDoc(path.join(dir, 'issue.md'), meta, doc.body);
+  touchIssues(root, collection, repo);
 }
 
 export function editIssue(
@@ -335,4 +366,11 @@ export function editIssue(
   if (input.labels !== undefined) meta.labels = checkLabels(input.labels);
   const body = input.body === undefined ? doc.body : checkBody(input.body);
   writeDoc(path.join(dir, 'issue.md'), meta, body);
+  touchIssues(root, collection, repo);
+}
+
+/** Move the issues directory's timestamp, invalidating the count cache. */
+function touchIssues(root: string, collection: string, repo: string): void {
+  const dir = issuesDir(root, collection, repo);
+  if (dir) touch(dir);
 }
