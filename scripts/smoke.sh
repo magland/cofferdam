@@ -1055,7 +1055,7 @@ no_prompt "neither clone nor push asked for a credential"
 
 # ---- cofferdam import and collections, from the CLI ----
 
-# Importing is a client-side operation (SPEC 3.10) and `cofferdam import` is
+# Importing is a client-side operation and `cofferdam import` is
 # what performs it: a bare clone into a temporary directory, a mirror push at
 # the vault, and the clone removed again. The source here is a directory on this
 # machine, which import accepts alongside a URL and which is also what a suite

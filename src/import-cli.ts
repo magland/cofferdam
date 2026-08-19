@@ -8,7 +8,7 @@ import { parseSource } from './source';
 
 // `cofferdam import`: bring an existing repository into a vault. This runs on
 // the operator's machine and not on the server, which is the same division the
-// import page has always described (SPEC 3.10): their own git credentials read
+// import page has always described: their own git credentials read
 // the source, their cofferdam token writes the vault, and push-to-create makes
 // the repository. What changes here is only who types the commands. A bare
 // clone into a temporary directory, a mirror push at the vault, and the

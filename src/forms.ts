@@ -115,7 +115,7 @@ ${csrfField(viewer)}
 
 /**
  * The import page. Importing has always run on the reader's machine rather than
- * on the server (SPEC 3.10), and what this page does is hand them the command
+ * on the server, and what this page does is hand them the command
  * that does it. Earlier it asked for the source in a form and wrote a shell
  * one-liner from the answers, which put a form in front of an operation the
  * page cannot perform; now `cofferdam import` performs it, so the page only has
