@@ -81,6 +81,8 @@ To check the whole system end to end (browsing, sessions, UI operations, the API
 npm run smoke
 ```
 
+That leaves out one thing: actually executing workflow jobs in containers, which needs Docker and takes minutes where the rest of the suite takes seconds. Include it with `npm run smoke:slow`.
+
 ## The vault
 
 A vault is a plain directory. Each subdirectory of it is a collection, and each subdirectory of a collection is a bare git repository; everything else a repository accumulates sits beside it under a suffixed name:

@@ -55,6 +55,17 @@ mkdir -p "$VAULT"
 
 export GIT_TERMINAL_PROMPT=0
 
+# Executing workflow jobs is the one part of this suite measured in minutes
+# rather than seconds: each run pulls an image, starts a container per job, and
+# is polled once a second until it finishes, which is around three of the three
+# and a half minutes the whole suite takes. Everything else, planning included,
+# runs against the local server and costs about twenty seconds together, so the
+# execution checks are opt-in rather than routine:
+#
+#   npm run smoke        # everything but job execution
+#   npm run smoke:slow   # that too (needs Docker)
+SMOKE_SLOW="${SMOKE_SLOW:-0}"
+
 # The suite tests cofferdam, not the machine's git configuration, and two of the
 # checks below are only meaningful against a known one: "login refuses when no
 # credential helper is configured" is false the moment a system config sets a
@@ -1312,8 +1323,9 @@ PASS=$((PASS+1)); echo "ok: repository deletion removed its LFS objects"
 # ---- Actions: planning, the runner protocol, and the UI ----
 #
 # Planning, dispatch, cancellation, and the runner API are checked without
-# Docker; actually executing a job needs it, so those checks skip when it is
-# absent, as the git-lfs client checks do above.
+# Docker and cost little, so they always run. Actually executing a job needs
+# Docker and takes minutes, so those checks are opt-in through SMOKE_SLOW, and
+# skip when Docker is absent even then, as the git-lfs client checks do above.
 
 CI_REPO="$TMP/cirepo"
 git init -q -b main "$CI_REPO"
@@ -1653,9 +1665,11 @@ cache_has "the fallback still delivers the action" '^name=widget-two$'
 kill "$FORGE_PID" 2>/dev/null || true
 FORGE_PID=""
 
-# ---- executing a job (needs Docker) ----
+# ---- executing a job (opt-in, and needs Docker) ----
 
-if command -v docker > /dev/null 2>&1 && docker version --format '{{.Server.Version}}' > /dev/null 2>&1; then
+if [ "$SMOKE_SLOW" != 1 ]; then
+  echo "skip: executing jobs takes minutes, so it is opt-in; run SMOKE_SLOW=1 (npm run smoke:slow) for it"
+elif command -v docker > /dev/null 2>&1 && docker version --format '{{.Server.Version}}' > /dev/null 2>&1; then
   CI_IMAGE="${SMOKE_CI_IMAGE:-ubuntu:24.04}"
   check "actions page for a fresh dispatch" 200 -b "$JAR" "$BASE/demo/ci/actions"
   CSRF="$(csrf_of)"
@@ -2006,3 +2020,4 @@ body_has "sign-in link back" 'Sign in'
 
 echo ""
 echo "All $PASS smoke checks passed."
+[ "$SMOKE_SLOW" = 1 ] || echo "(job execution was not among them; SMOKE_SLOW=1 includes it)"

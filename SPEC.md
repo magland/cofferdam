@@ -19,7 +19,7 @@ The comparison that matters is with the self-hosted forges (GitLab, Gitea, Forge
 
 ## 3. Current state
 
-Everything described here is implemented and verified end to end by `scripts/smoke.sh` (392 checks: browsing, sessions, every UI operation, authorization denials, CSRF, themes, the JSON API, git clone/push/push-to-create, sites, Git LFS, workflow planning and execution, JavaScript and composite actions, artifacts, the action cache, site deployment, repository deletion). The LFS checks run against the local backend, so the suite stays credential-free; the handful that need a real `git lfs` on the host skip with a message when it is absent, and have been run against git-lfs 3.6.1 (push, anonymous clone and pull, the blob card, the raw route, and the edit refusal, all passing). Note that git-lfs derives its endpoint as `<remote>.git/info/lfs`, which is why the `.git`-suffix stripping in `findRepo` is load-bearing here rather than cosmetic.
+Everything described here is implemented and verified end to end by `scripts/smoke.sh` (670 checks, 626 of them in the routine run: browsing, sessions, every UI operation, authorization denials, CSRF, themes, the JSON API, git clone/push/push-to-create, sites, Git LFS, workflow planning and execution, JavaScript and composite actions, artifacts, the action cache, site deployment, repository deletion). The LFS checks run against the local backend, so the suite stays credential-free; the handful that need a real `git lfs` on the host skip with a message when it is absent, and have been run against git-lfs 3.6.1 (push, anonymous clone and pull, the blob card, the raw route, and the edit refusal, all passing). Note that git-lfs derives its endpoint as `<remote>.git/info/lfs`, which is why the `.git`-suffix stripping in `findRepo` is load-bearing here rather than cosmetic.
 
 ### 3.1 Running it
 
@@ -30,6 +30,7 @@ npm run example        # builds example-root/ with sample collections, repositor
 npm run dev            # tsx, serves example-root on http://127.0.0.1:3000
 npm run build          # tsc -> dist/
 npm run smoke          # end-to-end smoke test against a throwaway vault
+npm run smoke:slow     # that, plus executing workflow jobs in containers (needs Docker)
 node dist/index.js serve /path/to/vault --port 3000
 npm link               # optional: puts `cofferdam` on PATH
 ```
@@ -371,7 +372,7 @@ Two further boundaries came with artifacts (3.12). Artifact names become filenam
 
 ## 6. Housekeeping
 
-The verification style is `scripts/smoke.sh` plus manual curl and git against the example vault; extend the smoke test with each new feature, since it is the only automated check. The CI checks there follow the pattern the LFS checks established: everything that does not need Docker runs always, and the job-execution checks skip with a message when `docker` is absent (`SMOKE_CI_IMAGE` picks the image; it defaults to `ubuntu:24.04` because it is small, at the cost of containing almost no tooling). The dev loop is `npm run dev` against `example-root`; regenerate it any time with `rm -rf example-root && npm run example` (the example vault's `vault.json`, with its fixed dev token, is recreated by the script). `npm link` is set up for the `cofferdam` binary. Self-hosting the project in a vault would be fitting once a public vault exists.
+The verification style is `scripts/smoke.sh` plus manual curl and git against the example vault; extend the smoke test with each new feature, since it is the only automated check. The CI checks there follow the pattern the LFS checks established: everything that does not need Docker runs always, and the job-execution checks skip with a message when `docker` is absent (`SMOKE_CI_IMAGE` picks the image; it defaults to `ubuntu:24.04` because it is small, at the cost of containing almost no tooling). Those checks are also the slow ones, around three minutes of the suite's three and a half, since every run pulls an image and starts a container per job; they run only with `SMOKE_SLOW=1` (`npm run smoke:slow`), so the routine run costs about twenty seconds. The dev loop is `npm run dev` against `example-root`; regenerate it any time with `rm -rf example-root && npm run example` (the example vault's `vault.json`, with its fixed dev token, is recreated by the script). `npm link` is set up for the `cofferdam` binary. Self-hosting the project in a vault would be fitting once a public vault exists.
 
 ## 7. Open questions
 
