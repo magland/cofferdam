@@ -1,9 +1,25 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as YAML from 'yaml';
-import { writeFileAtomic } from './atomic';
+import {
+  DiscussionKind,
+  addComment as addDiscussionComment,
+  allocate,
+  checkBody as checkDiscussionBody,
+  checkTitle as checkDiscussionTitle,
+  countComments,
+  itemDir,
+  numericDirs,
+  openFor as openDiscussion,
+  readComments,
+  readDoc,
+  str,
+  touch,
+  writeDoc,
+} from './discussion';
 import { OpError } from './ops';
 import { displayName, isValidName } from './scan';
+
+export { MAX_BODY, MAX_TITLE } from './discussion';
 
 // Issues, stored in the vault like everything else.
 //
@@ -54,8 +70,6 @@ export interface Issue extends IssueSummary {
   commentList: IssueComment[];
 }
 
-export const MAX_TITLE = 200;
-export const MAX_BODY = 64 * 1024;
 export const MAX_LABELS = 10;
 
 /** The issues directory for a repository, whether or not it exists yet. */
@@ -64,70 +78,28 @@ export function issuesDir(root: string, collection: string, repo: string): strin
   return path.join(root, collection, `${displayName(repo)}.issues`);
 }
 
-function issueDir(root: string, collection: string, repo: string, n: number): string | null {
+const ISSUE: DiscussionKind = {
+  doc: 'issue.md',
+  indefinite: 'an issue',
+  Indefinite: 'An issue',
+  Bare: 'Issue',
+  dirFor: issuesDir,
+};
+
+/** Move the issues directory's timestamp, invalidating the count cache. */
+function touchIssues(root: string, collection: string, repo: string): void {
   const dir = issuesDir(root, collection, repo);
-  if (!dir || !Number.isInteger(n) || n < 1) return null;
-  return path.join(dir, String(n));
+  if (dir) touch(dir);
 }
 
-function numericDirs(dir: string): number[] {
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  return entries
-    .filter((e) => e.isDirectory() && /^[1-9][0-9]*$/.test(e.name))
-    .map((e) => parseInt(e.name, 10))
-    .sort((a, b) => a - b);
-}
-
-/**
- * A markdown file with a YAML frontmatter header, which is the shape of every
- * file here. A file without a header is not one of ours and is skipped rather
- * than guessed at.
- */
-function readDoc(file: string): { meta: Record<string, unknown>; body: string } | null {
-  let text: string;
-  try {
-    text = fs.readFileSync(file, 'utf8');
-  } catch {
-    return null;
-  }
-  const m = text.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
-  if (!m) return null;
-  let meta: unknown;
-  try {
-    meta = YAML.parse(m[1]);
-  } catch {
-    return null;
-  }
-  if (typeof meta !== 'object' || meta === null) return null;
-  return { meta: meta as Record<string, unknown>, body: m[2] };
-}
-
-function writeDoc(file: string, meta: Record<string, unknown>, body: string): void {
-  const text = `---\n${YAML.stringify(meta).trimEnd()}\n---\n${body.replace(/\s+$/, '')}\n`;
-  writeFileAtomic(file, text, { mode: 0o600 });
-}
-
-function str(v: unknown, fallback = ''): string {
-  return typeof v === 'string' ? v : fallback;
+function issueDir(root: string, collection: string, repo: string, n: number): string | null {
+  return itemDir(ISSUE, root, collection, repo, n);
 }
 
 function labelsOf(v: unknown): string[] {
   if (Array.isArray(v)) return v.filter((x): x is string => typeof x === 'string');
   if (typeof v === 'string') return v.split(',').map((s) => s.trim()).filter((s) => s !== '');
   return [];
-}
-
-function countComments(dir: string): number {
-  try {
-    return fs.readdirSync(path.join(dir, 'comments')).filter((f) => /^[1-9][0-9]*\.md$/.test(f)).length;
-  } catch {
-    return 0;
-  }
 }
 
 function summaryFrom(n: number, dir: string, doc: { meta: Record<string, unknown>; body: string }): IssueSummary {
@@ -239,15 +211,6 @@ export function authorsInUse(list: IssueSummary[]): { author: string; count: num
 // than one per page view, and a vault with no issues never pays anything.
 const countMemo = new Map<string, { mtimeMs: number; counts: { open: number; closed: number } }>();
 
-function touch(dir: string): void {
-  try {
-    const now = new Date();
-    fs.utimesSync(dir, now, now);
-  } catch {
-    // A directory we just wrote into; if this fails the cache simply misses.
-  }
-}
-
 /** Open and closed counts, for the tab and the list's filter. */
 export function issueCounts(root: string, collection: string, repo: string): { open: number; closed: number } {
   const dir = issuesDir(root, collection, repo);
@@ -275,37 +238,7 @@ export function readIssue(root: string, collection: string, repo: string, n: num
   if (!dir) return null;
   const doc = readDoc(path.join(dir, 'issue.md'));
   if (!doc) return null;
-  const commentList: IssueComment[] = [];
-  let files: string[] = [];
-  try {
-    files = fs.readdirSync(path.join(dir, 'comments'));
-  } catch {
-    files = [];
-  }
-  for (const f of files.filter((x) => /^[1-9][0-9]*\.md$/.test(x)).sort((a, b) => parseInt(a, 10) - parseInt(b, 10))) {
-    const c = readDoc(path.join(dir, 'comments', f));
-    if (!c) continue;
-    commentList.push({
-      id: parseInt(f, 10),
-      author: str(c.meta.author, 'unknown'),
-      created: str(c.meta.created),
-      body: c.body,
-    });
-  }
-  return { ...summaryFrom(n, dir, doc), body: doc.body, commentList };
-}
-
-function checkTitle(title: string): string {
-  const t = title.trim().replace(/\s+/g, ' ');
-  if (t === '') throw new OpError('An issue needs a title.');
-  if (t.length > MAX_TITLE) throw new OpError(`A title may be at most ${MAX_TITLE} characters.`);
-  return t;
-}
-
-function checkBody(body: string): string {
-  const b = body.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  if (b.length > MAX_BODY) throw new OpError('That is longer than an issue may be.');
-  return b;
+  return { ...summaryFrom(n, dir, doc), body: doc.body, commentList: readComments(dir) };
 }
 
 export function checkLabels(labels: string[]): string[] {
@@ -328,48 +261,27 @@ export function createIssue(
 ): IssueSummary {
   const dir = issuesDir(root, collection, repo);
   if (!dir) throw new OpError('invalid collection or repository name');
-  const title = checkTitle(input.title);
-  const body = checkBody(input.body);
+  const title = checkDiscussionTitle(ISSUE, input.title);
+  const body = checkDiscussionBody(ISSUE, input.body);
   const labels = checkLabels(input.labels ?? []);
-  fs.mkdirSync(dir, { recursive: true });
   const now = new Date().toISOString();
-  // mkdir is the allocation: whoever creates the directory owns the number,
-  // and a loser of the race simply tries the next one.
-  let n = (numericDirs(dir).pop() ?? 0) + 1;
-  for (let attempt = 0; attempt < 50; attempt++, n++) {
-    const sub = path.join(dir, String(n));
-    try {
-      fs.mkdirSync(sub);
-    } catch {
-      continue;
-    }
-    fs.mkdirSync(path.join(sub, 'comments'), { recursive: true });
+  const n = allocate(ISSUE, dir, (sub) =>
     writeDoc(
       path.join(sub, 'issue.md'),
       { title, state: 'open', author: input.author, created: now, updated: now, labels },
       body
-    );
-    touch(dir);
-    return {
-      number: n,
-      title,
-      state: 'open',
-      author: input.author,
-      created: now,
-      updated: now,
-      labels,
-      comments: 0,
-    };
-  }
-  throw new OpError('Could not allocate an issue number; try again.', 'conflict');
-}
-
-/** Read an issue's header for a write, refusing if it is not there. */
-function openFor(root: string, collection: string, repo: string, n: number) {
-  const dir = issueDir(root, collection, repo, n);
-  const doc = dir ? readDoc(path.join(dir, 'issue.md')) : null;
-  if (!dir || !doc) throw new OpError(`Issue ${n} does not exist.`, 'notfound');
-  return { dir, doc };
+    )
+  );
+  return {
+    number: n,
+    title,
+    state: 'open',
+    author: input.author,
+    created: now,
+    updated: now,
+    labels,
+    comments: 0,
+  };
 }
 
 export function addComment(
@@ -379,33 +291,7 @@ export function addComment(
   n: number,
   input: { author: string; body: string }
 ): IssueComment {
-  const { dir, doc } = openFor(root, collection, repo, n);
-  const body = checkBody(input.body);
-  if (body.trim() === '') throw new OpError('A comment needs something in it.');
-  const commentsDir = path.join(dir, 'comments');
-  fs.mkdirSync(commentsDir, { recursive: true });
-  const used = fs
-    .readdirSync(commentsDir)
-    .filter((f) => /^[1-9][0-9]*\.md$/.test(f))
-    .map((f) => parseInt(f, 10));
-  const now = new Date().toISOString();
-  let id = (used.length ? Math.max(...used) : 0) + 1;
-  for (let attempt = 0; attempt < 50; attempt++, id++) {
-    const file = path.join(commentsDir, `${id}.md`);
-    // Exclusive create is the allocation, as mkdir is for issue numbers: an
-    // existsSync test leaves a window in which two writers pick the same id,
-    // and the second write would then replace the first comment outright.
-    try {
-      fs.closeSync(fs.openSync(file, 'wx'));
-    } catch {
-      continue;
-    }
-    writeDoc(file, { author: input.author, created: now }, body);
-    writeDoc(path.join(dir, 'issue.md'), { ...doc.meta, updated: now }, doc.body);
-    touchIssues(root, collection, repo);
-    return { id, author: input.author, created: now, body };
-  }
-  throw new OpError('Could not add the comment; try again.', 'conflict');
+  return addDiscussionComment(ISSUE, root, collection, repo, n, input);
 }
 
 export function setIssueState(
@@ -416,7 +302,7 @@ export function setIssueState(
   state: 'open' | 'closed',
   actor: string
 ): void {
-  const { dir, doc } = openFor(root, collection, repo, n);
+  const { dir, doc } = openDiscussion(ISSUE, root, collection, repo, n);
   const now = new Date().toISOString();
   const meta: Record<string, unknown> = { ...doc.meta, state, updated: now };
   if (state === 'closed') {
@@ -437,17 +323,12 @@ export function editIssue(
   n: number,
   input: { title?: string; body?: string; labels?: string[] }
 ): void {
-  const { dir, doc } = openFor(root, collection, repo, n);
+  const { dir, doc } = openDiscussion(ISSUE, root, collection, repo, n);
   const meta: Record<string, unknown> = { ...doc.meta, updated: new Date().toISOString() };
-  if (input.title !== undefined) meta.title = checkTitle(input.title);
+  if (input.title !== undefined) meta.title = checkDiscussionTitle(ISSUE, input.title);
   if (input.labels !== undefined) meta.labels = checkLabels(input.labels);
-  const body = input.body === undefined ? doc.body : checkBody(input.body);
+  const body = input.body === undefined ? doc.body : checkDiscussionBody(ISSUE, input.body);
   writeDoc(path.join(dir, 'issue.md'), meta, body);
   touchIssues(root, collection, repo);
 }
 
-/** Move the issues directory's timestamp, invalidating the count cache. */
-function touchIssues(root: string, collection: string, repo: string): void {
-  const dir = issuesDir(root, collection, repo);
-  if (dir) touch(dir);
-}
