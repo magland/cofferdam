@@ -14,7 +14,7 @@ BASE="http://127.0.0.1:$PORT"
 #  - it must be able to execute a script, because git silently skips a hook it
 #    cannot execute. git-lfs uploads objects from a pre-push hook, so on a
 #    filesystem mounted noexec the LFS checks below see a pointer pushed, no
-#    object uploaded, and a download that 404s, none of which is hubbit's
+#    object uploaded, and a download that 404s, none of which is cofferdam's
 #    doing. The vault lives here too, and its repositories have hooks of their
 #    own.
 #  - it should be able to keep a file private, because `git credential-store`
@@ -29,7 +29,7 @@ smoke_tmp() {
   local base d mode exec_ok private_ok fallback=""
   for base in "${TMPDIR:-/tmp}" /dev/shm; do
     [ -d "$base" ] && [ -w "$base" ] || continue
-    d="$(mktemp -d "$base/hubbit-smoke.XXXXXX" 2>/dev/null)" || continue
+    d="$(mktemp -d "$base/cofferdam-smoke.XXXXXX" 2>/dev/null)" || continue
     printf '#!/bin/sh\nexit 0\n' > "$d/probe.sh"; chmod +x "$d/probe.sh"
     if "$d/probe.sh" 2>/dev/null; then exec_ok=1; else exec_ok=0; fi
     ( umask 077; : > "$d/probe.mode" )
@@ -55,7 +55,7 @@ mkdir -p "$VAULT"
 
 export GIT_TERMINAL_PROMPT=0
 
-# The suite tests hubbit, not the machine's git configuration, and two of the
+# The suite tests cofferdam, not the machine's git configuration, and two of the
 # checks below are only meaningful against a known one: "login refuses when no
 # credential helper is configured" is false the moment a system config sets a
 # helper, as a hosted development container does. An identity has to come from
@@ -64,7 +64,7 @@ export GIT_CONFIG_SYSTEM=/dev/null
 export GIT_CONFIG_GLOBAL="$TMP/gitconfig"
 cat > "$GIT_CONFIG_GLOBAL" <<'GITCONFIG'
 [user]
-	name = hubbit smoke
+	name = cofferdam smoke
 	email = smoke@example.invalid
 [init]
 	defaultBranch = main
@@ -101,7 +101,7 @@ if [ "$started" != 1 ]; then
   echo "FAIL: server did not start"; cat "$LOG"; exit 1
 fi
 
-OWNER_TOKEN="$(grep -o 'hubbit_[0-9a-f]\{64\}' "$LOG" | head -1 || true)"
+OWNER_TOKEN="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$LOG" | head -1 || true)"
 [ -n "$OWNER_TOKEN" ] || { echo "FAIL: no owner token in server log"; cat "$LOG"; exit 1; }
 
 PASS=0
@@ -630,13 +630,13 @@ CSRF="$(csrf_of)"
 check "create user alice" 200 -b "$JAR" "$BASE/admin/users" \
   --data-urlencode "csrf=$CSRF" --data-urlencode username=alice --data-urlencode "scope=demo/*" \
   --data-urlencode "admin="
-ALICE_TOKEN="$(grep -o 'hubbit_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+ALICE_TOKEN="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
 [ -n "$ALICE_TOKEN" ] || { echo "FAIL: no token for alice shown"; exit 1; }
 check "grant to alice" 302 -b "$JAR" "$BASE/admin/users/alice/grant" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "scope=extra/thing" --data-urlencode "admin="
 check "mint token for alice" 200 -b "$JAR" "$BASE/admin/users/alice/token" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "tokenScope="
-body_has "minted token shown" 'hubbit_'
+body_has "minted token shown" 'cofferdam_'
 
 # ---- themes ----
 
@@ -697,7 +697,7 @@ CSRF="$(csrf_of)"
 check "create delegated admin" 200 -b "$JAR" "$BASE/admin/users" \
   --data-urlencode "csrf=$CSRF" --data-urlencode username=collectionadmin \
   --data-urlencode "scope=demo/*" --data-urlencode "admin=demo/*"
-COLLECTION_TOKEN="$(grep -o 'hubbit_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+COLLECTION_TOKEN="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
 [ -n "$COLLECTION_TOKEN" ] || { echo "FAIL: no token for collectionadmin"; exit 1; }
 check "collectionadmin login" 302 -c "$TMP/collectionadmin.jar" "$BASE/login" \
   --data-urlencode username=collectionadmin --data-urlencode "token=$COLLECTION_TOKEN" --data-urlencode next=/
@@ -925,7 +925,7 @@ check "api whoami" 200 -H "Authorization: Bearer $OWNER_TOKEN" "$BASE/api/whoami
 body_has "whoami username" '"username":"owner"'
 check "api rejects session cookie" 401 -b "$JAR" "$BASE/api/whoami"
 
-# ---- hubbit login: the token in git's credential store ----
+# ---- cofferdam login: the token in git's credential store ----
 
 # An isolated HOME so this never touches the developer's own git configuration,
 # and an askpass that trips a wire rather than answering, standing in for an
@@ -940,7 +940,7 @@ touch "$TRIPPED"
 exit 1
 ASKPASS
 chmod +x "$TMP/askpass"
-# The global config goes with the isolated HOME, so that what `hubbit login`
+# The global config goes with the isolated HOME, so that what `cofferdam login`
 # writes lands there and starts out empty: the first check needs no helper to
 # be configured anywhere git will look.
 cred_env() { env HOME="$CRED_HOME" GIT_CONFIG_GLOBAL="$CRED_HOME/.gitconfig" GIT_ASKPASS="$TMP/askpass" SSH_ASKPASS="$TMP/askpass" "$@"; }
@@ -966,10 +966,10 @@ no_prompt() {
 # exits zero, so login has to refuse rather than report success.
 run_fails "login refuses when no credential helper is configured" \
   cli login --host "$BASE" --token "$OWNER_TOKEN"
-body_has "login names the helpers it could use" 'hubbit login --helper store'
+body_has "login names the helpers it could use" 'cofferdam login --helper store'
 
 run_fails "login refuses a bad token before storing it" \
-  cli login --host "$BASE" --token hubbit_not_a_real_token --helper store
+  cli login --host "$BASE" --token cofferdam_not_a_real_token --helper store
 if [ -e "$CRED_HOME/.git-credentials" ]; then echo "FAIL: a rejected token was stored anyway"; exit 1; fi
 PASS=$((PASS+1)); echo "ok: nothing stored for a rejected token"
 
@@ -1299,7 +1299,7 @@ PASS=$((PASS+1)); echo "ok: repository deletion removed its LFS objects"
 
 CI_REPO="$TMP/cirepo"
 git init -q -b main "$CI_REPO"
-mkdir -p "$CI_REPO/.github/workflows" "$CI_REPO/.hubbit/workflows"
+mkdir -p "$CI_REPO/.github/workflows" "$CI_REPO/.cofferdam/workflows"
 
 cat > "$CI_REPO/.github/workflows/build.yml" <<'YML'
 name: Build
@@ -1341,9 +1341,9 @@ jobs:
 YML
 
 # Shadowed by name: this .github copy must never run, because a file with the
-# same basename exists under .hubbit/workflows.
+# same basename exists under .cofferdam/workflows.
 cat > "$CI_REPO/.github/workflows/shadowed.yml" <<'YML'
-name: Shadowed by hubbit
+name: Shadowed by cofferdam
 on: [push]
 jobs:
   ghost:
@@ -1351,14 +1351,14 @@ jobs:
     steps:
       - run: echo "this must not run"
 YML
-cat > "$CI_REPO/.hubbit/workflows/shadowed.yml" <<'YML'
-name: Hubbit override
+cat > "$CI_REPO/.cofferdam/workflows/shadowed.yml" <<'YML'
+name: Cofferdam override
 on: [push]
 jobs:
   real:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "the hubbit copy runs"
+      - run: echo "the cofferdam copy runs"
 YML
 
 cat > "$CI_REPO/.github/workflows/tagsonly.yml" <<'YML'
@@ -1409,9 +1409,9 @@ PY
 
 [ -n "$(runs_named 'Build')" ] || { echo "FAIL: the push did not plan the Build workflow"; exit 1; }
 PASS=$((PASS+1)); echo "ok: a matching push trigger plans a run"
-[ -n "$(runs_named 'Hubbit override')" ] || { echo "FAIL: .hubbit/workflows copy did not run"; exit 1; }
-PASS=$((PASS+1)); echo "ok: .hubbit/workflows shadows .github/workflows by basename"
-[ -z "$(runs_named 'Shadowed by hubbit')" ] || { echo "FAIL: the shadowed .github copy ran"; exit 1; }
+[ -n "$(runs_named 'Cofferdam override')" ] || { echo "FAIL: .cofferdam/workflows copy did not run"; exit 1; }
+PASS=$((PASS+1)); echo "ok: .cofferdam/workflows shadows .github/workflows by basename"
+[ -z "$(runs_named 'Shadowed by cofferdam')" ] || { echo "FAIL: the shadowed .github copy ran"; exit 1; }
 PASS=$((PASS+1)); echo "ok: the shadowed .github copy does not run"
 [ -z "$(runs_named 'Tags only')" ] || { echo "FAIL: a tags-only workflow ran on a branch push"; exit 1; }
 PASS=$((PASS+1)); echo "ok: branch push does not fire a tags-only trigger"
@@ -1482,7 +1482,7 @@ check "a runner needs an allow list" 400 -b "$JAR" "$BASE/admin/runners" \
 check "register a runner" 200 -b "$JAR" "$BASE/admin/runners" \
   --data-urlencode "csrf=$CSRF" --data-urlencode name=smoke --data-urlencode labels=ubuntu-latest \
   --data-urlencode "allow=demo/*"
-RUNNER_TOKEN="$({ grep -o 'hubbit_runner_[0-9a-f]\{64\}' "$BODY" || true; } | head -1)"
+RUNNER_TOKEN="$({ grep -o 'cofferdam_runner_[0-9a-f]\{64\}' "$BODY" || true; } | head -1)"
 [ -n "$RUNNER_TOKEN" ] || { echo "FAIL: no runner token shown after registration"; exit 1; }
 PASS=$((PASS+1)); echo "ok: registering a runner shows its token once"
 [ -f "$VAULT/runners.json" ] || { echo "FAIL: runners.json not written"; exit 1; }
@@ -1504,7 +1504,7 @@ check "acquire with an unmatched label yields nothing" 204 -X POST \
   -d '{"labels":["windows-latest"]}' "$BASE/api/runner/acquire"
 check "status with a bogus lease is refused" 409 -X POST \
   -H "Authorization: Bearer $RUNNER_TOKEN" -H 'Content-Type: application/json' \
-  -H 'X-Hubbit-Lease: nonsense' -d '{"lease":"nonsense","status":"completed","conclusion":"success"}' \
+  -H 'X-Cofferdam-Lease: nonsense' -d '{"lease":"nonsense","status":"completed","conclusion":"success"}' \
   "$BASE/api/runner/jobs/demo/ci/$BUILD_RUN/build/status"
 
 # ---- cancelling a run ----
@@ -1779,7 +1779,7 @@ jobs:
           echo "<h1>built by a workflow</h1>" > _site/index.html
           echo "body{}" > _site/css/style.css
       - uses: actions/configure-pages@v5
-      - run: echo "base path is $HUBBIT_SITE_BASE_PATH (was $HUBBIT_PAGES_BASE_PATH)"
+      - run: echo "base path is $COFFERDAM_SITE_BASE_PATH (was $COFFERDAM_PAGES_BASE_PATH)"
       - uses: actions/upload-artifact@v4
         with:
           name: site
@@ -1831,7 +1831,7 @@ YML
   ACT_LOG="$RUNS/$ACT_RUN/jobs/act.log"
   grep -q "already checked out" "$ACT_LOG" || {
     echo "FAIL: actions/checkout was not substituted"; exit 1; }
-  PASS=$((PASS+1)); echo "ok: actions/checkout is substituted by hubbit's own"
+  PASS=$((PASS+1)); echo "ok: actions/checkout is substituted by cofferdam's own"
   grep -q "hello world from node v20" "$ACT_LOG" || {
     echo "FAIL: the JavaScript action did not run on node 20"; cat "$ACT_LOG"; exit 1; }
   PASS=$((PASS+1)); echo "ok: a JavaScript action runs, on the node version it asks for"
@@ -1867,7 +1867,7 @@ YML
   # every file it creates - some containers give /tmp one that leaves no
   # execute bit for others - the runner cannot walk back into the directory the
   # job just filled. The artifact would then be empty for a reason that is the
-  # filesystem's and not hubbit's, so probe for it the way the checks above
+  # filesystem's and not cofferdam's, so probe for it the way the checks above
   # probe for docker and for git-lfs, and say what is being skipped.
   ART_PROBE="$TMP/artifact-probe"
   mkdir -p "$ART_PROBE"

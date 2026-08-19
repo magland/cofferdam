@@ -18,31 +18,31 @@ import { bootstrapVault } from './vault';
 
 function usage(code = 0): never {
   console.log(`Usage:
-  hubbit serve [vault-dir] [-p|--port <n>] [--host <h>]
+  cofferdam serve [vault-dir] [-p|--port <n>] [--host <h>]
       Serve a vault (a directory of collections containing bare git repositories).
-      The vault defaults to $HUBBIT_VAULT, then the current directory. On the
+      The vault defaults to $COFFERDAM_VAULT, then the current directory. On the
       first start with no vault.json, the server initializes one and prints
       an owner token once.
 
-  hubbit user add <username> [--scope <glob>]... [--admin <glob>]... [--token-scope <glob>]...
+  cofferdam user add <username> [--scope <glob>]... [--admin <glob>]... [--token-scope <glob>]...
       Create a user and print its token once (only a SHA-256 hash is
       stored). A new user defaults to push scope "*"; --admin globs let the
       user manage other users within those globs. Run again without --scope
       on an existing user to mint an additional token.
 
-  hubbit user grant <username> [--scope <glob>]... [--admin <glob>]...
+  cofferdam user grant <username> [--scope <glob>]... [--admin <glob>]...
       Extend an existing user's push scope and/or admin scope. Globs match
       collection/repo: "mycollection/*" is a whole collection,
       "mycollection/myrepo" a single repository, "*" everything. Existing
       globs are kept.
 
-  hubbit user list
+  cofferdam user list
       Show users, their scopes, and how many tokens each has.
 
-  hubbit whoami
+  cofferdam whoami
       Show the user, scopes, and token restriction for the current token.
 
-  hubbit login [--helper <name>]
+  cofferdam login [--helper <name>]
       Hand the token to git's credential store, so that clone, fetch, push,
       and git lfs against this vault stop asking for a password. The token is
       verified first, and read back afterwards to confirm it was really kept.
@@ -51,33 +51,33 @@ function usage(code = 0): never {
       is already configured to use for that host is used, and login refuses
       rather than storing nothing when that is nothing.
 
-  hubbit logout
+  cofferdam logout
       Remove this vault's stored credential again.
 
-  hubbit runner add <name> --allow <glob>... [--labels <l,...>] [--save]
+  cofferdam runner add <name> --allow <glob>... [--labels <l,...>] [--save]
       Register a machine that will execute workflow jobs, and print its
       token once. --allow says which repositories it may take jobs for, as
       globs over collection/repo; your admin scope must cover them. Jobs
       never run on the vault's machine, so a vault with no runner queues
       its runs and waits.
 
-  hubbit runner run [--host <url>] [--runner-token <t>] [--labels <l,...>]
+  cofferdam runner run [--host <url>] [--runner-token <t>] [--labels <l,...>]
       Take jobs and run them, one at a time, each in a Docker container.
-      Reads ~/.config/hubbit/runner.json when given no arguments. Needs a
+      Reads ~/.config/cofferdam/runner.json when given no arguments. Needs a
       working docker command; --image <label>=<image> overrides which image
       a runs-on label maps to. Actions named by uses: are fetched from
       github.com (--actions-url changes that) and cached under
-      ~/.cache/hubbit (--cache-dir changes that), keyed by the commit the ref
+      ~/.cache/cofferdam (--cache-dir changes that), keyed by the commit the ref
       resolves to, so a moved branch or tag is picked up on the next run;
       --no-action-cache downloads every time.
 
-  hubbit runner list
-  hubbit runner remove <name>
+  cofferdam runner list
+  cofferdam runner remove <name>
       Show or remove registered runners (admin token, as with users).
 
-User commands talk to a running hubbit server:
-  HUBBIT_HOST    server URL, e.g. http://127.0.0.1:3000   (or --host <url>)
-  HUBBIT_TOKEN   a token with admin scope                  (or --token <t>)
+User commands talk to a running cofferdam server:
+  COFFERDAM_HOST    server URL, e.g. http://127.0.0.1:3000   (or --host <url>)
+  COFFERDAM_TOKEN   a token with admin scope                  (or --token <t>)
 
 Vault layout:
   <vault>/<collection>/<repo>.git    bare repositories (the .git suffix is optional)
@@ -113,7 +113,7 @@ function serveCmd(args: string[]) {
     console.error('Invalid port');
     process.exit(1);
   }
-  const vault = path.resolve(dir ?? process.env.HUBBIT_VAULT ?? '.');
+  const vault = path.resolve(dir ?? process.env.COFFERDAM_VAULT ?? '.');
   if (!fs.existsSync(vault) || !fs.statSync(vault).isDirectory()) {
     console.error(`Vault directory does not exist: ${vault}`);
     process.exit(1);
@@ -130,11 +130,11 @@ function serveCmd(args: string[]) {
       console.log(`  ${boot.token}`);
       console.log('');
       console.log('Sign in on the web with it, or manage users from anywhere:');
-      console.log(`  export HUBBIT_HOST=${url}`);
-      console.log(`  export HUBBIT_TOKEN=${boot.token}`);
+      console.log(`  export COFFERDAM_HOST=${url}`);
+      console.log(`  export COFFERDAM_TOKEN=${boot.token}`);
       console.log('');
     }
-    console.log(`hubbit serving vault ${vault}`);
+    console.log(`cofferdam serving vault ${vault}`);
     console.log(`  ${url}`);
   });
 }
@@ -164,7 +164,7 @@ function parseUserArgs(args: string[]): UserArgs {
     else if (a === '--admin') out.admin.push(args[++i]);
     else if (a === '--token-scope') out.tokenScope.push(args[++i]);
     else if (a === '--vault') {
-      console.error('--vault is gone: user commands talk to a running server. Set HUBBIT_HOST and HUBBIT_TOKEN.');
+      console.error('--vault is gone: user commands talk to a running server. Set COFFERDAM_HOST and COFFERDAM_TOKEN.');
       process.exit(1);
     } else if (a.startsWith('-')) {
       console.error(`Unknown option: ${a}`);
@@ -179,14 +179,14 @@ function parseUserArgs(args: string[]): UserArgs {
 }
 
 function remoteTarget(args: { host: string | null; token: string | null }): RemoteTarget {
-  const host = (args.host ?? process.env.HUBBIT_HOST ?? '').replace(/\/+$/, '');
-  const token = args.token ?? process.env.HUBBIT_TOKEN ?? '';
+  const host = (args.host ?? process.env.COFFERDAM_HOST ?? '').replace(/\/+$/, '');
+  const token = args.token ?? process.env.COFFERDAM_TOKEN ?? '';
   if (!host) {
-    console.error('No server configured. Set HUBBIT_HOST (e.g. http://127.0.0.1:3000) or pass --host <url>.');
+    console.error('No server configured. Set COFFERDAM_HOST (e.g. http://127.0.0.1:3000) or pass --host <url>.');
     process.exit(1);
   }
   if (!token) {
-    console.error('No token configured. Set HUBBIT_TOKEN or pass --token <token>.');
+    console.error('No token configured. Set COFFERDAM_TOKEN or pass --token <token>.');
     process.exit(1);
   }
   return { host, token };
@@ -261,11 +261,11 @@ async function userAddCmd(args: string[]) {
 async function userGrantCmd(args: string[]) {
   const a = parseUserArgs(args);
   if (!a.username) {
-    console.error('Usage: hubbit user grant <username> --scope <glob> [--admin <glob>]...');
+    console.error('Usage: cofferdam user grant <username> --scope <glob> [--admin <glob>]...');
     process.exit(1);
   }
   if (a.scope.length === 0 && a.admin.length === 0) {
-    console.error(`Nothing to grant. Example: hubbit user grant ${a.username} --scope 'mycollection/*'`);
+    console.error(`Nothing to grant. Example: cofferdam user grant ${a.username} --scope 'mycollection/*'`);
     process.exit(1);
   }
   const target = remoteTarget(a);
@@ -329,9 +329,9 @@ function parseLoginArgs(args: string[]): LoginArgs {
 }
 
 function loginTarget(args: LoginArgs): { host: string; target: CredentialTarget } {
-  const host = (args.host ?? process.env.HUBBIT_HOST ?? '').replace(/\/+$/, '');
+  const host = (args.host ?? process.env.COFFERDAM_HOST ?? '').replace(/\/+$/, '');
   if (!host) {
-    console.error('No server configured. Set HUBBIT_HOST (e.g. https://vault.example.com) or pass --host <url>.');
+    console.error('No server configured. Set COFFERDAM_HOST (e.g. https://vault.example.com) or pass --host <url>.');
     process.exit(1);
   }
   try {
@@ -350,7 +350,7 @@ function promptToken(prompt: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const input = process.stdin;
     if (!input.isTTY) {
-      reject(new Error('No token given and no terminal to ask on. Set HUBBIT_TOKEN or pass --token <t>.'));
+      reject(new Error('No token given and no terminal to ask on. Set COFFERDAM_TOKEN or pass --token <t>.'));
       return;
     }
     process.stdout.write(prompt);
@@ -393,16 +393,16 @@ async function loginCmd(args: string[]) {
     console.error('Storing one would silently do nothing, so this is refused rather than reported as success.');
     console.error('');
     console.error('Choose where the token should live and run login again:');
-    console.error('  hubbit login --helper store        a file at ~/.git-credentials, mode 0600, in plain text');
-    console.error('  hubbit login --helper cache        memory only, forgotten after 15 minutes');
-    console.error('  hubbit login --helper libsecret    the desktop keyring, on Linux');
-    console.error('  hubbit login --helper osxkeychain  the login keychain, on macOS');
+    console.error('  cofferdam login --helper store        a file at ~/.git-credentials, mode 0600, in plain text');
+    console.error('  cofferdam login --helper cache        memory only, forgotten after 15 minutes');
+    console.error('  cofferdam login --helper libsecret    the desktop keyring, on Linux');
+    console.error('  cofferdam login --helper osxkeychain  the login keychain, on macOS');
     console.error('');
     console.error(`The choice is recorded for ${target.url} alone; other remotes keep whatever they use now.`);
     process.exit(1);
   }
 
-  const token = a.token ?? process.env.HUBBIT_TOKEN ?? (await promptToken(`Token for ${target.url}: `));
+  const token = a.token ?? process.env.COFFERDAM_TOKEN ?? (await promptToken(`Token for ${target.url}: `));
   if (!token) {
     console.error('No token given.');
     process.exit(1);
@@ -434,7 +434,7 @@ async function loginCmd(args: string[]) {
   if (who.tokenScope) console.log(`  this token is restricted to: ${(who.tokenScope as string[]).join(', ')}`);
   console.log('');
   console.log('git clone, fetch, push, and git lfs against this vault will no longer ask for a password.');
-  console.log('Run `hubbit logout` to remove it again.');
+  console.log('Run `cofferdam logout` to remove it again.');
 }
 
 async function logoutCmd(args: string[]) {
@@ -474,11 +474,11 @@ async function main() {
   else if (cmd === 'runner' && args[1] === 'list') await runnerListCmd(args.slice(2), usage);
   else if (cmd === 'runner' && args[1] === 'remove') await runnerRemoveCmd(args.slice(2), usage);
   else if (cmd === 'runner') {
-    console.error('Usage: hubbit runner <add|run|list|remove> ... (see hubbit --help)');
+    console.error('Usage: cofferdam runner <add|run|list|remove> ... (see cofferdam --help)');
     process.exit(1);
   }
   else if (cmd === 'user') {
-    console.error('Usage: hubbit user <add|grant|list> ... (see hubbit --help)');
+    console.error('Usage: cofferdam user <add|grant|list> ... (see cofferdam --help)');
     process.exit(1);
   } else serveCmd(args);
 }

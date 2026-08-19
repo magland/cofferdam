@@ -10,8 +10,8 @@ import { runsDir } from './runs';
 //
 //   <vault>/<collection>/<repo>.runs/12/artifacts/github-pages.tar
 //
-// hubbit does not implement GitHub's artifact wire protocol. The
-// upload-artifact and download-artifact actions are substituted by hubbit's
+// cofferdam does not implement GitHub's artifact wire protocol. The
+// upload-artifact and download-artifact actions are substituted by cofferdam's
 // own (see the runner's overrides), which speak the small API in ci/api.ts;
 // this module is only the storage underneath it.
 

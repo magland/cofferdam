@@ -58,7 +58,7 @@ export async function createRepo(root: string, collection: string, name: string)
  * A local clone hardlinks its objects, so a fork of a large repository costs
  * almost nothing on disk until one side or the other gains new objects. The
  * `origin` remote git writes points at a filesystem path, which means nothing
- * to anyone reading the fork, so it is removed and replaced by a `hubbit
+ * to anyone reading the fork, so it is removed and replaced by a `cofferdam
  * .forkedFrom` entry naming `<collection>/<repo>`. Nothing else comes across:
  * issues, releases, runs, and the site belong to the repository that has
  * them, and a fork starts with none.
@@ -85,7 +85,7 @@ export async function forkRepo(
   const dir = path.join(root, toCollection, `${toName}.git`);
   await execGit(root, ['clone', '--bare', source.dir, dir]);
   await execGit(dir, ['remote', 'remove', 'origin']).catch(() => undefined);
-  await execGit(dir, ['config', 'hubbit.forkedFrom', `${collection}/${name}`]);
+  await execGit(dir, ['config', 'cofferdam.forkedFrom', `${collection}/${name}`]);
   await execGit(dir, ['config', 'receive.denyNonFastForwards', 'true']);
   await execGit(dir, ['config', 'receive.denyDeletes', 'true']);
   await execGit(dir, ['config', 'receive.maxInputSize', String(2 * 1024 * 1024 * 1024)]);
@@ -169,7 +169,7 @@ export async function commitFiles(
   }
   if (expectedHead !== null && !isValidSha(expectedHead)) throw new OpError('invalid expected commit');
 
-  const indexFile = tmpFile('hubbit-index');
+  const indexFile = tmpFile('cofferdam-index');
   const env = { ...process.env, GIT_INDEX_FILE: indexFile };
   try {
     let baseTree: string | null = null;
@@ -185,7 +185,7 @@ export async function commitFiles(
         expectedHead !== null && (await entryExists(repoDir, expectedHead, file.path))
           ? await entryMode(repoDir, expectedHead, file.path)
           : '100644';
-      const contentFile = tmpFile('hubbit-blob');
+      const contentFile = tmpFile('cofferdam-blob');
       let blobSha: string;
       try {
         fs.writeFileSync(contentFile, file.content, { mode: 0o600 });
@@ -240,7 +240,7 @@ export async function commitFileChange(repoDir: string, args: FileCommitArgs): P
     throw new OpError('cannot edit or delete a file on a branch that does not exist');
   }
 
-  const indexFile = tmpFile('hubbit-index');
+  const indexFile = tmpFile('cofferdam-index');
   const env = { ...process.env, GIT_INDEX_FILE: indexFile };
   try {
     let baseTree: string | null = null;
@@ -267,7 +267,7 @@ export async function commitFileChange(repoDir: string, args: FileCommitArgs): P
         action.kind === 'edit' && expectedHead !== null
           ? await entryMode(repoDir, expectedHead, filePath)
           : '100644';
-      const contentFile = tmpFile('hubbit-blob');
+      const contentFile = tmpFile('cofferdam-blob');
       let blobSha: string;
       try {
         fs.writeFileSync(contentFile, action.content, { mode: 0o600 });

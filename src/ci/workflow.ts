@@ -1,7 +1,7 @@
 import * as YAML from 'yaml';
 
 // Parsing and normalizing workflow files (.github/workflows/*.yml and
-// .hubbit/workflows/*.yml). The result is a plain-data Workflow that the
+// .cofferdam/workflows/*.yml). The result is a plain-data Workflow that the
 // planner turns into a run. Parsing is strict about shapes it understands and
 // forgiving about keys it does not: unknown top-level or job keys are
 // ignored, so a workflow using a feature we have not implemented degrades to

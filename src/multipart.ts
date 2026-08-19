@@ -1,6 +1,6 @@
 // Parsing multipart/form-data, which is how a browser sends files.
 //
-// hubbit parses this itself rather than taking a dependency, for the same
+// cofferdam parses this itself rather than taking a dependency, for the same
 // reason it renders its own HTML: the format is small, the surface it is
 // exposed to is one form, and a parser in the tree is one that can be read.
 // The body arrives whole (express.raw with a cap) rather than as a stream,

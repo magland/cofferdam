@@ -1,7 +1,7 @@
 import { DEFAULT_IMAGES, Runner, RunnerConfig, configPath, loadRunnerConfig, saveRunnerConfig } from './runner/client';
 
-// The `hubbit runner ...` subcommands. Registration talks to the server with
-// an admin token, exactly like `hubbit user add`; running needs only the
+// The `cofferdam runner ...` subcommands. Registration talks to the server with
+// an admin token, exactly like `cofferdam user add`; running needs only the
 // runner's own token and a working Docker.
 
 interface RunnerArgs {
@@ -73,14 +73,14 @@ function parseArgs(args: string[], usage: () => never): RunnerArgs {
 }
 
 function adminTarget(a: RunnerArgs): { host: string; token: string } {
-  const host = (a.host ?? process.env.HUBBIT_HOST ?? '').replace(/\/+$/, '');
-  const token = a.token ?? process.env.HUBBIT_TOKEN ?? '';
+  const host = (a.host ?? process.env.COFFERDAM_HOST ?? '').replace(/\/+$/, '');
+  const token = a.token ?? process.env.COFFERDAM_TOKEN ?? '';
   if (!host) {
-    console.error('No server configured. Set HUBBIT_HOST (e.g. http://127.0.0.1:3000) or pass --host <url>.');
+    console.error('No server configured. Set COFFERDAM_HOST (e.g. http://127.0.0.1:3000) or pass --host <url>.');
     process.exit(1);
   }
   if (!token) {
-    console.error('No token configured. Set HUBBIT_TOKEN or pass --token <token>.');
+    console.error('No token configured. Set COFFERDAM_TOKEN or pass --token <token>.');
     process.exit(1);
   }
   return { host, token };
@@ -122,7 +122,7 @@ async function api(
 export async function runnerAddCmd(args: string[], usage: () => never): Promise<void> {
   const a = parseArgs(args, usage);
   if (!a.name) {
-    console.error('A runner name is required: hubbit runner add <name> --allow <glob>');
+    console.error('A runner name is required: cofferdam runner add <name> --allow <glob>');
     process.exit(1);
   }
   if (a.allow.length === 0) {
@@ -151,11 +151,11 @@ export async function runnerAddCmd(args: string[], usage: () => never): Promise<
     saveRunnerConfig(config);
     console.log(`Saved to ${configPath()}. Start it with:`);
     console.log('');
-    console.log('  hubbit runner run');
+    console.log('  cofferdam runner run');
   } else {
     console.log('On the machine that will run jobs (with Docker installed):');
     console.log('');
-    console.log(`  hubbit runner run --host ${target.host} --runner-token ${data.token}`);
+    console.log(`  cofferdam runner run --host ${target.host} --runner-token ${data.token}`);
   }
   console.log('');
 }
@@ -187,7 +187,7 @@ export async function runnerListCmd(args: string[], usage: () => never): Promise
 export async function runnerRemoveCmd(args: string[], usage: () => never): Promise<void> {
   const a = parseArgs(args, usage);
   if (!a.name) {
-    console.error('A runner name is required: hubbit runner remove <name>');
+    console.error('A runner name is required: cofferdam runner remove <name>');
     process.exit(1);
   }
   const target = adminTarget(a);
@@ -198,12 +198,12 @@ export async function runnerRemoveCmd(args: string[], usage: () => never): Promi
 export async function runnerRunCmd(args: string[], usage: () => never): Promise<void> {
   const a = parseArgs(args, usage);
   const saved = loadRunnerConfig();
-  const host = (a.host ?? saved?.host ?? process.env.HUBBIT_HOST ?? '').replace(/\/+$/, '');
-  const token = a.runnerToken ?? process.env.HUBBIT_RUNNER_TOKEN ?? saved?.token ?? '';
+  const host = (a.host ?? saved?.host ?? process.env.COFFERDAM_HOST ?? '').replace(/\/+$/, '');
+  const token = a.runnerToken ?? process.env.COFFERDAM_RUNNER_TOKEN ?? saved?.token ?? '';
   if (!host || !token) {
     console.error(
       `No runner credentials. Register one with:\n\n` +
-        `  hubbit runner add <name> --allow 'mycollection/*' --save\n\n` +
+        `  cofferdam runner add <name> --allow 'mycollection/*' --save\n\n` +
         `or pass --host and --runner-token, or write ${configPath()}.`
     );
     process.exit(1);

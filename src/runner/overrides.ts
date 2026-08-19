@@ -7,13 +7,13 @@ import { isValidArtifactName } from '../ci/artifacts';
 import { filterPatternToRegExp } from '../ci/workflow';
 import type { StepExecContext } from './steps';
 
-// Actions hubbit implements itself.
+// Actions cofferdam implements itself.
 //
 // Most actions are ordinary programs and run unmodified. A few are not: they
 // are thin clients for services that exist only inside GitHub, such as the
 // artifact store, the cache service, and the Pages deployment API (which
-// hubbit answers with a site). Running
-// those verbatim against a hubbit vault cannot work, so hubbit substitutes
+// cofferdam answers with a site). Running
+// those verbatim against a cofferdam vault cannot work, so cofferdam substitutes
 // its own implementation of the same interface, chosen by the `uses:` string.
 //
 // Overriding by name rather than implementing GitHub's wire protocols is a
@@ -54,7 +54,7 @@ function boolInput(v: string | undefined, dflt: boolean): boolean {
 
 // ---- actions/checkout ----
 
-// hubbit checks the repository out before the job starts, so this is usually
+// cofferdam checks the repository out before the job starts, so this is usually
 // a no-op that reports what is already there. It does real work when the step
 // asks for something different: another repository, another ref, another
 // directory, full history, or submodules.
@@ -75,7 +75,7 @@ const checkout: Override = {
     const samePath = target === '' || target === '.' || target === './';
 
     if (sameRepo && sameRef && samePath) {
-      ctx.log(`${current} is already checked out at ${ctx.spec.sha.slice(0, 8)} (hubbit checks out before the job starts)`);
+      ctx.log(`${current} is already checked out at ${ctx.spec.sha.slice(0, 8)} (cofferdam checks out before the job starts)`);
       if (depth === 0) {
         ctx.log('fetch-depth: 0 requested; fetching the full history');
         try {
@@ -342,7 +342,7 @@ const uploadArtifact: Override = {
         method: 'PUT',
         headers: {
           authorization: `Bearer ${ctx.runnerToken}`,
-          'x-hubbit-lease': ctx.spec.lease,
+          'x-cofferdam-lease': ctx.spec.lease,
           'content-type': 'application/x-tar',
           'content-length': String(size),
         },
@@ -386,7 +386,7 @@ const downloadArtifact: Override = {
       ctx.log(`path: ${target} resolves outside the workspace`);
       return { ok: false };
     }
-    const headers = { authorization: `Bearer ${ctx.runnerToken}`, 'x-hubbit-lease': ctx.spec.lease };
+    const headers = { authorization: `Bearer ${ctx.runnerToken}`, 'x-cofferdam-lease': ctx.spec.lease };
 
     let names: string[];
     if (name !== '') {
@@ -445,7 +445,7 @@ const downloadArtifact: Override = {
 //
 // These two keep GitHub's spelling in their `uses:` keys and in the
 // `github-pages` artifact name, because those are somebody else's interface.
-// hubbit's own noun for what they publish is a site.
+// cofferdam's own noun for what they publish is a site.
 
 function siteUrls(ctx: StepExecContext): { origin: string; basePath: string; baseUrl: string; host: string } {
   const a = ctx.spec.address;
@@ -462,7 +462,7 @@ function siteUrls(ctx: StepExecContext): { origin: string; basePath: string; bas
 
 // configure-pages exists to tell the rest of a workflow where the site will
 // live. The real one asks GitHub's API; this answers from the vault's own
-// URL. Note the shape differs from GitHub's: a hubbit site is served at
+// URL. Note the shape differs from GitHub's: a cofferdam site is served at
 // /<collection>/<repo>/site/ rather than at /<repo>/, so a generator that
 // computes its own base path instead of reading base_path will be wrong, and
 // needs the path passed to it explicitly.
@@ -471,10 +471,10 @@ const configurePages: Override = {
   async run({ ctx }) {
     const u = siteUrls(ctx);
     ctx.log(`This site will be served at ${u.baseUrl}/`);
-    ctx.rt.env.HUBBIT_SITE_BASE_PATH = u.basePath;
+    ctx.rt.env.COFFERDAM_SITE_BASE_PATH = u.basePath;
     // The former name of the same variable, kept so workflows written against
     // it keep working; remove it once they have moved.
-    ctx.rt.env.HUBBIT_PAGES_BASE_PATH = u.basePath;
+    ctx.rt.env.COFFERDAM_PAGES_BASE_PATH = u.basePath;
     return {
       ok: true,
       outputs: { base_url: u.baseUrl, origin: u.origin, host: u.host, base_path: u.basePath },
@@ -496,7 +496,7 @@ const deployPages: Override = {
       method: 'POST',
       headers: {
         authorization: `Bearer ${ctx.runnerToken}`,
-        'x-hubbit-lease': ctx.spec.lease,
+        'x-cofferdam-lease': ctx.spec.lease,
         'content-type': 'application/json',
       },
       body: JSON.stringify({ artifact }),

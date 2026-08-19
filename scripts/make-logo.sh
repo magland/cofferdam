@@ -8,7 +8,7 @@
 #   bash scripts/make-logo.sh --check  report differences, write nothing
 #
 # src/logo.ts carries inline copies of the mark and the wordmark, because
-# hubbit ships no static files. This script does not edit that file, but it
+# cofferdam ships no static files. This script does not edit that file, but it
 # does check that the geometry there still matches and prints the constants to
 # paste when it does not.
 set -euo pipefail
@@ -80,57 +80,106 @@ function markParts(colour) {
 
 // ------------------------------------------------------------ the logotype
 //
-// Six letters on one grid, each a monoline stroke and a piece of a circle.
+// Nine letters on one grid, each a monoline stroke and a piece of a circle.
 // Letters are strokes rather than outlines, so there is no font dependency
 // and no text-to-path step.
 const W = {
-  width: 243,
+  width: 395,
   height: 60,
   stroke: 10,
   asc: 5, // stem top centreline; the box edge is half a stroke above
   xt: 25, // x-height top centreline
   base: 55, // baseline centreline
-  bowl: 15, // bowl and arch radius
-  dot: 5, // radius of i's dot
+  bowl: 15, // bowl radius, and the radius of o, c, e, d and a
   gap: 8, // air between the outer edges of adjacent letters
-  tDrop: 3, // how far t's stem stops short of the ascender
-  tStem: 15, // t's stem, from the letter's left edge
+  aperture: 50, // degrees off the bowl's east point where c and e are cut
+  fHead: 10, // radius of f's head curve
+  fStem: 12, // f's stem, from the letter's left edge
+  fWidth: 27, // f is narrow: a stem, a head, and a crossbar
+  shoulder: 13, // r's shoulder radius; less than a bowl, so r stays narrow
+  arch: 11, // m's two arches, narrowed so the letter is not twice an n
 };
 
 const HALF = W.stroke / 2;
 const BY = W.base - W.bowl; // 40, the centre line of every bowl and arch
-const WIDE = 2 * W.bowl + W.stroke; // 40, the width of h, u and b
+const WIDE = 2 * W.bowl + W.stroke; // 40, the width of every round letter
+
+// A point on a bowl of radius W.bowl centred at (cx, BY), by angle, with 0
+// degrees due east and positive angles running downwards as in SVG.
+const onBowl = (cx, deg) => [cx + W.bowl * Math.cos(rad(deg)), BY + W.bowl * Math.sin(rad(deg))];
 
 // Each letter is drawn from its left ink edge. Bowls come back as circles so
 // they stay exact; everything else is a path.
 const LETTERS = {
-  h: (x) => ({
-    paths: [`M${x + HALF} ${W.asc}V${W.base}M${x + HALF} ${BY}A${W.bowl} ${W.bowl} 0 0 1 ${x + HALF + 2 * W.bowl} ${BY}V${W.base}`],
-    width: WIDE,
-  }),
-  u: (x) => ({
-    paths: [`M${x + HALF} ${W.xt}V${BY}A${W.bowl} ${W.bowl} 0 0 0 ${x + HALF + 2 * W.bowl} ${BY}M${x + HALF + 2 * W.bowl} ${W.xt}V${W.base}`],
-    width: WIDE,
-  }),
-  b: (x) => ({
-    paths: [`M${x + HALF} ${W.asc}V${W.base}`],
+  c: (x) => {
+    const cx = x + HALF + W.bowl;
+    const [sx, sy] = onBowl(cx, -W.aperture);
+    const [ex, ey] = onBowl(cx, W.aperture);
+    return {
+      paths: [`M${n(sx)} ${n(sy)}A${W.bowl} ${W.bowl} 0 1 0 ${n(ex)} ${n(ey)}`],
+      width: WIDE,
+    };
+  },
+  o: (x) => ({
+    paths: [],
     bowls: [[x + HALF + W.bowl, BY, W.bowl]],
     width: WIDE,
   }),
-  i: (x) => ({
-    paths: [`M${x + HALF} ${W.xt}V${W.base}`],
-    dot: [x + HALF, W.asc + W.dot, W.dot],
-    width: W.stroke,
+  // The curve leaves the east end of the crossbar and comes back round to the
+  // same aperture c uses, so the two letters read as one family.
+  e: (x) => {
+    const cx = x + HALF + W.bowl;
+    const [ex, ey] = onBowl(cx, W.aperture);
+    return {
+      paths: [
+        `M${x + HALF} ${BY}H${x + HALF + 2 * W.bowl}`,
+        `M${cx + W.bowl} ${BY}A${W.bowl} ${W.bowl} 0 1 0 ${n(ex)} ${n(ey)}`,
+      ],
+      width: WIDE,
+    };
+  },
+  f: (x) => ({
+    paths: [
+      `M${x + W.fStem} ${W.base}V${W.asc + W.fHead}A${W.fHead} ${W.fHead} 0 0 1 ${x + W.fStem + W.fHead} ${W.asc}`,
+      `M${x + HALF} ${W.xt}H${x + W.fWidth - HALF}`,
+    ],
+    width: W.fWidth,
   }),
-  t: (x) => ({
-    paths: [`M${x + W.tStem} ${W.asc + W.tDrop}V${W.base}M${x + HALF} ${W.xt}H${x + 33 - HALF}`],
-    width: 33,
+  r: (x) => ({
+    paths: [
+      `M${x + HALF} ${W.xt}V${W.base}`,
+      `M${x + HALF} ${W.xt + W.shoulder}A${W.shoulder} ${W.shoulder} 0 0 1 ${x + HALF + W.shoulder} ${W.xt}`,
+    ],
+    width: W.stroke + W.shoulder,
   }),
+  d: (x) => ({
+    paths: [`M${x + HALF + 2 * W.bowl} ${W.asc}V${W.base}`],
+    bowls: [[x + HALF + W.bowl, BY, W.bowl]],
+    width: WIDE,
+  }),
+  a: (x) => ({
+    paths: [`M${x + HALF + 2 * W.bowl} ${W.xt}V${W.base}`],
+    bowls: [[x + HALF + W.bowl, BY, W.bowl]],
+    width: WIDE,
+  }),
+  m: (x) => {
+    const s = x + HALF;
+    const ay = W.xt + W.arch;
+    return {
+      paths: [
+        `M${s} ${W.xt}V${W.base}`,
+        `M${s} ${ay}A${W.arch} ${W.arch} 0 0 1 ${s + 2 * W.arch} ${ay}V${W.base}`,
+        `M${s + 2 * W.arch} ${ay}A${W.arch} ${W.arch} 0 0 1 ${s + 4 * W.arch} ${ay}V${W.base}`,
+      ],
+      width: W.stroke + 4 * W.arch,
+    };
+  },
 };
 
-// "hub" and "bit": the name divides evenly, which is what the two-tone
+// "coffer" and "dam": the strongbox and the wall, which is what the two-tone
 // variant colours.
-const NAME = [...'hubbit'];
+const NAME = [...'cofferdam'];
+const SPLIT = 6;
 
 function layoutWord() {
   const out = [];
@@ -151,31 +200,20 @@ const drawLetter = (l) =>
     ...(l.bowls ?? []).map(([cx, cy, r]) => `<circle cx="${cx}" cy="${cy}" r="${r}"/>`),
   ].join('');
 
-// i's dot is solid, so it sits outside the stroked group with its own fill.
-const drawDot = (l, colour) => `<circle cx="${l.dot[0]}" cy="${l.dot[1]}" r="${l.dot[2]}" fill="${colour}"/>`;
-
 const strokeAttrs = `stroke-width="${W.stroke}" stroke-linecap="round" stroke-linejoin="round"`;
 
 function wordmarkBody(colour) {
   const letters = layoutWord();
-  const dot = letters.find((l) => l.dot);
-  return (
-    `<g stroke="${colour}" ${strokeAttrs}>${letters.map(drawLetter).join('')}</g>` +
-    drawDot(dot, colour)
-  );
+  return `<g stroke="${colour}" ${strokeAttrs}>${letters.map(drawLetter).join('')}</g>`;
 }
 
 function wordmarkTwoToneBody() {
   const letters = layoutWord();
-  const hub = letters.slice(0, 3);
-  const bit = letters.slice(3);
-  const dot = letters.find((l) => l.dot);
   return (
     `<g ${strokeAttrs}>` +
-    `<g stroke="${TEAL}">${hub.map(drawLetter).join('')}</g>` +
-    `<g stroke="${INK}">${bit.map(drawLetter).join('')}</g>` +
-    `</g>` +
-    drawDot(dot, INK)
+    `<g stroke="${TEAL}">${letters.slice(0, SPLIT).map(drawLetter).join('')}</g>` +
+    `<g stroke="${INK}">${letters.slice(SPLIT).map(drawLetter).join('')}</g>` +
+    `</g>`
   );
 }
 
@@ -197,17 +235,17 @@ const ICON = { scale: 0.7, radius: 14 };
 const ICON_OFFSET = M.cx * (1 - ICON.scale); // 9.6
 
 const svg = (viewBox, w, h, body, extra = '') =>
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" width="${w}" height="${h}"${extra} role="img" aria-label="hubbit">\n  ${body}\n</svg>\n`;
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" width="${w}" height="${h}"${extra} role="img" aria-label="cofferdam">\n  ${body}\n</svg>\n`;
 
 const FILES = {
-  'hubbit-mark.svg': svg(
+  'cofferdam-mark.svg': svg(
     `0 0 ${M.box} ${M.box}`,
     M.box,
     M.box,
     markParts('currentColor').join('\n  '),
     ' fill="none"'
   ),
-  'hubbit-icon.svg': svg(
+  'cofferdam-icon.svg': svg(
     `0 0 ${M.box} ${M.box}`,
     M.box,
     M.box,
@@ -216,21 +254,21 @@ const FILES = {
       markParts(PAPER).join('\n    ') +
       `\n  </g>`
   ),
-  'hubbit-wordmark.svg': svg(
+  'cofferdam-wordmark.svg': svg(
     `0 0 ${W.width} ${W.height}`,
     W.width,
     W.height,
     wordmarkBody('currentColor'),
     ' fill="none"'
   ),
-  'hubbit-wordmark-two-tone.svg': svg(
+  'cofferdam-wordmark-two-tone.svg': svg(
     `0 0 ${W.width} ${W.height}`,
     W.width,
     W.height,
     wordmarkTwoToneBody(),
     ' fill="none"'
   ),
-  'hubbit-lockup.svg': svg(
+  'cofferdam-lockup.svg': svg(
     `0 0 ${LOCK_X + W.width} ${W.height}`,
     LOCK_X + W.width,
     W.height,
@@ -264,7 +302,7 @@ if (!check && stale === 0) console.log('logo/assets is already up to date');
 // Colours differ between the two copies, so compare with them stripped out.
 const bare = (s) => s.replace(/ (?:stroke|fill)="[^"]*"/g, '');
 const inline = bare(fs.readFileSync('src/logo.ts', 'utf8'));
-const geometry = [...markParts('currentColor'), ...FILES['hubbit-wordmark.svg'].split('\n')]
+const geometry = [...markParts('currentColor'), ...FILES['cofferdam-wordmark.svg'].split('\n')]
   .flatMap((s) => [...s.matchAll(/ (?:d|cx|x)="[^"]*"[^/>]*/g)].map((m) => bare(m[0]).trim()))
   .concat(`transform="translate(${n(ICON_OFFSET)} ${n(ICON_OFFSET)}) scale(${ICON.scale})"`);
 
@@ -274,9 +312,9 @@ if (missing.length) {
   for (const m of missing) console.error(`  ${m}`);
   console.error('\nPaste these into src/logo.ts:\n');
   const oneLine = (s) => s.replace(/\n\s*/g, '');
-  console.error(`export const WORDMARK = \`${oneLine(FILES['hubbit-wordmark.svg']).replace(/ width="\d+" height="\d+"/, '')}\`;\n`);
-  console.error(`export const MARK = \`${oneLine(FILES['hubbit-mark.svg']).replace(/ width="\d+" height="\d+"/, '')}\`;\n`);
-  const favicon = oneLine(FILES['hubbit-icon.svg'])
+  console.error(`export const WORDMARK = \`${oneLine(FILES['cofferdam-wordmark.svg']).replace(/ width="\d+" height="\d+"/, '')}\`;\n`);
+  console.error(`export const MARK = \`${oneLine(FILES['cofferdam-mark.svg']).replace(/ width="\d+" height="\d+"/, '')}\`;\n`);
+  const favicon = oneLine(FILES['cofferdam-icon.svg'])
     .replace(/ width="\d+" height="\d+"/, '')
     .replaceAll(TEAL, '${bg}')
     .replaceAll(PAPER, '${fg}');

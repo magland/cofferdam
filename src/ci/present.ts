@@ -14,7 +14,7 @@ async function hasWorkflowsAt(repo: GitRepo, sha: string): Promise<boolean> {
   const cached = memo.get(repo.dir);
   if (cached && cached.sha === sha) return cached.has;
   let has = false;
-  for (const dir of ['.github/workflows', '.hubbit/workflows']) {
+  for (const dir of ['.github/workflows', '.cofferdam/workflows']) {
     try {
       const entries = await repo.listTree(sha, dir);
       if (entries.some((e) => e.type === 'blob' && /\.(yml|yaml)$/i.test(e.name))) {

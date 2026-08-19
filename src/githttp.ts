@@ -105,7 +105,7 @@ const ZERO = '0'.repeat(40);
 
 export function registerGitHttp(app: Express, root: string, engine?: CiEngine): void {
   function denyPush(res: Response, status: number, message: string) {
-    if (status === 401) res.setHeader('WWW-Authenticate', 'Basic realm="hubbit"');
+    if (status === 401) res.setHeader('WWW-Authenticate', 'Basic realm="cofferdam"');
     res.status(status).type('text/plain').send(message + '\n');
   }
 

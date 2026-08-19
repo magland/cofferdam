@@ -24,7 +24,7 @@ export function loginPage(next: string, error?: string): string {
   // thing this page is for, so nothing else is on it.
   const content = `<div class="signin">
 <div class="signin-mark">${MARK}</div>
-<h1>Sign in to hubbit</h1>
+<h1>Sign in to cofferdam</h1>
 ${errorBanner(error)}
 <div class="form-box">
 <form method="post" action="/login">
@@ -124,7 +124,7 @@ export function importPage(
   const command = result
     ? `<h2>Run this</h2>
 ${copyRow(result.command)}
-<p class="muted small">git asks for a token with push access to ${esc(result.collection)}. Run <code>hubbit login</code> once and it stops asking.</p>
+<p class="muted small">git asks for a token with push access to ${esc(result.collection)}. Run <code>cofferdam login</code> once and it stops asking.</p>
 <p><a class="btn" href="/${encodeURIComponent(result.collection)}">Back to ${esc(result.collection)}</a></p>`
     : '';
   const content = `<div class="form-box wide">

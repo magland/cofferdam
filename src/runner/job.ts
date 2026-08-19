@@ -112,7 +112,7 @@ export async function runJob(spec: JobSpec, ctx: RunnerContext, hooks: JobHooks)
   };
 
   try {
-    // hubbit checks the repository out before the job starts, rather than
+    // cofferdam checks the repository out before the job starts, rather than
     // leaving an empty workspace for actions/checkout to fill. See the README:
     // it makes run: steps useful on their own, and it means checkout is a
     // re-sync rather than the first clone.
@@ -219,7 +219,7 @@ export async function runJob(spec: JobSpec, ctx: RunnerContext, hooks: JobHooks)
 }
 
 function containerName(spec: JobSpec): string {
-  const raw = `hubbit-${spec.address.collection}-${spec.address.repo}-${spec.runNumber}-${spec.address.job}-${crypto
+  const raw = `cofferdam-${spec.address.collection}-${spec.address.repo}-${spec.runNumber}-${spec.address.job}-${crypto
     .randomBytes(4)
     .toString('hex')}`;
   return raw.toLowerCase().replace(/[^a-z0-9_.-]/g, '-');
@@ -243,7 +243,7 @@ function resolveJobOutputs(spec: JobSpec, scope: Scope): Record<string, string> 
 }
 
 export function defaultWorkDir(): string {
-  const dir = path.join(os.tmpdir(), 'hubbit-runner');
+  const dir = path.join(os.tmpdir(), 'cofferdam-runner');
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }

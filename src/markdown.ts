@@ -191,7 +191,7 @@ export function renderMarkdown(text: string, opts: MarkdownOpts): string {
   // reason its own linkify works this way. Text inside a link is left alone,
   // so a reference written inside one does not try to nest a second.
   if (opts.issueBase || opts.commitBase) {
-    md.core.ruler.push('hubbit_refs', (state) => {
+    md.core.ruler.push('cofferdam_refs', (state) => {
       for (const block of state.tokens) {
         if (block.type !== 'inline' || !block.children) continue;
         const out: typeof block.children = [];

@@ -35,7 +35,7 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine): voi
     }
     const m = (req.get('authorization') ?? '').match(/^bearer\s+(.+)$/i);
     if (!m) {
-      apiError(res, 401, 'missing bearer token; set HUBBIT_TOKEN');
+      apiError(res, 401, 'missing bearer token; set COFFERDAM_TOKEN');
       return null;
     }
     const auth = authenticateToken(state.vault, m[1].trim());
@@ -199,7 +199,7 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine): voi
   }
 
   function leaseOf(req: Request): string {
-    const v = req.get('x-hubbit-lease');
+    const v = req.get('x-cofferdam-lease');
     return typeof v === 'string' ? v : '';
   }
 
@@ -434,7 +434,7 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine): voi
     }
   });
 
-  // Runner-side liveness check, so `hubbit runner run` can fail fast with a
+  // Runner-side liveness check, so `cofferdam runner run` can fail fast with a
   // clear message rather than long-polling against a bad token or host.
   app.get('/api/runner/whoami', (req, res) => {
     const auth = requireRunner(req, res);

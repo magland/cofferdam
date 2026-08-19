@@ -92,7 +92,7 @@ export function createApp(root: string) {
   console.log(`Git LFS storage backend: ${lfs.label}`);
 
   // The CI engine plans and schedules workflow runs; jobs execute on runners
-  // elsewhere (hubbit runner run), never in this process.
+  // elsewhere (cofferdam runner run), never in this process.
   const engine = new CiEngine(root, () => loadConfig(root).ci);
 
   // Registration order matters: the API and the UI-owned top-level paths

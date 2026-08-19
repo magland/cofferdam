@@ -11,11 +11,11 @@ import { WorkflowStep } from '../ci/workflow';
 // steps.ts (execution, including recursion into composite actions) can share
 // definitions without importing each other.
 
-export const WORKSPACE = '/hubbit/workspace';
-export const RUNNER_TEMP = '/hubbit/temp';
-export const RUNNER_TOOL_CACHE = '/hubbit/tools';
-export const FILE_COMMAND_DIR = '/hubbit/files';
-export const ACTIONS_MOUNT = '/hubbit/actions';
+export const WORKSPACE = '/cofferdam/workspace';
+export const RUNNER_TEMP = '/cofferdam/temp';
+export const RUNNER_TOOL_CACHE = '/cofferdam/tools';
+export const FILE_COMMAND_DIR = '/cofferdam/files';
+export const ACTIONS_MOUNT = '/cofferdam/actions';
 
 // How deep composite actions may nest before we call it a loop.
 export const MAX_ACTION_DEPTH = 10;
@@ -81,7 +81,7 @@ export function baseEnv(spec: JobSpec): Record<string, string> {
   return {
     CI: 'true',
     GITHUB_ACTIONS: 'true',
-    HUBBIT_ACTIONS: 'true',
+    COFFERDAM_ACTIONS: 'true',
     GITHUB_WORKFLOW: spec.workflowName,
     GITHUB_WORKFLOW_REF: str('workflow_ref'),
     GITHUB_RUN_ID: String(spec.runNumber),
@@ -106,7 +106,7 @@ export function baseEnv(spec: JobSpec): Record<string, string> {
     GITHUB_RETENTION_DAYS: '90',
     RUNNER_OS: 'Linux',
     RUNNER_ARCH: process.arch === 'arm64' ? 'ARM64' : 'X64',
-    RUNNER_NAME: 'hubbit',
+    RUNNER_NAME: 'cofferdam',
     RUNNER_TEMP,
     RUNNER_TOOL_CACHE,
     RUNNER_DEBUG: '0',
@@ -142,7 +142,7 @@ export function contextsFor(args: ContextArgs): ExprEnv['contexts'] {
     runner: {
       os: 'Linux',
       arch: process.arch === 'arm64' ? 'ARM64' : 'X64',
-      name: 'hubbit',
+      name: 'cofferdam',
       temp: RUNNER_TEMP,
       tool_cache: RUNNER_TOOL_CACHE,
       debug: '0',

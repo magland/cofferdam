@@ -102,7 +102,7 @@ export function registerRunner(
   opts: { labels: string[]; allow: string[]; createdBy: string }
 ): { token: string; runner: RunnerRecord } {
   const registry = loadRunners(root);
-  const token = 'hubbit_runner_' + crypto.randomBytes(32).toString('hex');
+  const token = 'cofferdam_runner_' + crypto.randomBytes(32).toString('hex');
   const runner: RunnerRecord = {
     hash: hashRunnerToken(token),
     labels: opts.labels,

@@ -319,7 +319,7 @@ sed -i 's/^state: closed$/state: closed\nclosedBy: author\nclosedAt: 2026-02-13T
 
 # ---- vault.json with a dev user (fixed token, example vault only) ----
 
-DEV_TOKEN="hubbit_example_dev_token"
+DEV_TOKEN="cofferdam_example_dev_token"
 DEV_HASH="$(printf %s "$DEV_TOKEN" | sha256sum | cut -d' ' -f1)"
 cat > "$ROOT/vault.json" <<EOF
 {

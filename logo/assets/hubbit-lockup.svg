@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 319 60" width="319" height="60" fill="none" role="img" aria-label="hubbit">
-  <g transform="translate(0 2) scale(0.875)">
-    <path d="M43.47 15.62A20 20 0 1 1 18.32 17.41" stroke="#0e7c74" stroke-width="6" stroke-linecap="round"/>
-    <path d="M28.01 10.91 14.52 11.38 21.67 22.83Z" fill="#0e7c74"/>
-    <rect x="25" y="25" width="14" height="14" rx="3" fill="#0e7c74"/>
-  </g>
-  <g transform="translate(76 0)"><g stroke-width="10" stroke-linecap="round" stroke-linejoin="round"><g stroke="#0e7c74"><path d="M5 5V55M5 40A15 15 0 0 1 35 40V55"/><path d="M53 25V40A15 15 0 0 0 83 40M83 25V55"/><path d="M101 5V55"/><circle cx="116" cy="40" r="15"/></g><g stroke="#14201f"><path d="M149 5V55"/><circle cx="164" cy="40" r="15"/><path d="M197 25V55"/><path d="M225 8V55M215 25H238"/></g></g><circle cx="197" cy="10" r="5" fill="#14201f"/></g>
-</svg>

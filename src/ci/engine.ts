@@ -36,7 +36,7 @@ import {
 // The CI engine: the server side of workflow execution. It turns pushes and
 // manual dispatches into planned runs, decides which jobs are runnable,
 // leases them to runners, and folds their reports back into run state. It
-// never executes anything itself: execution belongs to `hubbit runner run`
+// never executes anything itself: execution belongs to `cofferdam runner run`
 // on a machine with Docker.
 //
 // The engine keeps an in-memory index of active (queued or running) runs,
@@ -80,12 +80,12 @@ function nowIso(): string {
 
 // ---- workflow discovery ----
 
-// Workflows live in .hubbit/workflows and .github/workflows; both are
-// collected, and a file in .hubbit/workflows shadows one with the same
+// Workflows live in .cofferdam/workflows and .github/workflows; both are
+// collected, and a file in .cofferdam/workflows shadows one with the same
 // basename in .github/workflows, so a repository can adapt a single workflow
-// for hubbit without forking the rest.
+// for cofferdam without forking the rest.
 export async function discoverWorkflows(repo: GitRepo, sha: string): Promise<DiscoveredWorkflow[]> {
-  const dirs = ['.github/workflows', '.hubbit/workflows'];
+  const dirs = ['.github/workflows', '.cofferdam/workflows'];
   const byBase = new Map<string, { path: string }>();
   for (const dir of dirs) {
     let entries;

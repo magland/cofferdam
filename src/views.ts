@@ -420,7 +420,7 @@ export function homePage(
   const content = `<div class="page-head"><h1>Collections</h1>${newBtn}</div>${body}<p class="muted small" style="margin-top:16px">Serving ${esc(
     rootLabel
   )}</p>`;
-  return layout('hubbit', content, { viewer, path: '/' });
+  return layout('cofferdam', content, { viewer, path: '/' });
 }
 
 export function collectionPage(
@@ -1211,7 +1211,7 @@ export function emptyRepoPage(ctx: RepoCtx): string {
   <div class="box-header">${icon('repo')}Quick setup, if you have done this before</div>
   <div class="box-body">
     <div class="cmd-row"><code>${esc(url)}</code>${copyButton()}</div>
-    <p class="muted">Cloning is anonymous. Pushing asks for your username and a token; <span class="mono">hubbit login</span> hands the token to git once so it stops asking.</p>
+    <p class="muted">Cloning is anonymous. Pushing asks for your username and a token; <span class="mono">cofferdam login</span> hands the token to git once so it stops asking.</p>
     ${readmeBtn}
   </div>
 </div>

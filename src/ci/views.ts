@@ -130,7 +130,7 @@ export function runsPage(
 
   const body = runs.length
     ? `<table class="listing runs"><tbody>${rows}</tbody></table>`
-    : `<div class="empty-state"><p><b>No workflow runs yet.</b></p><p class="muted">Runs appear here when a push matches a workflow in <code>.github/workflows</code> or <code>.hubbit/workflows</code>.</p></div>`;
+    : `<div class="empty-state"><p><b>No workflow runs yet.</b></p><p class="muted">Runs appear here when a push matches a workflow in <code>.github/workflows</code> or <code>.cofferdam/workflows</code>.</p></div>`;
 
   const content = `${repoHeader(ctx, 'actions')}
 ${flash ? `<div class="flash">${esc(flash)}</div>` : ''}
@@ -400,7 +400,7 @@ export function runnersPage(
   const content = `<div class="page-head"><h1>Runners</h1></div>
 ${flash ? `<div class="flash">${esc(flash)}</div>` : ''}
 ${error ? `<div class="form-error">${esc(error)}</div>` : ''}
-<p class="muted">A runner is a machine that executes workflow jobs. Jobs never run on the vault's own machine: register a runner, then start it with <code>hubbit runner run</code> somewhere with Docker.</p>
+<p class="muted">A runner is a machine that executes workflow jobs. Jobs never run on the vault's own machine: register a runner, then start it with <code>cofferdam runner run</code> somewhere with Docker.</p>
 ${
   runners.length
     ? `<table class="listing"><tbody>${rows}</tbody></table>`
@@ -429,8 +429,8 @@ export function runnerTokenPage(viewer: Viewer, name: string, token: string, hos
 <div class="token-box"><code>${esc(token)}</code></div>
 <h2>Start it</h2>
 <p class="muted">On a machine with Docker:</p>
-<div class="cmd-row"><code>hubbit runner run --host ${esc(host)} --runner-token ${esc(token)}</code>${copyButton()}</div>
-<p class="muted small">Or save it with <code>hubbit runner login</code> once and run <code>hubbit runner run</code> with no arguments afterwards.</p>
+<div class="cmd-row"><code>cofferdam runner run --host ${esc(host)} --runner-token ${esc(token)}</code>${copyButton()}</div>
+<p class="muted small">Or save it with <code>cofferdam runner login</code> once and run <code>cofferdam runner run</code> with no arguments afterwards.</p>
 <p><a class="btn" href="/admin/runners">Back to runners</a></p>
 </div>`;
   return layout('Runner registered', content, { viewer, path: '/admin/runners' });

@@ -208,7 +208,7 @@ function run(
 
 export function defaultActionCacheDir(): string {
   const base = process.env.XDG_CACHE_HOME ?? path.join(os.homedir(), '.cache');
-  return path.join(base, 'hubbit', 'actions');
+  return path.join(base, 'cofferdam', 'actions');
 }
 
 // The fallback when a ref could not be resolved to a commit: the entry is
@@ -254,10 +254,10 @@ export class ActionStore {
 
   constructor(
     private cacheDir: string = defaultActionCacheDir(),
-    private forgeUrl: string = process.env.HUBBIT_ACTIONS_URL ?? 'https://github.com',
+    private forgeUrl: string = process.env.COFFERDAM_ACTIONS_URL ?? 'https://github.com',
     // Reusing a download between jobs is what the cache is for; turning it
     // off is for when something about an action itself is being debugged.
-    private useCache: boolean = process.env.HUBBIT_ACTIONS_NO_CACHE !== '1'
+    private useCache: boolean = process.env.COFFERDAM_ACTIONS_NO_CACHE !== '1'
   ) {}
 
   // Called at the start of every job: what a ref pointed at during the last
@@ -292,7 +292,7 @@ export class ActionStore {
     const commit = await this.resolveCommit(ref, onLine);
     const key = actionCacheKey(ref, commit ?? undefined);
     const dest = path.join(this.cacheDir, key);
-    const stamp = path.join(dest, '.hubbit-fetched');
+    const stamp = path.join(dest, '.cofferdam-fetched');
     let fetchedAt: number | null = null;
     try {
       fetchedAt = fs.statSync(stamp).mtimeMs;

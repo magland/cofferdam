@@ -1,6 +1,6 @@
 // The icon set: GitHub's Octicons, inlined.
 //
-// hubbit ships no static files, so an icon is a string of SVG markup rather
+// cofferdam ships no static files, so an icon is a string of SVG markup rather
 // than a sprite sheet or a font. Each entry below is the interior of the
 // corresponding 16-pixel octicon (@primer/octicons 19.33.0, MIT, Copyright
 // GitHub Inc.), which is where the drawings come from: an interface that
