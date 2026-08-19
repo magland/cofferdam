@@ -33,6 +33,33 @@ export function execGit(repoDir: string, args: string[], opts: ExecGitOptions = 
   });
 }
 
+/**
+ * Run git and report how it went rather than throwing, for the commands whose
+ * non-zero exit is an answer rather than a failure: `merge-tree` says "these
+ * files conflict" by exiting 1 with the conflict on stdout.
+ */
+export function execGitStatus(
+  repoDir: string,
+  args: string[],
+  opts: ExecGitOptions = {}
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'git',
+      ['-C', repoDir, ...args],
+      { maxBuffer: MAX_BUFFER, env: opts.env, timeout: opts.timeoutMs },
+      (err, stdout, stderr) => {
+        const failed = err as (Error & { code?: number | string }) | null;
+        if (failed && typeof failed.code !== 'number') {
+          reject(new GitError(`git ${args[0]} failed: ${stderr || failed.message}`));
+          return;
+        }
+        resolve({ code: failed?.code === undefined ? 0 : Number(failed.code), stdout, stderr });
+      }
+    );
+  });
+}
+
 export interface RefInfo {
   name: string;
   sha: string;
