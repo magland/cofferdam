@@ -411,13 +411,17 @@ export function homePage(
   const body =
     collections.length === 0
       ? `<div class="empty-state">No repositories yet.${
-          viewer ? ' Create one with the button above, or push to a new path.' : ''
+          viewer ? ' Create one with the buttons above, or push to a new path.' : ''
         }</div>`
       : `${listFilter('collection-list', 'Find a collection', collections.length)}<table class="listing" id="collection-list"><tbody>${rows}</tbody></table>${noMatches(
           'collection-list'
         )}`;
-  const newBtn = viewer ? `<a class="btn btn-primary" href="/new">${icon('plus')}<span>New repository</span></a>` : '';
-  const content = `<div class="page-head"><h1>Collections</h1>${newBtn}</div>${body}<p class="muted small" style="margin-top:16px">Serving ${esc(
+  const newBtn = viewer
+    ? `<a class="btn" href="/new/collection">${icon('plus')}<span>New collection</span></a><a class="btn btn-primary" href="/new">${icon(
+        'plus'
+      )}<span>New repository</span></a>`
+    : '';
+  const content = `<div class="page-head"><h1>Collections</h1><span class="right-group">${newBtn}</span></div>${body}<p class="muted small" style="margin-top:16px">Serving ${esc(
     rootLabel
   )}</p>`;
   return layout('cofferdam', content, { viewer, path: '/' });
@@ -440,7 +444,9 @@ export function collectionPage(
     .join('');
   const body =
     repoList.length === 0
-      ? `<div class="empty-state">No repositories in this collection yet.</div>`
+      ? `<div class="empty-state">No repositories in this collection yet.${
+          viewer ? ' Create one with the buttons above, or push to a new path.' : ''
+        }</div>`
       : `${listFilter('repo-list', 'Find a repository', repoList.length)}<table class="listing" id="repo-list"><tbody>${rows}</tbody></table>${noMatches(
           'repo-list'
         )}`;

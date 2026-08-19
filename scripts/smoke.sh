@@ -280,34 +280,50 @@ check "deleted file is gone" 404 -b "$JAR" "$BASE/demo/proj/blob/main/docs/notes
 
 # ---- import page ----
 
+# The page performs nothing: importing runs on the reader's machine, and what
+# used to be a form here (a source URL, answered with a shell one-liner) is now
+# a command they run, which is what actually does the work.
 check "import page needs a session" 302 "$BASE/import"
 check "import page" 200 -b "$JAR" "$BASE/import"
-body_has "import form" 'name="src"'
-check "import command for a github url" 200 -b "$JAR" \
-  --get "$BASE/import" --data-urlencode "src=https://github.com/octocat/Hello-World" --data-urlencode collection=demo
-body_has "clone is bare, not mirror" 'git clone --bare https://github.com/octocat/Hello-World'
+body_lacks "no form to fill in" 'name="src"'
+body_has "the cli command is written out" 'cofferdam import https://github.com/owner/repo'
+body_has "and the login that precedes it" "cofferdam login $BASE"
+check "import page for a collection" 200 -b "$JAR" \
+  --get "$BASE/import" --data-urlencode collection=demo
+body_has "the command carries the collection" 'cofferdam import https://github.com/owner/repo demo'
+body_has "a way back to the collection" 'href="/demo">Back to demo'
+# The git commands stay below the cli one, for a machine with no Node on it.
+body_has "clone is bare, not mirror" 'git clone --bare'
+body_lacks "no mirror clone" 'clone --mirror'
 # The clone is scratch: it must not land in whatever directory the command is
 # pasted into, which is how a failed attempt leaves a bare repo in a work tree.
 body_has "clone goes to a temporary directory" 'mktemp -d /tmp/import'
-body_lacks "nothing is cloned into the current directory" 'Hello-World.import.git'
 body_has "push is a mirror push" 'push --mirror'
 # Without this the prompt goes to an editor's askpass dialog, and an unanswered
 # dialog looks like a hang: git prints nothing after the clone and waits.
 body_has "push prompts in the terminal" 'GIT_ASKPASS= git -C'
-body_has "a way back to the collection" 'href="/demo">Back to demo'
 body_has "destination carries the username" "owner@"
-body_lacks "no mirror clone" 'clone --mirror'
-check "import command from owner/repo shorthand" 200 -b "$JAR" \
-  --get "$BASE/import" --data-urlencode src=octocat/Hello-World --data-urlencode collection=demo
-body_has "shorthand expands to github" 'https://github.com/octocat/Hello-World.git'
-check "shell metacharacters refused" 400 -b "$JAR" \
-  --get "$BASE/import" --data-urlencode "src=https://github.com/a/b; rm -rf ~" --data-urlencode collection=demo
-check "non-git scheme refused" 400 -b "$JAR" \
-  --get "$BASE/import" --data-urlencode "src=file:///etc/passwd" --data-urlencode collection=demo
-check "existing repo refused" 409 -b "$JAR" \
-  --get "$BASE/import" --data-urlencode src=octocat/proj --data-urlencode collection=demo
 check "import is a reserved repo name" 400 -b "$JAR" "$BASE/new" \
   --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=import
+
+# ---- creating a collection with nothing in it ----
+
+check "new collection form" 200 -b "$JAR" "$BASE/new/collection"
+CSRF="$(csrf_of)"
+[ -n "$CSRF" ] || { echo "FAIL: no csrf on /new/collection"; exit 1; }
+check "create an empty collection" 302 -b "$JAR" "$BASE/new/collection" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode name=empties
+check "the empty collection has a page" 200 "$BASE/empties"
+body_has "and says it is empty" 'No repositories in this collection yet'
+check "the empty collection is listed" 200 "$BASE/"
+body_has "with no repositories in it" '>empties</a></td><td class="right muted">0 repositories'
+check "creating it twice is refused" 409 -b "$JAR" "$BASE/new/collection" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode name=empties
+check "a reserved collection name is refused" 400 -b "$JAR" "$BASE/new/collection" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode name=admin
+check "a collection needs a csrf value" 403 -b "$JAR" "$BASE/new/collection" \
+  --data-urlencode name=nocsrf
+check "anonymous new collection redirects to login" 302 "$BASE/new/collection"
 
 # ---- markdown rendering ----
 
@@ -699,7 +715,9 @@ check "alice cannot rename repo" 403 -b "$ALICE_JAR" "$BASE/demo/proj/settings/r
 check "alice cannot delete repo" 403 -b "$ALICE_JAR" "$BASE/demo/proj/settings/delete" \
   --data-urlencode "csrf=$ALICE_CSRF" --data-urlencode confirm=demo/proj
 check "alice cannot import out of scope" 403 -b "$ALICE_JAR" \
-  --get "$BASE/import" --data-urlencode src=octocat/Hello-World --data-urlencode collection=other
+  --get "$BASE/import" --data-urlencode collection=other
+check "alice cannot create a collection out of scope" 403 -b "$ALICE_JAR" "$BASE/new/collection" \
+  --data-urlencode "csrf=$ALICE_CSRF" --data-urlencode name=other
 
 # ---- a delegated collection admin is an admin, but not for vault-wide settings ----
 
@@ -935,6 +953,21 @@ check "commit feed for one path" 200 "$BASE/demo/proj/commits/main/README.md.ato
 check "api whoami" 200 -H "Authorization: Bearer $OWNER_TOKEN" "$BASE/api/whoami"
 body_has "whoami username" '"username":"owner"'
 check "api rejects session cookie" 401 -b "$JAR" "$BASE/api/whoami"
+check "api collections" 200 -H "Authorization: Bearer $OWNER_TOKEN" "$BASE/api/collections"
+body_has "collections carry a repository count" '"name":"demo","repoCount":'
+check "api one collection" 200 -H "Authorization: Bearer $OWNER_TOKEN" "$BASE/api/collections/demo"
+body_has "and lists its repositories" '"proj"'
+check "api unknown collection" 404 -H "Authorization: Bearer $OWNER_TOKEN" "$BASE/api/collections/nosuchcollection"
+check "api create collection" 200 -H "Authorization: Bearer $OWNER_TOKEN" \
+  -H 'Content-Type: application/json' --data '{"name":"viaapi"}' "$BASE/api/collections"
+check "api create collection twice" 409 -H "Authorization: Bearer $OWNER_TOKEN" \
+  -H 'Content-Type: application/json' --data '{"name":"viaapi"}' "$BASE/api/collections"
+check "api refuses a reserved collection name" 400 -H "Authorization: Bearer $OWNER_TOKEN" \
+  -H 'Content-Type: application/json' --data '{"name":"import"}' "$BASE/api/collections"
+check "api collection needs a token" 401 -H 'Content-Type: application/json' \
+  --data '{"name":"nope"}' "$BASE/api/collections"
+check "api collection refuses out of scope" 403 -H "Authorization: Bearer $ALICE_TOKEN" \
+  -H 'Content-Type: application/json' --data '{"name":"otherplace"}' "$BASE/api/collections"
 
 # ---- cofferdam login: the token in git's credential store ----
 
@@ -1019,6 +1052,44 @@ run_ok "clone with only a stored credential" cred_env git clone -q "$BASE/demo/p
 git -C "$TMP/credclone" commit -q --allow-empty -m "pushed with a stored credential"
 run_ok "push with only a stored credential" cred_env git -C "$TMP/credclone" push -q origin HEAD:main
 no_prompt "neither clone nor push asked for a credential"
+
+# ---- cofferdam import and collections, from the CLI ----
+
+# Importing is a client-side operation (SPEC 3.10) and `cofferdam import` is
+# what performs it: a bare clone into a temporary directory, a mirror push at
+# the vault, and the clone removed again. The source here is a directory on this
+# machine, which import accepts alongside a URL and which is also what a suite
+# with no network can offer.
+rm -rf "$TMP/importsrc"
+git init -q "$TMP/importsrc"
+echo "imported by the cli" > "$TMP/importsrc/README.md"
+git -C "$TMP/importsrc" add README.md
+git -C "$TMP/importsrc" commit -qm "source commit"
+
+run_ok "collection add creates a collection with nothing in it" cli collection add fromcli
+check "the created collection has a page" 200 "$BASE/fromcli"
+body_has "and it is empty" 'No repositories in this collection yet'
+run_fails "collection add refuses a name already taken" cli collection add fromcli
+run_ok "import a local repository" cli import "$TMP/importsrc" fromcli
+no_prompt "import asked for no credential"
+check "the imported repository is browsable" 200 "$BASE/fromcli/importsrc/blob/main/README.md"
+body_has "with the source's content" 'imported by the cli'
+run_ok "collection list reports it" cli collection list
+body_has "with a repository count" 'fromcli.*1 repository'
+run_fails "importing over an existing repository is refused" cli import "$TMP/importsrc" fromcli
+body_has "and says how to import under another name" 'another-name'
+run_ok "import names the repository when asked to" cli import "$TMP/importsrc" fromcli/renamed
+check "the renamed import is there" 200 "$BASE/fromcli/renamed"
+run_ok "import creates the collection by pushing to it" cli import "$TMP/importsrc" madebyimport
+check "the collection the push created is there" 200 "$BASE/madebyimport/importsrc"
+run_fails "import refuses a source it cannot clone" cli import 'not a url' fromcli
+run_fails "import refuses to guess a collection" cli import "$TMP/importsrc"
+body_has "and asks which one" 'Which collection'
+# The clone is scratch and temporary in both senses: it is removed whether the
+# import succeeded or failed, which a process.exit inside the import would skip.
+LEFTOVER="$(ls -d "${TMPDIR:-/tmp}"/cofferdam-import-* 2>/dev/null || true)"
+[ -z "$LEFTOVER" ] || { echo "FAIL: import left a clone behind: $LEFTOVER"; exit 1; }
+PASS=$((PASS+1)); echo "ok: no temporary clone left behind"
 
 # logout with no arguments, since the vault it removes is the one login recorded.
 run_ok "logout removes it" cli logout

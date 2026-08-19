@@ -18,7 +18,7 @@ import {
   setSessionCookie,
   viewerIsAdmin,
 } from './session';
-import { authenticate, canAdmin, canPush, loadVault, addUserToken, grantScope } from './vault';
+import { authenticate, canAdmin, canCreateCollection, canPush, loadVault, addUserToken, grantScope } from './vault';
 import { encPath, repoUrl } from './views';
 import { LoadedRepo, ah, loadRepo, makeCtx, send404, wildcard } from './web';
 import { isBinary } from './render';
@@ -29,22 +29,6 @@ const MAX_EDIT_SIZE = 1024 * 1024;
 // people add through a browser, small enough that the body can be held whole
 // while it is parsed; anything larger belongs in a push, or in Git LFS.
 const MAX_UPLOAD_SIZE = 25 * 1024 * 1024;
-
-// The parsed source is pasted into a command the reader runs in their own
-// shell, so the accepted shapes are an allowlist of harmless characters rather
-// than a general URL parse: no spaces, quotes, or shell metacharacters can
-// survive it.
-const HTTPS_SOURCE = /^https:\/\/[A-Za-z0-9.-]+(?::\d+)?\/[A-Za-z0-9._/-]+$/;
-const SSH_SOURCE = /^git@[A-Za-z0-9.-]+:[A-Za-z0-9._/-]+$/;
-const GITHUB_SHORTHAND = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
-
-function parseSource(input: string): { url: string; name: string } | null {
-  const url = GITHUB_SHORTHAND.test(input) ? `https://github.com/${input}.git` : input;
-  if (!HTTPS_SOURCE.test(url) && !SSH_SOURCE.test(url)) return null;
-  const tail = url.split(/[/:]/).pop() ?? '';
-  const name = tail.replace(/\.git$/i, '');
-  return name === '' ? null : { url, name };
-}
 
 function urlOf(repo: { collection: string; name: string }): string {
   return repoUrl({ collection: repo.collection, repo: repo.name });
@@ -221,57 +205,37 @@ export function registerWebOps(
     res.redirect('/');
   });
 
-  // ---- new repository ----
+  // ---- new repository, new collection, import ----
 
-  // The clone is --bare rather than --mirror: mirroring a GitHub repository
-  // drags in refs/pull/*, thousands of refs the vault has no use for. A bare
-  // clone carries branches and tags, which is what the push then mirrors.
   // Importing is a client-side operation: git copies the repository from its
   // current home and pushes it here, where push-to-create makes it. The server
   // never fetches from another host, so it needs no outbound access, no stored
-  // credentials for other services, and no work that outlives a request. This
-  // page only writes the command.
+  // credentials for other services, and no work that outlives a request. What
+  // performs it is `cofferdam import` on the operator's machine, and this page
+  // only says what to run: no form, since there is nothing here to submit to.
   app.get('/import', (req, res) => {
     const viewer = requireViewerPage(req, res);
     if (!viewer) return;
-    const collections = listCollections(root).map((o) => o.name);
-    const src = typeof req.query.src === 'string' ? req.query.src.trim() : '';
-    const collection = typeof req.query.collection === 'string' ? req.query.collection.trim() : '';
-    const wanted = typeof req.query.name === 'string' ? req.query.name.trim() : '';
-    const preset = { src, collection, name: wanted };
-    const fail = (status: number, error: string) => {
-      res.status(status).type('html').send(forms.importPage(viewer, collections, preset, null, error));
-    };
-    if (src === '') {
-      res.type('html').send(forms.importPage(viewer, collections, preset, null));
-      return;
-    }
-    const source = parseSource(src);
-    if (!source) {
-      fail(400, 'The source must be an https or ssh git URL, or owner/repo for GitHub.');
-      return;
-    }
-    const name = wanted === '' ? source.name : wanted;
-    if (!isValidName(collection) || !isValidName(name)) {
-      fail(400, 'Collection and repository names may use letters, digits, dot, underscore, and dash, and must not be reserved words.');
-      return;
-    }
-    if (!canPush(viewer.auth, collection, name)) {
-      fail(403, `Your push scope does not cover ${collection}/${name}, so the push would be refused.`);
-      return;
-    }
-    if (findRepo(root, collection, name)) {
-      fail(409, `Repository ${collection}/${name} already exists; a mirror push would overwrite it.`);
+    const asked = typeof req.query.collection === 'string' ? req.query.collection.trim() : '';
+    const collection = isValidName(asked) ? asked : null;
+    // Nothing here performs the import, but a page that hands someone a command
+    // their token cannot run is worse than a refusal, so the collection they
+    // asked about is checked against their scope before it is written into one.
+    if (collection && !canCreateCollection(viewer.auth, collection)) {
+      fail(
+        res,
+        403,
+        `Your push scope does not cover anything in ${collection}, so the push would be refused.`,
+        viewer,
+        `/${encodeURIComponent(collection)}`
+      );
       return;
     }
     const host = req.get('host') ?? '';
-    if (!/^[A-Za-z0-9.:_-]+$/.test(host)) {
-      fail(400, 'This vault is being served under a host name we will not put on a command line.');
-      return;
-    }
-    const dest = `${req.protocol}://${encodeURIComponent(viewer.auth.username)}@${host}/${encodeURIComponent(
-      collection
-    )}/${encodeURIComponent(name)}`;
+    const vaultUrl = `${req.protocol}://${host}`;
+    // The git fallback ends up on a command line, so it is written only when
+    // the host name and the username carry nothing a shell would read.
+    const plain = /^[A-Za-z0-9.:_-]+$/.test(host) && /^[A-Za-z0-9._-]+$/.test(viewer.auth.username);
     // The clone is a scratch copy, so it goes to a temporary directory rather
     // than to whatever directory the command happens to be pasted into. A
     // fresh one each time means a failed attempt never blocks the next, and
@@ -285,12 +249,52 @@ export function registerWebOps(
     // the window, and an unanswered dialog looks exactly like a hang: git
     // prints nothing after the clone and waits. Credential helpers are
     // consulted before askpass, so a stored credential still works.
-    const command =
-      `tmp="$(mktemp -d /tmp/import.XXXXXX)"` +
-      ` && git clone --bare ${source.url} "$tmp"` +
-      ` && GIT_ASKPASS= git -C "$tmp" push --mirror ${dest}` +
-      ` && rm -rf "$tmp"`;
-    res.type('html').send(forms.importPage(viewer, collections, preset, { command, collection, name }));
+    const dest = `${req.protocol}://${encodeURIComponent(viewer.auth.username)}@${host}/${encodeURIComponent(
+      collection ?? 'mycollection'
+    )}/REPO-NAME`;
+    const gitCommand = plain
+      ? `tmp="$(mktemp -d /tmp/import.XXXXXX)"` +
+        ` && git clone --bare SOURCE-URL "$tmp"` +
+        ` && GIT_ASKPASS= git -C "$tmp" push --mirror ${dest}` +
+        ` && rm -rf "$tmp"`
+      : null;
+    res.type('html').send(forms.importPage(viewer, { collection, vaultUrl, gitCommand }));
+  });
+
+  // A collection with nothing in it yet. Creating a repository or pushing to a
+  // new path creates its collection on the way, so this is the other order:
+  // the collection first, filled by an import or a push afterwards.
+  app.get('/new/collection', (req, res) => {
+    const viewer = requireViewerPage(req, res);
+    if (!viewer) return;
+    res.type('html').send(forms.newCollectionPage(viewer, {}));
+  });
+
+  app.post('/new/collection', form, (req, res) => {
+    const viewer = requireViewerPost(req, res);
+    if (!viewer) return;
+    const name = field(req, 'name').trim();
+    const rerender = (status: number, error: string) => {
+      res.status(status).type('html').send(forms.newCollectionPage(viewer, { name }, error));
+    };
+    if (!isValidName(name)) {
+      rerender(400, 'A collection name may use letters, digits, dot, underscore, and dash, and must not be a reserved word.');
+      return;
+    }
+    if (!canCreateCollection(viewer.auth, name)) {
+      rerender(403, `Your push scope does not cover anything in ${name}.`);
+      return;
+    }
+    try {
+      ops.createCollection(root, name);
+    } catch (e) {
+      if (e instanceof OpError) {
+        rerender(e.kind === 'exists' ? 409 : 400, e.message);
+        return;
+      }
+      throw e;
+    }
+    res.redirect(`/${encodeURIComponent(name)}`);
   });
 
   app.get('/new', (req, res) => {

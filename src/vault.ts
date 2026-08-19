@@ -165,6 +165,22 @@ export function canPush(auth: AuthResult, collection: string, repo: string): boo
   return true;
 }
 
+/**
+ * Whether a user may create the collection named, which is a weaker question
+ * than canPush over any repository in it: a push scope of
+ * `mycollection/onerepo` lets its holder create `mycollection` implicitly, by
+ * pushing that one repository, so making the empty directory first is refused
+ * for no gain. The collection part of each glob is what is matched, and a glob
+ * with no slash in it (`*`) covers every collection.
+ */
+export function canCreateCollection(auth: AuthResult, collection: string): boolean {
+  const collectionOf = (glob: string) => (glob.includes('/') ? glob.slice(0, glob.indexOf('/')) : glob);
+  const matches = (globs: string[]) => globs.some((g) => globMatch(collectionOf(g), collection));
+  if (!matches(auth.user.scope)) return false;
+  if (auth.token.scope !== undefined && !matches(auth.token.scope)) return false;
+  return true;
+}
+
 export function canAdmin(auth: AuthResult, globs: string[]): boolean {
   if (auth.token.scope !== undefined) return false;
   if (auth.user.admin.length === 0) return false;

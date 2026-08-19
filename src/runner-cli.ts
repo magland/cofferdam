@@ -1,4 +1,5 @@
-import { loadLogin, vaultTarget } from './credentials';
+import { api, remoteTarget } from './cli-api';
+import { loadLogin } from './credentials';
 import { DEFAULT_IMAGES, Runner, RunnerConfig, configPath, loadRunnerConfig, saveRunnerConfig } from './runner/client';
 
 // The `cofferdam runner ...` subcommands. Registration talks to the server with
@@ -75,47 +76,6 @@ function parseArgs(args: string[], usage: () => never): RunnerArgs {
 
 // Registration is an ordinary admin operation, so it uses the same login as
 // `cofferdam user add` rather than any arrangement of its own.
-async function adminTarget(a: RunnerArgs): Promise<{ host: string; token: string }> {
-  try {
-    return await vaultTarget(a);
-  } catch (e) {
-    console.error(e instanceof Error ? e.message : String(e));
-    process.exit(1);
-  }
-}
-
-async function api(
-  target: { host: string; token: string },
-  method: string,
-  pathname: string,
-  body?: unknown
-): Promise<Record<string, any>> {
-  let resp;
-  try {
-    resp = await fetch(`${target.host}${pathname}`, {
-      method,
-      headers: {
-        authorization: `Bearer ${target.token}`,
-        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
-      },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
-  } catch (e) {
-    console.error(`Could not reach ${target.host}: ${e instanceof Error ? e.message : e}`);
-    process.exit(1);
-  }
-  let data: Record<string, any> | null = null;
-  try {
-    data = (await resp.json()) as Record<string, any>;
-  } catch {
-    data = null;
-  }
-  if (!resp.ok) {
-    console.error(data && data.error ? `Error: ${data.error}` : `Error: HTTP ${resp.status}`);
-    process.exit(1);
-  }
-  return data ?? {};
-}
 
 export async function runnerAddCmd(args: string[], usage: () => never): Promise<void> {
   const a = parseArgs(args, usage);
@@ -130,7 +90,7 @@ export async function runnerAddCmd(args: string[], usage: () => never): Promise<
     );
     process.exit(1);
   }
-  const target = await adminTarget(a);
+  const target = await remoteTarget(a);
   const labels = a.labels.length ? a.labels : ['ubuntu-latest'];
   const data = await api(target, 'POST', '/api/runners', { name: a.name, labels, allow: a.allow });
   console.log(`Registered runner ${data.name}`);
@@ -160,7 +120,7 @@ export async function runnerAddCmd(args: string[], usage: () => never): Promise<
 
 export async function runnerListCmd(args: string[], usage: () => never): Promise<void> {
   const a = parseArgs(args, usage);
-  const target = await adminTarget(a);
+  const target = await remoteTarget(a);
   const data = await api(target, 'GET', '/api/runners');
   const runners = (data.runners ?? []) as {
     name: string;
@@ -188,7 +148,7 @@ export async function runnerRemoveCmd(args: string[], usage: () => never): Promi
     console.error('A runner name is required: cofferdam runner remove <name>');
     process.exit(1);
   }
-  const target = await adminTarget(a);
+  const target = await remoteTarget(a);
   await api(target, 'DELETE', `/api/runners/${encodeURIComponent(a.name)}`);
   console.log(`Removed runner ${a.name}`);
 }

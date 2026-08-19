@@ -39,6 +39,20 @@ function tmpFile(prefix: string): string {
   return path.join(os.tmpdir(), `${prefix}-${crypto.randomBytes(8).toString('hex')}`);
 }
 
+/**
+ * Create an empty collection: a directory in the vault with no repositories in
+ * it yet. Pushing to a new path creates its collection on the way (see
+ * createRepo), so this exists for the other order, where a collection is made
+ * first and filled afterwards, by an import or a push.
+ */
+export function createCollection(root: string, name: string): string {
+  if (!isValidName(name)) throw new OpError('invalid collection name');
+  const dir = path.join(root, name);
+  if (fs.existsSync(dir)) throw new OpError(`collection ${name} already exists`, 'exists');
+  fs.mkdirSync(dir);
+  return dir;
+}
+
 export async function createRepo(root: string, collection: string, name: string): Promise<GitRepo> {
   if (!isValidName(collection) || !isValidName(name)) throw new OpError('invalid collection or repository name');
   fs.mkdirSync(path.join(root, collection), { recursive: true });

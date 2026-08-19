@@ -13,8 +13,9 @@ import {
   rejectCredential,
   saveLogin,
   setHelper,
-  vaultTarget,
 } from './credentials';
+import { api, remoteTarget } from './cli-api';
+import { collectionAddCmd, collectionListCmd, importCmd } from './import-cli';
 import { runnerAddCmd, runnerListCmd, runnerRemoveCmd, runnerRunCmd } from './runner-cli';
 import { createApp } from './server';
 import { isValidName } from './scan';
@@ -28,6 +29,23 @@ function usage(code = 0): never {
       The vault defaults to $COFFERDAM_VAULT, then the current directory. On the
       first start with no vault.json, the server initializes one and prints
       an owner token once.
+
+  cofferdam import <source> <collection>[/<name>]
+      Bring an existing repository into the vault: clone it into a temporary
+      directory, push it here, which creates it, and remove the clone again.
+      The source is an https or ssh git URL, owner/repo for GitHub, or a
+      directory on this machine; the name defaults to its last segment.
+      Nothing happens on the server, so the source is read with whatever git
+      credentials this machine already has. Branches and tags come across;
+      --lfs carries Git LFS objects too, and needs git-lfs installed.
+
+  cofferdam collection add <name>
+      Create an empty collection. Pushing to a new path creates its collection
+      on the way, so this is for the other order: making the collection first
+      and filling it afterwards.
+
+  cofferdam collection list
+      Show the vault's collections and how many repositories each holds.
 
   cofferdam user add <username> [--scope <glob>]... [--admin <glob>]... [--token-scope <glob>]...
       Create a user and print its token once (only a SHA-256 hash is
@@ -150,11 +168,6 @@ function serveCmd(args: string[]) {
   });
 }
 
-interface RemoteTarget {
-  host: string;
-  token: string;
-}
-
 interface UserArgs {
   username: string | null;
   host: string | null;
@@ -187,50 +200,6 @@ function parseUserArgs(args: string[]): UserArgs {
     }
   }
   return out;
-}
-
-// The vault and token every user command works against: whatever `cofferdam
-// login` left behind, unless --host or --token says otherwise.
-async function remoteTarget(args: { host: string | null; token: string | null }): Promise<RemoteTarget> {
-  try {
-    return await vaultTarget(args);
-  } catch (e) {
-    console.error(e instanceof Error ? e.message : String(e));
-    process.exit(1);
-  }
-}
-
-async function api(
-  target: RemoteTarget,
-  method: string,
-  pathname: string,
-  body?: unknown
-): Promise<Record<string, any>> {
-  let resp;
-  try {
-    resp = await fetch(`${target.host}${pathname}`, {
-      method,
-      headers: {
-        authorization: `Bearer ${target.token}`,
-        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
-      },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
-  } catch (e) {
-    console.error(`Could not reach ${target.host}: ${e instanceof Error ? e.message : e}`);
-    process.exit(1);
-  }
-  let data: Record<string, any> | null = null;
-  try {
-    data = (await resp.json()) as Record<string, any>;
-  } catch {
-    data = null;
-  }
-  if (!resp.ok) {
-    console.error(data && data.error ? `Error: ${data.error}` : `Error: HTTP ${resp.status} from ${target.host}${pathname}`);
-    process.exit(1);
-  }
-  return data ?? {};
 }
 
 function formatScopes(user: { scope: string[]; admin: string[] }): string {
@@ -482,6 +451,13 @@ async function main() {
   const cmd = args[0];
   if (cmd === undefined || cmd === '-h' || cmd === '--help') usage();
   else if (cmd === 'serve') serveCmd(args.slice(1));
+  else if (cmd === 'import') await importCmd(args.slice(1), usage);
+  else if (cmd === 'collection' && args[1] === 'add') await collectionAddCmd(args.slice(2), usage);
+  else if (cmd === 'collection' && args[1] === 'list') await collectionListCmd(args.slice(2), usage);
+  else if (cmd === 'collection') {
+    console.error('Usage: cofferdam collection <add|list> ... (see cofferdam --help)');
+    process.exit(1);
+  }
   else if (cmd === 'user' && args[1] === 'add') await userAddCmd(args.slice(2));
   else if (cmd === 'user' && args[1] === 'grant') await userGrantCmd(args.slice(2));
   else if (cmd === 'user' && args[1] === 'list') await userListCmd(args.slice(2));

@@ -1,6 +1,18 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import express, { Express, Request, Response } from 'express';
-import { isValidName } from './scan';
-import { AuthResult, addUserToken, authenticateToken, canAdmin, grantScope, loadVault } from './vault';
+import * as ops from './ops';
+import { OpError } from './ops';
+import { displayName, isValidName, listCollections, listRepoDirs } from './scan';
+import {
+  AuthResult,
+  addUserToken,
+  authenticateToken,
+  canAdmin,
+  canCreateCollection,
+  grantScope,
+  loadVault,
+} from './vault';
 
 // The bearer-token JSON API used by the cofferdam CLI. Only Bearer tokens are
 // accepted; session cookies never authorize API calls.
@@ -52,6 +64,56 @@ export function registerApi(app: Express, root: string): void {
       admin: auth.user.admin,
       tokenScope: auth.token.scope ?? null,
     });
+  });
+
+  // Collections, for the CLI. `cofferdam import` asks what is already in a
+  // collection before it pushes, and `cofferdam collection add` makes an empty
+  // one, which is the case a push cannot cover: pushing creates the collection
+  // it lands in, so a collection with nothing in it yet has to be asked for.
+  app.get('/api/collections', (req, res) => {
+    if (!requireApiAuth(req, res)) return;
+    res.json({ collections: listCollections(root) });
+  });
+
+  app.get('/api/collections/:name', (req, res) => {
+    if (!requireApiAuth(req, res)) return;
+    const name = req.params.name;
+    let isDir = false;
+    try {
+      isDir = fs.statSync(path.join(root, name)).isDirectory();
+    } catch {
+      isDir = false;
+    }
+    if (!isValidName(name) || !isDir) {
+      apiError(res, 404, `no collection ${name} in this vault`);
+      return;
+    }
+    res.json({ name, repos: listRepoDirs(root, name).map(displayName) });
+  });
+
+  app.post('/api/collections', (req, res) => {
+    const auth = requireApiAuth(req, res);
+    if (!auth) return;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    if (!isValidName(name)) {
+      apiError(res, 400, 'a valid "name" is required (letters, digits, dot, underscore, dash; not a reserved word)');
+      return;
+    }
+    if (!canCreateCollection(auth, name)) {
+      apiError(res, 403, `your push scope does not cover anything in ${name}`);
+      return;
+    }
+    try {
+      ops.createCollection(root, name);
+    } catch (e) {
+      if (e instanceof OpError) {
+        apiError(res, e.kind === 'exists' ? 409 : 400, e.message);
+        return;
+      }
+      throw e;
+    }
+    res.json({ name, created: true });
   });
 
   app.get('/api/users', (req, res) => {

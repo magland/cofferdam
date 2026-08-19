@@ -113,40 +113,68 @@ ${csrfField(viewer)}
   return layout(`Fork ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, `${base}/fork`));
 }
 
+/**
+ * The import page. Importing has always run on the reader's machine rather than
+ * on the server (SPEC 3.10), and what this page does is hand them the command
+ * that does it. Earlier it asked for the source in a form and wrote a shell
+ * one-liner from the answers, which put a form in front of an operation the
+ * page cannot perform; now `cofferdam import` performs it, so the page only has
+ * to say what to run, with the collection and the vault's own URL filled in.
+ * The git commands remain below for a machine with no Node on it.
+ */
 export function importPage(
   viewer: Viewer,
-  collectionNames: string[],
-  preset: { src?: string; collection?: string; name?: string },
-  result: { command: string; collection: string; name: string } | null,
-  error?: string
+  opts: { collection: string | null; vaultUrl: string; gitCommand: string | null }
 ): string {
-  const datalist = collectionNames.map((o) => `<option value="${esc(o)}">`).join('');
-  const command = result
-    ? `<h2>Run this</h2>
-${copyRow(result.command)}
-<p class="muted small">git asks for a token with push access to ${esc(result.collection)}. Run <code>cofferdam login</code> once and it stops asking.</p>
-<p><a class="btn" href="/${encodeURIComponent(result.collection)}">Back to ${esc(result.collection)}</a></p>`
+  const collection = opts.collection ?? 'mycollection';
+  const back = opts.collection
+    ? `<p><a class="btn" href="/${encodeURIComponent(opts.collection)}">Back to ${esc(opts.collection)}</a></p>`
+    : '';
+  const fallback = opts.gitCommand
+    ? `<hr class="rule">
+<h2>Without the CLI</h2>
+<p class="muted small">The same two steps by hand. Replace the source URL, and the name after the collection if you want one other than the source's.</p>
+${copyRow(opts.gitCommand)}`
     : '';
   const content = `<div class="form-box wide">
 <h1>Import a repository</h1>
-${errorBanner(error)}
-<p class="muted">The command runs on your machine: git copies the repository from where it lives now and pushes it here, which creates it.</p>
-<form method="get" action="/import">
-<div class="field"><label for="src">Source repository</label><input type="text" id="src" name="src" value="${esc(
-    preset.src ?? ''
-  )}" placeholder="https://github.com/owner/repo" required>
-<p class="muted small">An https or ssh git URL, or <code>owner/repo</code> for GitHub.</p></div>
-<div class="field"><label for="collection">Collection</label><input type="text" id="collection" name="collection" list="collections" value="${esc(
-    preset.collection ?? ''
-  )}" required><datalist id="collections">${datalist}</datalist></div>
-<div class="field"><label for="name">Repository name <span class="muted">(optional)</span></label><input type="text" id="name" name="name" value="${esc(
-    preset.name ?? ''
-  )}" placeholder="taken from the source URL"></div>
-<button type="submit" class="btn btn-primary">Write the command</button>
-</form>
-${command}
+<p class="muted">Importing runs on your machine, not on this server: git reads the source with the credentials you already have there and pushes it here, which creates the repository. The <span class="mono">cofferdam</span> command does both.</p>
+<hr class="rule">
+<h2>Once per machine</h2>
+${copyRow('npm install -g @magland/cofferdam')}
+${copyRow(`cofferdam login ${opts.vaultUrl}`)}
+<h2>Then, for each repository</h2>
+${copyRow(`cofferdam import https://github.com/owner/repo ${collection}`)}
+<p class="muted small">The source may be an https or ssh git URL, or <span class="mono">owner/repo</span> for GitHub. The repository takes its name from the source; write <span class="mono">${esc(
+    collection
+  )}/another-name</span> to choose another. Add <span class="mono">--lfs</span> to carry Git LFS objects too. A collection that does not exist yet is created by the push.</p>
+${fallback}
+${back}
 </div>`;
   return layout('Import a repository', content, { viewer, path: '/import' });
+}
+
+/**
+ * Creating a collection on its own. A push creates the collection it lands in,
+ * so this is for the order where the collection comes first: an empty one to
+ * import into, or to hand someone push access over before anything is in it.
+ */
+export function newCollectionPage(viewer: Viewer, preset: { name?: string }, error?: string): string {
+  const content = `<div class="form-box wide">
+<h1>Create a new collection</h1>
+<p class="muted">A collection is a directory in the vault holding repositories. It may be empty; repositories arrive by creation, import, or push.</p>
+<hr class="rule">
+${errorBanner(error)}
+<form method="post" action="/new/collection">
+${csrfField(viewer)}
+<div class="field"><label for="name">Collection name</label><input type="text" id="name" name="name" value="${esc(
+    preset.name ?? ''
+  )}" required autofocus></div>
+<p class="muted small">Letters, digits, dot, underscore, and dash. You need push scope over something in it.</p>
+<button type="submit" class="btn btn-primary">${icon('plus')}<span>Create collection</span></button>
+</form>
+</div>`;
+  return layout('New collection', content, { viewer, path: '/new/collection' });
 }
 
 /**
