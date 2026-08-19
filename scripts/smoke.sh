@@ -344,6 +344,58 @@ body_has "tag shown" 'v1.0.0'
 check "tag delete" 302 -b "$JAR" "$BASE/demo/proj/tags/delete" \
   --data-urlencode "csrf=$CSRF" --data-urlencode name=v1.0.0
 
+# ---- issues ----
+
+check "issues tab on the repo page" 200 -b "$JAR" "$BASE/demo/proj"
+body_has "issues tab present" '/demo/proj/issues"'
+check "empty issue list" 200 "$BASE/demo/proj/issues"
+body_has "empty issue list says so" 'No open issues'
+check "anonymous new issue redirects to login" 302 "$BASE/demo/proj/issues/new"
+check "new issue form" 200 -b "$JAR" "$BASE/demo/proj/issues/new"
+CSRF="$(csrf_of)"
+check "issue needs a title" 400 -b "$JAR" "$BASE/demo/proj/issues/new" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "title=  " --data-urlencode "body=nothing"
+check "open an issue" 302 -b "$JAR" "$BASE/demo/proj/issues/new" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "title=Something is wrong" \
+  --data-urlencode "body=It **breaks** on startup." --data-urlencode "labels=bug, ui"
+check "issue page" 200 "$BASE/demo/proj/issues/1"
+body_has "issue title" 'Something is wrong'
+body_has "issue body is rendered markdown" '<strong>breaks</strong>'
+body_has "issue carries its labels" '>bug<'
+body_has "issue is open" 'Open'
+check "issue list shows it" 200 "$BASE/demo/proj/issues"
+body_has "list links the issue" 'href="/demo/proj/issues/1"'
+check "anonymous cannot comment" 403 "$BASE/demo/proj/issues/1/comment" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "body=hello"
+check "csrf is checked on comments" 403 -b "$JAR" "$BASE/demo/proj/issues/1/comment" \
+  --data-urlencode "csrf=bogus" --data-urlencode "body=hello"
+check "comment on an issue" 302 -b "$JAR" "$BASE/demo/proj/issues/1/comment" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "body=I see it too"
+check "comment shows on the issue" 200 "$BASE/demo/proj/issues/1"
+body_has "comment body" 'I see it too'
+check "edit an issue" 302 -b "$JAR" "$BASE/demo/proj/issues/1/edit" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "title=Something is still wrong" \
+  --data-urlencode "body=It breaks on startup." --data-urlencode "labels=bug"
+check "close an issue" 302 -b "$JAR" "$BASE/demo/proj/issues/1/state" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "state=closed" --data-urlencode "body=Fixed on main"
+check "closed issues listed" 200 "$BASE/demo/proj/issues?state=closed"
+body_has "closed issue named" 'Something is still wrong'
+check "open list is empty again" 200 "$BASE/demo/proj/issues"
+body_has "no open issues left" 'No open issues'
+check "closing comment kept" 200 "$BASE/demo/proj/issues/1"
+body_has "the comment posted with the close" 'Fixed on main'
+check "reopen an issue" 302 -b "$JAR" "$BASE/demo/proj/issues/1/state" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "state=open"
+check "issue is open again" 200 "$BASE/demo/proj/issues/1"
+body_has "open badge" 'state-badge open'
+check "unknown issue 404s" 404 "$BASE/demo/proj/issues/99"
+check "non-numeric issue 404s" 404 "$BASE/demo/proj/issues/nope"
+ISSUE_FILE="$VAULT/demo/proj.issues/1/issue.md"
+[ -f "$ISSUE_FILE" ] || { echo "FAIL: issue not on disk at $ISSUE_FILE"; exit 1; }
+grep -q '^title: Something is still wrong$' "$ISSUE_FILE" || { echo "FAIL: issue file has no title header"; exit 1; }
+[ -f "$VAULT/demo/proj.issues/1/comments/1.md" ] || { echo "FAIL: comment not on disk"; exit 1; }
+PASS=$((PASS+3)); echo "ok: issues are files in the vault"
+
 # ---- settings ----
 
 check "settings page" 200 -b "$JAR" "$BASE/demo/proj/settings"
@@ -537,6 +589,40 @@ check "source archive as zip" 200 "$BASE/demo/proj/archive/main.zip"
 PASS=$((PASS+1)); echo "ok: zip archive is a zip"
 check "archive of an unknown ref 404s" 404 "$BASE/demo/proj/archive/nope.zip"
 check "archive in an unknown format 404s" 404 "$BASE/demo/proj/archive/main.rar"
+
+# ---- releases, and feeds ----
+
+check "tags page before a release" 200 -b "$JAR" "$BASE/demo/proj/tags"
+CSRF="$(csrf_of)"
+check "create a tag to release" 302 -b "$JAR" "$BASE/demo/proj/tags/create" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode name=v2.0.0 --data-urlencode at=main
+check "empty release list" 200 "$BASE/demo/proj/releases"
+body_has "empty release list says so" 'No releases yet'
+check "anonymous draft redirects to sign in" 302 "$BASE/demo/proj/releases/new"
+check "anonymous release POST forbidden" 403 -X POST "$BASE/demo/proj/releases/new"
+check "release form" 200 -b "$JAR" --get "$BASE/demo/proj/releases/new" --data-urlencode tag=v2.0.0
+CSRF="$(csrf_of)"
+check "publish a release" 302 -b "$JAR" "$BASE/demo/proj/releases/new" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode tag=v2.0.0 --data-urlencode "name=Version two" \
+  --data-urlencode "body=Notes for **two**."
+check "release page" 200 "$BASE/demo/proj/releases/tag/v2.0.0"
+body_has "release names itself" 'Version two'
+body_has "release notes are rendered markdown" '<strong>two</strong>'
+body_has "release offers the source" 'archive/v2.0.0.zip'
+check "release list carries it" 200 "$BASE/demo/proj/releases"
+body_has "newest release is marked latest" 'chip-latest'
+check "release notes live in the vault" 200 "$BASE/demo/proj/tags"
+body_has "tag row links its release" 'releases/tag/v2.0.0'
+check "release for a tag with no notes 404s" 404 "$BASE/demo/proj/releases/tag/v1.0.0"
+check "release on a tag that does not exist is refused" 400 -b "$JAR" "$BASE/demo/proj/releases/new" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode tag=no-such-tag --data-urlencode "body=x"
+check "release feed" 200 -D "$TMP/headers" "$BASE/demo/proj/releases.atom"
+grep -qi 'content-type: application/atom' "$TMP/headers" || { echo "FAIL: feed content-type not atom"; exit 1; }
+PASS=$((PASS+1)); echo "ok: feed content-type"
+body_has "release feed names the release" '<title>Version two</title>'
+check "commit feed" 200 "$BASE/demo/proj/commits/main.atom"
+body_has "commit feed has entries" '<entry>'
+check "commit feed for one path" 200 "$BASE/demo/proj/commits/main/README.md.atom"
 
 # ---- JSON API ----
 

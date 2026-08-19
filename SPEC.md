@@ -84,10 +84,14 @@ First start against a directory with no `vault.json` initializes one and prints 
 | `src/style.ts` | The single structural CSS string; every color and font is a `var(--…)` from the active theme |
 | `src/icons.ts` | The icon set: 16-pixel Octicons inlined as SVG, and the `icon()` wrapper |
 | `src/find.ts` | Finding things in a repository: the file finder and the search route |
+| `src/releases.ts` | Releases: the store under `<repo>.releases/`, the pages, and the write routes |
+| `src/atom.ts` | Atom feed construction, shared by the release and history feeds |
 | `src/avatar.ts` | Identicons: the drawing a name gets in place of an uploaded picture |
 | `src/languages.ts` | The language breakdown: Linguist's names and colours by extension, and the byte shares the About panel's bar is drawn from |
 | `src/find.ts` | The file finder: every path at a ref, filtered in the browser |
 | `src/compare.ts` | Comparing two revisions: the route and its page |
+| `src/issues.ts` | The issue store: `<repo>.issues/` on disk, and the validation over it |
+| `src/issueweb.ts` | The issue pages and their operations |
 | `scripts/create-example.sh` | Builds the example vault, including its `vault.json` with the fixed dev user |
 | `scripts/smoke.sh` | The end-to-end smoke test |
 | `scripts/deploy-fly.sh` | Idempotent create-app/create-volume/deploy/print-token for Fly |
@@ -109,6 +113,9 @@ Read routes (anonymous):
 | `GET /:collection/:repo/search?q=&ref=` | Literal text search over the files at a ref (`git grep`, fixed strings, bounded in results and in time); an unknown ref falls back to the default branch |
 | `GET /:collection/:repo/find[/:ref]` | The file finder: every path at a ref, filtered in the browser |
 | `GET /:collection/:repo/blame/:ref/*path` | Blame for one text file; binary or over-large files redirect to the blob page |
+| `GET /:collection/:repo/releases`, `releases/tag/*` | Releases: notes attached to a tag, from `<repo>.releases/<tag>.md` |
+| `GET /:collection/:repo/releases.atom`, `commits/:ref[/*path].atom` | Atom feeds of releases and of a history |
+| `GET /:collection/:repo/issues[?state=open\|closed\|all]` `issues/:n` | Issue list and one issue with its comments; anonymous, like every other read |
 | `GET /:collection/:repo/compare[/:base...:head]` | Compare two revisions: the commits head has that base does not, and the merge-base diff between them. Also accepts `?base=&head=` from the form, and `..` for a direct diff |
 | `GET /:collection/:repo/archive/:ref.{tar.gz,tgz,zip}` | Source download, streamed straight from `git archive`; the ref must be one the repository has, or a commit id |
 | `GET /:collection/:repo/branches` `tags` | Ref listings (with operation forms when the session allows) |
@@ -139,6 +146,12 @@ UI operation routes (session + CSRF; all POSTs follow POST-redirect-GET):
 | `GET/POST /:collection/:repo/delete/:branch/*path` | Delete a file with a confirm step | push scope |
 | `POST /:collection/:repo/branches/create` `branches/delete` | Branch operations (default branch is not deletable) | push scope |
 | `POST /:collection/:repo/tags/create` `tags/delete` | Lightweight tag operations | push scope |
+| `GET/POST /:collection/:repo/issues/new` | Open an issue | session |
+| `POST /:collection/:repo/issues/:n/comment` | Comment on an issue | session |
+| `POST /:collection/:repo/issues/:n/state` | Close or reopen, optionally with a comment | push scope or being the author |
+| `GET/POST /:collection/:repo/issues/:n/edit` | Edit the title, body, and labels | push scope or being the author |
+| `GET/POST /:collection/:repo/releases/new` (optional `?tag=`) | Draft or edit the notes on a tag | push scope |
+| `POST /:collection/:repo/releases/delete` | Remove a release's notes; the tag is untouched | push scope |
 | `GET/POST /:collection/:repo/settings` | Description and default branch | push scope (page also visible with admin) |
 | `POST /:collection/:repo/settings/delete` | Repository deletion after retyping `collection/repo` | admin scope over the repo |
 | `GET /admin` | Administration index | admin scope |
@@ -281,7 +294,17 @@ One thing to keep in mind when touching the overrides: a path in a workflow or a
 
 A site is served at `/<collection>/<repo>/site/` while GitHub serves one at `<owner>.github.io/<repo>/`. `configure-pages` reports the real base path and exports `HUBBIT_SITE_BASE_PATH` (and, for now, `HUBBIT_PAGES_BASE_PATH` under its former name), so a generator that reads it is correct; one that computes its own from the repository name produces GitHub's shape and broken links, and needs the base passed explicitly. The numbl workflow this feature was built against happens to emit relative URLs, so it is unaffected; do not read that as the general case.
 
-### 3.13 The shape of the interface
+### 3.13 Issues
+
+Issues live in a sibling directory, `<repo>.issues/`, beside the `.git`, `.site`, and `.runs` directories. The open question in the previous specification was this one or a hidden git ref inside the repository; the sibling directory won for the same reason the rest of the vault has that shape, that what is on disk stays legible without the server, greppable, editable in an editor, and backed up by copying a directory. The cost is that issues do not travel with a clone, which a later export can address.
+
+One directory per issue: `<repo>.issues/<n>/issue.md` is the issue as markdown under a YAML frontmatter header (`title`, `state`, `author`, `created`, `updated`, `labels`, and `closedBy`/`closedAt` once closed), and `<repo>.issues/<n>/comments/<id>.md` is each comment, the same shape with `author` and `created`. A comment is a separate file so that writing one never rewrites the issue and two people commenting at once cannot lose each other's words. Numbers are allocated by `mkdir`, which the filesystem makes atomic: whoever creates the directory owns the number and a writer that loses the race takes the next one. Every write lands beside its target and is renamed into place.
+
+Authorization follows the vault's model rather than GitHub's. Reading is anonymous, like every other read. Opening an issue and commenting need a session — a vault's users are its users, and there is no public sign-up to abuse. Closing, reopening, and editing need push scope over the repository or being the author. Labels are a push-scope decision, so a form that carries them from someone without it is read without them. Every mutating route checks CSRF and re-derives abilities from live `vault.json`, like the rest of the operations layer, and issue and comment bodies are rendered by the same sanitizing markdown pipeline as a README (3.9), which is what keeps one user's issue from carrying script into another user's session.
+
+Counting open issues means reading every issue's header, and the Issues tab asks for that count on every page of a repository, so the count is memoized against the issues directory's modification time and every write touches that directory. A repository with no issues never pays for the tab.
+
+### 3.14 The shape of the interface
 
 The interface deliberately reads as GitHub's, because that is the interface its readers already know; the themes (3.8) are where a vault gets to look like itself. Five conventions carry most of that and should be kept when new pages are added.
 
@@ -297,7 +320,6 @@ The interface deliberately reads as GitHub's, because that is the interface its 
 
 ## 4. Later phases, sketched
 
-- **Issues.** State must live in the vault. Two candidate designs: a sibling directory (`<repo>.issues/` with one markdown-plus-frontmatter file per issue), which is transparent and greppable; or a hidden git ref inside the repo (as git-bug and similar tools do), which travels with clones. We lean toward the sibling directory for consistency with sites, but this is undecided.
 - **Pull requests.** Within a vault, a PR can be branch-to-branch with a merge button (server-side `git merge-tree`/`merge` in a temp worktree or index). Across vaults is the federation question below.
 - **Secrets and a run token.** Neither exists yet. A run token minted per job from the workflow's `permissions:` block, revoked when the job ends, is what would let a workflow push back to its own repository and call the vault's API; it is also what would stop actions that expect `github.token` from reporting "Bad credentials" and taking a fallback path. Secrets storage was deliberately deferred rather than designed badly: whether a vault backup should carry live secrets is unresolved (7.11).
 - **A cache service**, so `actions/cache` and the caching built into `setup-node` and its relatives stop being no-ops. A runner-local directory is the obvious first implementation, with the trade-off that a second runner starts cold.

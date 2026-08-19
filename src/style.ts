@@ -661,4 +661,68 @@ details.diff-file:not([open]) > summary.diff-file-header { border-bottom: none; 
 .filter-chip .octicon { color: var(--fg-muted); }
 .filter-chip a { display: inline-flex; color: var(--fg-muted); }
 .filter-chip a:hover { color: var(--danger); }
+
+/* --- issues: the list, one issue and its thread --- */
+.state-filter { display: flex; gap: 4px; flex-wrap: wrap; }
+.state-tab { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: var(--radius); color: var(--fg-muted); font-size: 13px; }
+.state-tab:hover { background: var(--surface); text-decoration: none; }
+.state-tab.current { color: var(--fg); font-weight: 600; }
+.state-tab .octicon { color: var(--fg-muted); }
+/* Open is green and closed is purple, the colours GitHub taught for these. */
+.octicon.issue-open { color: var(--alert-tip); }
+.octicon.issue-closed { color: var(--alert-important); }
+table.listing.issues td.issue-cell { display: flex; align-items: flex-start; gap: 10px; }
+table.listing.issues td.issue-cell > span { min-width: 0; }
+.issue-link { color: var(--fg); font-weight: 600; }
+.issue-link:hover { color: var(--accent); text-decoration: none; }
+.chip.label { margin-left: 6px; }
+.issue-comments { display: inline-flex; align-items: center; gap: 4px; color: var(--fg-muted); }
+.issue-comments:hover { color: var(--accent); text-decoration: none; }
+
+.issue-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.issue-title { font-size: 24px; margin: 0 0 8px; }
+.issue-sub {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 20px;
+}
+.state-badge {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 2em;
+  font-size: 13px; font-weight: 600; color: var(--on-primary); background: var(--alert-tip);
+}
+.state-badge.closed { background: var(--alert-important); }
+.issue-thread { display: flex; flex-direction: column; gap: 16px; max-width: 880px; }
+.issue-comment { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.issue-comment-head {
+  display: flex; align-items: center; gap: 8px; background: var(--surface);
+  border-bottom: 1px solid var(--border); padding: 8px 12px;
+}
+.issue-comment-body { padding: 16px 20px; }
+.issue-event { display: flex; align-items: center; gap: 8px; color: var(--fg-muted); font-size: 13px; }
+.issue-reply { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.issue-reply .issue-comment-head { border-bottom: 1px solid var(--border); }
+.issue-reply textarea { border: none; border-radius: 0; }
+.issue-reply .actions { padding: 10px 12px; justify-content: flex-end; border-top: 1px solid var(--border); }
+
+/* --- releases: notes attached to a tag --- */
+.release { display: flex; gap: 24px; align-items: flex-start; padding: 20px 0; border-top: 1px solid var(--border-soft); }
+.release:first-of-type { border-top: none; }
+.release-side { flex: 0 0 200px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.release-tag { display: inline-flex; align-items: center; gap: 6px; color: var(--fg); font-size: 15px; }
+.release-tag .octicon { color: var(--fg-muted); }
+.release-main { flex: 1 1 auto; min-width: 0; }
+.release-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.release-head h2 { margin: 0; }
+.release-head h2 a { color: var(--fg); }
+.release-actions { margin-left: auto; }
+.chip-latest { background: var(--primary); color: var(--on-primary); font-weight: 600; }
+.chip-pre { background: transparent; border: 1px solid var(--alert-warning); color: var(--alert-warning); }
+.release-notes { margin: 12px 0 16px; }
+.release-downloads { display: flex; flex-direction: column; gap: 6px; max-width: 320px; }
+.release-download { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--fg); font-size: 13px; }
+.release-download:hover { background: var(--surface); text-decoration: none; }
+.release-download .octicon { color: var(--fg-muted); }
+@media (max-width: 860px) {
+  .release { flex-direction: column; gap: 8px; }
+  .release-side { flex: 1 1 auto; flex-direction: row; align-items: center; }
+}
 `;

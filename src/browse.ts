@@ -7,13 +7,14 @@ import { LfsContext } from './lfsstore';
 import { isMarkdownFile, renderMarkdown } from './markdown';
 import { parsePointer } from './pointer';
 import { esc, highlightCode, isBinary } from './render';
+import { atomFeed } from './atom';
 import { renderDiff } from './diff';
 import { displayName, isValidName, listCollections, listRepoDirs, repoDescription, siteDir } from './scan';
 import { findRepo } from './scan';
 import { getViewer } from './session';
 import * as views from './views';
 import { encPath, repoUrl } from './views';
-import { LoadedRepo, ah, loadRepo, makeCtx, send404, wildcard } from './web';
+import { LoadedRepo, ah, baseUrlOf, loadRepo, makeCtx, send404, wildcard } from './web';
 
 const COMMITS_PER_PAGE = 35;
 const MAX_RENDER_SIZE = 1024 * 1024;
@@ -396,7 +397,13 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
       if (!loaded) return;
       // A path after the ref narrows the history to that file or directory,
       // which is what the History button on a blob or tree page asks for.
-      const { ref, path: histPath } = loaded.repo.resolveRefAndPath(wildcard(req), loaded.refNames);
+      // A .atom suffix asks for the same history as a feed, as on GitHub.
+      const asked = wildcard(req);
+      const wantsFeed = asked.endsWith('.atom');
+      const { ref, path: histPath } = loaded.repo.resolveRefAndPath(
+        wantsFeed ? asked.slice(0, -'.atom'.length) : asked,
+        loaded.refNames
+      );
       if (!isValidRefName(ref) || !isValidRepoPath(histPath)) {
         send404(res, 'Not found', viewer);
         return;
@@ -420,6 +427,28 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
         histPath || undefined,
         author
       );
+      if (wantsFeed) {
+        const site = `${baseUrlOf(req)}/${encodeURIComponent(loaded.repo.collection)}/${encodeURIComponent(
+          loaded.repo.name
+        )}`;
+        const where = `${encPath(ref)}${histPath ? `/${encPath(histPath)}` : ''}`;
+        res.type('application/atom+xml; charset=utf-8').send(
+          atomFeed({
+            id: `${site}/commits/${where}`,
+            title: `${loaded.repo.collection}/${loaded.repo.name}${histPath ? `: ${histPath}` : ''} at ${ref}`,
+            selfLink: `${site}/commits/${where}.atom`,
+            htmlLink: `${site}/commits/${where}`,
+            entries: commits.map((c) => ({
+              id: `${site}/commit/${c.sha}`,
+              title: c.subject,
+              updated: c.date,
+              link: `${site}/commit/${c.sha}`,
+              author: c.author,
+            })),
+          })
+        );
+        return;
+      }
       res
         .type('html')
         .send(

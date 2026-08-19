@@ -18,6 +18,10 @@ export interface RepoCtx {
   cloneUrl: string;
   hasSite: boolean;
   hasCi: boolean;
+  /** Tags that have release notes in the vault. */
+  releases: string[];
+  /** Open issues, for the Issues tab's count. */
+  openIssues: number;
   viewer: Viewer | null;
   canPush: boolean;
   canAdmin: boolean;
@@ -312,7 +316,7 @@ ${archive('zip', 'Source as zip')}${archive('tar.gz', 'Source as tar.gz')}</div>
 
 export function repoHeader(
   ctx: RepoCtx,
-  active: 'code' | 'commits' | 'actions' | 'branches' | 'tags' | 'settings'
+  active: 'code' | 'commits' | 'issues' | 'actions' | 'branches' | 'tags' | 'settings'
 ): string {
   const base = repoUrl(ctx);
   const tab = (id: string, label: string, href: string, glyph: IconName, count?: number) =>
@@ -333,6 +337,7 @@ export function repoHeader(
 <nav class="tabs">
 ${tab('code', 'Code', base, 'code')}
 ${tab('commits', 'Commits', `${base}/commits/${encPath(ctx.ref)}`, 'history')}
+${tab('issues', 'Issues', `${base}/issues`, 'issue-opened', ctx.openIssues)}
 ${ctx.hasCi || active === 'actions' ? tab('actions', 'Actions', `${base}/actions`, 'play') : ''}
 ${tab('branches', 'Branches', `${base}/branches`, 'git-branch', ctx.branches.length)}
 ${tab('tags', 'Tags', `${base}/tags`, 'tag', ctx.tags.length)}
@@ -544,6 +549,12 @@ function aboutPanel(ctx: RepoCtx, view: TreeView): string {
   if (view.readmeName) links.push(`<a href="#readme">${icon('book')}<span>Readme</span></a>`);
   if (license) links.push(`<a href="${blob(license.name)}">${icon('law')}<span>${esc(license.name)}</span></a>`);
   if (ctx.hasSite) links.push(`<a href="${base}/site/">${icon('globe')}<span>Site</span></a>`);
+  if (ctx.releases.length)
+    links.push(
+      `<a href="${base}/releases">${icon('rocket')}<span>${count(ctx.releases.length)} release${
+        ctx.releases.length === 1 ? '' : 's'
+      }</span></a>`
+    );
   const settings =
     ctx.canPush || ctx.canAdmin
       ? `<a class="side-edit" href="${base}/settings" title="Edit repository details" aria-label="Edit repository details">${icon(
@@ -1014,11 +1025,14 @@ export function commitsPage(
         ctx.ref
       )}${suffix}" title="Show every author" aria-label="Show every author">${icon('x')}</a></span>`
     : '';
+  const feed = `<a class="btn" href="${base}/commits/${encPath(ctx.ref)}${suffix}.atom" title="Atom feed of this history">${icon(
+    'rss'
+  )}<span>Feed</span></a>`;
   const content = `${repoHeader(ctx, 'commits')}
 <div class="toolbar"><div class="left">${refPicker(
     ctx,
     (ref) => `${base}/commits/${encPath(ref)}${suffix}${query}`
-  )}${byAuthor}${scope}</div></div>
+  )}${byAuthor}${scope}</div><div class="right-group">${feed}</div></div>
 ${rows || `<div class="empty-state">${empty}</div>`}
 ${pager.length ? `<div class="pagination">${pager.join('')}</div>` : ''}`;
   return layout(
@@ -1082,6 +1096,20 @@ export function refListPage(ctx: RepoCtx, kind: 'branches' | 'tags'): string {
           : '';
       const badge =
         kind === 'branches' && r.name === ctx.defaultBranch ? ' <span class="badge">Default</span>' : '';
+      // A tag with notes leads to them; one without invites whoever may push
+      // to write them, which is the only way a release is ever created.
+      const release =
+        kind === 'tags'
+          ? ctx.releases.includes(r.name)
+            ? `<a class="btn" href="${base}/releases/tag/${encPath(r.name)}" title="Release notes for ${esc(
+                r.name
+              )}">${icon('rocket')}<span>Release</span></a>`
+            : ctx.canPush
+              ? `<a class="btn" href="${base}/releases/new?tag=${encodeURIComponent(
+                  r.name
+                )}" title="Write release notes for ${esc(r.name)}">${icon('rocket')}<span>Draft release</span></a>`
+              : ''
+          : '';
       // Every ref but the default one can be compared against it, which is
       // the question a list of branches invites: what is on this one?
       const compare =
@@ -1096,7 +1124,7 @@ export function refListPage(ctx: RepoCtx, kind: 'branches' | 'tags'): string {
       )}"><b>${esc(r.name)}</b></a>${badge}
 <div class="muted small">Updated ${timeTag(r.date)} &middot; ${esc(r.subject)}</div></td>
 <td class="right"><a class="sha" href="${base}/commit/${r.sha}">${r.sha.slice(0, 7)}</a></td>
-<td class="right"><span class="right-group">${compare}${archives}${action}</span></td>
+<td class="right"><span class="right-group">${release}${compare}${archives}${action}</span></td>
 </tr>`;
     })
     .join('');

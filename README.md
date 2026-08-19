@@ -12,6 +12,7 @@ Hosting git repositories usually means running a service with a database (GitHub
     hello-numerics.runs/  (its workflow runs and logs)
     webapp.git/
     webapp.site/          (static site for webapp)
+    webapp.issues/        (its issues, one directory each)
     webapp.lfs/           (its Git LFS objects, when no bucket is configured)
   bob/
     notes.git/
@@ -24,17 +25,16 @@ The `.git` suffix on repository directory names is optional; it is stripped for 
 - Collection and repository listings
 - A GitHub-shaped interface: a branch and tag picker, a Code menu with the clone URL, directory listings that show each entry's last commit and how long ago it landed, an About panel, and times written as ages
 - File browsing at any branch or tag, with syntax highlighting and linkable line numbers
-- A file finder (`Go to file`, or the `t` key) that filters every path in the tree as you type; directory listings name the commit that last touched each entry, as GitHub's do
-- A branch and tag picker with a filter box, and an About panel on the repository page
 - Markdown files rendered as documents, with a Preview/Code toggle (`?plain=1` for the source, as on GitHub); READMEs shown on directory pages
 - The GitHub markdown feature set: highlighted code with a copy button, LaTeX math through KaTeX (`$…$`, `$$…$$`, and ```` ```math ```` blocks), tables, task lists, footnotes, alert callouts (`> [!NOTE]`), emoji shortcodes, heading anchors, and a sanitized subset of inline HTML
 - Commit history with pagination, and diff views that number both sides of every hunk, count what each file gained and lost, and fold away a file you have read; the History button on any file or directory narrows it to that path
-- Search the files at any ref for a literal string, with the matches grouped by file, and a "Go to file" finder that filters every path as you type (`t` opens it)
+- Search the files at any ref for a literal string, with the matches grouped by file, and a file finder (`Go to file`, or the `t` key) that filters every path in the tree as you type
 - Blame: every line beside the commit that last touched it, and a step back to the blame before that change
 - Contributors in the About panel, each leading to their commits; any history can be narrowed to one author
+- Releases: notes attached to a tag, stored in the vault beside the repository, with the source archives as their downloads
+- Atom feeds for a repository's releases and for any history (`/commits/<ref>.atom`, narrowed by path like the page it follows)
 - Comparing two revisions: what one branch has that another does not, and the diff between them, from the Compare button on any branch or tag
-- Diffs with line numbers on both sides, per-file counts and a changed-files summary, and files that fold away
-- Blame for any text file: each line beside the commit that last touched it, and a link to the blame as it stood before that change
+- Issues: open, comment, label, close, and reopen, stored as markdown files in the vault
 - Source downloads: `.tar.gz` or `.zip` of any branch, tag, or commit, from the Code button or straight from `/<collection>/<repo>/archive/<ref>.zip`
 - A language breakdown in the About panel: the share of the source each language holds, drawn as GitHub's bar in Linguist's colours
 - Sign-in with username and token; operations happen directly in the web interface:
@@ -254,6 +254,26 @@ POST /api/users/:name/grant     extend a user's scopes         {scope?, admin?}
 ```
 
 The API accepts only bearer tokens and git accepts only Basic auth; session cookies never authorize either. The two credential presentations stay deliberately distinct.
+
+## Issues
+
+Every repository has an issue tracker at `/<collection>/<repo>/issues`. Reading issues is anonymous, like everything else here; opening one and commenting need a signed-in user, and closing, reopening, or editing needs push access or being the person who wrote it. Bodies are markdown, rendered by the same pipeline as a README.
+
+They are files, not rows:
+
+```
+alice/
+  webapp.issues/
+    1/
+      issue.md          (YAML frontmatter: title, state, author, created, updated, labels)
+      comments/
+        1.md            (frontmatter: author, created)
+        2.md
+    2/
+      issue.md
+```
+
+So an issue can be read, written, grepped, and backed up without the server. Editing one by hand is fine: the server reads what is on disk on every request. A comment is its own file, so two people commenting at the same moment cannot overwrite each other, and issue numbers are handed out by `mkdir`, which the filesystem makes atomic.
 
 ## Sites
 
