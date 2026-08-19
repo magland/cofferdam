@@ -1,0 +1,137 @@
+# The thorough suite: everything that can be checked without publishing.
+#
+# The smoke test builds the project itself and skips whole areas when a tool
+# it needs is absent, which is the failure mode this workflow exists to
+# prevent: a green run that quietly tested less than the last one. So each job
+# asserts its prerequisites before it starts, and fails loudly if git-lfs or
+# Docker has gone missing from the runner image rather than reporting success
+# on a smaller suite.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer commit on the same branch supersedes an older run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The fast suite, on every Node the package claims to support. This also
+  # covers the build: scripts/smoke.sh runs tsc itself and stops if it fails.
+  smoke:
+    name: smoke (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      # The suite skips its git-lfs checks when the client is absent, and says
+      # so in a line nobody reads. Insist on it instead.
+      - name: Require git-lfs, so its checks cannot be skipped
+        run: git lfs version
+
+      - run: npm run smoke
+
+  # Executing a workflow job for real: the server plans a run, a runner takes
+  # it, and a container does the work. This is the only job that needs Docker,
+  # and the only one measured in minutes.
+  execute-jobs:
+    name: workflow jobs in containers
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Require Docker, so job execution cannot be skipped
+        run: docker version --format '{{.Server.Version}}'
+
+      - run: npm run smoke:slow
+
+  # What a user actually installs. A package can pass every test in the
+  # repository and still arrive broken, because what ships is the tarball:
+  # the files field decides its contents, and the bin needs its shebang and
+  # its executable bit to survive packing.
+  package:
+    name: the published tarball
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Pack, and check what is in the tarball
+        run: |
+          tarball="$(npm pack --silent)"
+          echo "packed $tarball"
+          contents="$(tar -tzf "$tarball")"
+          for want in package/dist/index.js package/README.md package/LICENSE; do
+            echo "$contents" | grep -qx "$want" || { echo "missing from tarball: $want"; exit 1; }
+          done
+          # src/ belongs to the repository, not to the package.
+          if echo "$contents" | grep -q '^package/src/'; then
+            echo "tarball ships src/; the files field should exclude it"
+            exit 1
+          fi
+          echo "TARBALL=$PWD/$tarball" >> "$GITHUB_ENV"
+
+      - name: Install the tarball and run the command it provides
+        run: |
+          npm install -g --prefix "$RUNNER_TEMP/global" "$TARBALL"
+          "$RUNNER_TEMP/global/bin/cofferdam" --help | grep -q 'cofferdam serve'
+
+      - name: Serve a fresh vault from the installed package
+        run: |
+          vault="$RUNNER_TEMP/vault"
+          mkdir -p "$vault"
+          "$RUNNER_TEMP/global/bin/cofferdam" serve "$vault" --port 42871 > "$RUNNER_TEMP/serve.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 60); do
+            curl -fsS -o /dev/null "http://127.0.0.1:42871/" && break
+            sleep 0.5
+          done
+          code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:42871/")"
+          kill "$pid" 2>/dev/null || true
+          cat "$RUNNER_TEMP/serve.log"
+          # A vault with no vault.json must be initialized on first start, and
+          # the one-time owner token printed where the operator can read it.
+          [ "$code" = "200" ] || { echo "the installed server did not answer 200"; exit 1; }
+          [ -f "$vault/vault.json" ] || { echo "first start did not initialize the vault"; exit 1; }
+          grep -q "cofferdam_" "$RUNNER_TEMP/serve.log" || { echo "first start printed no owner token"; exit 1; }
+
+  # Cheap, and the rot it catches is the kind readers hit first.
+  docs:
+    name: markdown links
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/check-links.sh
