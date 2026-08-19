@@ -171,7 +171,7 @@ function splitPaths(input: string | undefined): { include: string[]; exclude: st
 // Expand one path, which may contain * and **, against the workspace. The
 // glob dialect is the one workflow filters use, so there is one answer in the
 // codebase to what a pattern means.
-function expandPattern(rootDir: string, pattern: string): string[] {
+function expandPattern(rootDir: string, pattern: string, unreadable?: string[]): string[] {
   const normalized = pattern.replace(/^\.\//, '').replace(/\/+$/, '');
   const absolute = path.isAbsolute(normalized);
   const full = absolute ? normalized : path.join(rootDir, normalized);
@@ -189,7 +189,11 @@ function expandPattern(rootDir: string, pattern: string): string[] {
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
+    } catch (e) {
+      // A directory that is there but closed to us is not the same as one
+      // that is not there, and the caller says so rather than reporting an
+      // empty match.
+      if ((e as NodeJS.ErrnoException).code === 'EACCES') unreadable?.push(dir);
       return;
     }
     for (const e of entries) {
@@ -210,7 +214,8 @@ function expandPattern(rootDir: string, pattern: string): string[] {
 function collectArtifactFiles(
   ctx: StepExecContext,
   input: string | undefined
-): { root: string; files: string[] } {
+): { root: string; files: string[]; unreadable: string[] } {
+  const unreadable: string[] = [];
   const workspace = ctx.hostPaths.workspace;
   const { include, exclude } = splitPaths(input);
   // A path in a workflow or an action is written as the step sees it inside
@@ -223,7 +228,7 @@ function collectArtifactFiles(
       ctx.log(`WARNING: ${p} is not inside the workspace or the runner temp directory; ignoring it`);
       continue;
     }
-    for (const m of expandPattern(workspace, mapped)) matched.add(m);
+    for (const m of expandPattern(workspace, mapped, unreadable)) matched.add(m);
   }
   const excluded = new Set<string>();
   for (const p of exclude) {
@@ -238,7 +243,14 @@ function collectArtifactFiles(
     files.push(p);
   };
   const walk = (dir: string): void => {
-    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'EACCES') unreadable.push(dir);
+      return;
+    }
+    for (const e of entries) {
       const full = path.join(dir, e.name);
       if (e.isDirectory()) walk(full);
       else addFile(full);
@@ -248,11 +260,13 @@ function collectArtifactFiles(
     try {
       if (fs.statSync(m).isDirectory()) walk(m);
       else addFile(m);
-    } catch {
-      // vanished; skip
+    } catch (e) {
+      // A file that vanished between matching and reading is not worth
+      // reporting; one we are not allowed to read is.
+      if ((e as NodeJS.ErrnoException).code === 'EACCES') unreadable.push(m);
     }
   }
-  if (files.length === 0) return { root: workspace, files: [] };
+  if (files.length === 0) return { root: workspace, files: [], unreadable };
   let root = path.dirname(files[0]);
   for (const f of files.slice(1)) {
     const dir = path.dirname(f);
@@ -262,7 +276,7 @@ function collectArtifactFiles(
       root = parent;
     }
   }
-  return { root, files };
+  return { root, files, unreadable };
 }
 
 function tar(args: string[], cwd?: string): Promise<string> {
@@ -290,7 +304,21 @@ const uploadArtifact: Override = {
       ctx.log(`artifact name "${name}" is not usable as a file name`);
       return { ok: false };
     }
-    const { root, files } = collectArtifactFiles(ctx, inputs.path);
+    const { root, files, unreadable } = collectArtifactFiles(ctx, inputs.path);
+    // Nothing collected because nothing could be read is a different answer
+    // from nothing collected because nothing is there, and it is not one
+    // `if-no-files-found` is about: the step asked for files that exist. It
+    // happens when the job's container writes as root onto a filesystem whose
+    // permissions leave the runner's own user unable to walk back in, and it
+    // would otherwise be a green build that shipped an empty artifact.
+    if (files.length === 0 && unreadable.length > 0) {
+      ctx.log(`ERROR: cannot read ${unreadable[0]}: permission denied`);
+      ctx.log('The job wrote it as another user; nothing was uploaded.');
+      return { ok: false };
+    }
+    if (unreadable.length > 0) {
+      ctx.log(`WARNING: leaving out ${unreadable.length} path(s) this runner may not read, starting with ${unreadable[0]}`);
+    }
     if (files.length === 0) {
       const behavior = (inputs['if-no-files-found'] ?? 'warn').trim().toLowerCase();
       const message = `no files matched ${JSON.stringify((inputs.path ?? '').trim())}`;

@@ -1862,6 +1862,25 @@ YML
     echo "FAIL: the actions job did not succeed"; cat "$ACT_LOG"; exit 1; }
   PASS=$((PASS+1)); echo "ok: the whole actions job succeeds"
 
+  # upload-artifact reads what the job's container wrote, as the runner's own
+  # user. A container runs as root, and on a filesystem that forces a mode on
+  # every file it creates - some containers give /tmp one that leaves no
+  # execute bit for others - the runner cannot walk back into the directory the
+  # job just filled. The artifact would then be empty for a reason that is the
+  # filesystem's and not hubbit's, so probe for it the way the checks above
+  # probe for docker and for git-lfs, and say what is being skipped.
+  ART_PROBE="$TMP/artifact-probe"
+  mkdir -p "$ART_PROBE"
+  docker run --rm -v "$ART_PROBE:/probe" "$CI_IMAGE" \
+    sh -c 'mkdir -p /probe/d && echo x > /probe/d/f' > /dev/null 2>&1 || true
+  ART_READABLE=0
+  [ -r "$ART_PROBE/d/f" ] && ART_READABLE=1
+  # Removed from inside a container, since what root wrote there this user may
+  # not be able to delete.
+  docker run --rm -v "$ART_PROBE:/probe" "$CI_IMAGE" rm -rf /probe/d > /dev/null 2>&1 || true
+  rmdir "$ART_PROBE" 2>/dev/null || true
+
+  if [ "$ART_READABLE" = 1 ]; then
   run_workflow site.yml Site
   SITE_RUN="$RUN_N"
   [ -f "$RUNS/$SITE_RUN/artifacts/site.tar" ] || {
@@ -1923,6 +1942,9 @@ YML
     PASS=$((PASS+1)); echo "ok: actions fetched from a forge are cached on the runner"
   else
     echo "skip: no network; skipping the checks that fetch actions from a forge"
+  fi
+  else
+    echo "skip: this runner cannot read what a job container writes (the scratch filesystem forces modes that exclude it); skipping the artifact and site-deployment checks"
   fi
 
 else
