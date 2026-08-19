@@ -392,7 +392,14 @@ export function addComment(
   let id = (used.length ? Math.max(...used) : 0) + 1;
   for (let attempt = 0; attempt < 50; attempt++, id++) {
     const file = path.join(commentsDir, `${id}.md`);
-    if (fs.existsSync(file)) continue;
+    // Exclusive create is the allocation, as mkdir is for issue numbers: an
+    // existsSync test leaves a window in which two writers pick the same id,
+    // and the second write would then replace the first comment outright.
+    try {
+      fs.closeSync(fs.openSync(file, 'wx'));
+    } catch {
+      continue;
+    }
     writeDoc(file, { author: input.author, created: now }, body);
     writeDoc(path.join(dir, 'issue.md'), { ...doc.meta, updated: now }, doc.body);
     touchIssues(root, collection, repo);
