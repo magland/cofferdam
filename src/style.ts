@@ -38,6 +38,20 @@ code, pre, .mono { font-family: var(--font-mono); }
 .avatar svg { display: block; width: 100%; height: 100%; }
 .with-avatar { display: flex; align-items: center; gap: 8px; }
 
+/* The file finder: one box, and the tree under it. */
+.find-input {
+  width: 100%; padding: 8px 14px; font-size: 15px; font-family: inherit; margin-bottom: 12px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--input-bg); color: var(--fg);
+}
+.find-list { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.find-item {
+  display: flex; align-items: center; gap: 8px; padding: 6px 12px; color: var(--fg);
+  border-top: 1px solid var(--border-soft); font-family: var(--font-mono); font-size: 12px;
+}
+.find-item:first-child { border-top: none; }
+.find-item:hover { background: var(--surface); text-decoration: none; }
+.find-item .icon { margin-right: 0; }
+
 .list-filter {
   width: 320px; max-width: 100%; padding: 5px 12px; font-size: 14px; font-family: inherit;
   border: 1px solid var(--border); border-radius: var(--radius); background: var(--input-bg); color: var(--fg);

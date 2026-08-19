@@ -84,6 +84,7 @@ First start against a directory with no `vault.json` initializes one and prints 
 | `src/style.ts` | The single structural CSS string; every color and font is a `var(--…)` from the active theme |
 | `src/icons.ts` | The icon set: 16-pixel Octicons inlined as SVG, and the `icon()` wrapper |
 | `src/avatar.ts` | Identicons: the drawing a name gets in place of an uploaded picture |
+| `src/find.ts` | The file finder: every path at a ref, filtered in the browser |
 | `scripts/create-example.sh` | Builds the example vault, including its `vault.json` with the fixed dev user |
 | `scripts/smoke.sh` | The end-to-end smoke test |
 | `scripts/deploy-fly.sh` | Idempotent create-app/create-volume/deploy/print-token for Fly |
@@ -283,6 +284,7 @@ The interface deliberately reads as GitHub's, because that is the interface its 
 - **Menus are `<details>` elements** with the `dropdown` class: the summary is a button, the body is `.dropdown-menu`. The page script closes them on an outside click or Escape and filters long ones (`filterMenu`). The branch picker, the Code button, and the workflow dispatch form are all the same control.
 - **A file view is one element per line**, each with an `id` of `L<n>` and an anchor to it, so a reader can link to a line and the linked line is highlighted. Splitting highlighted code into lines is `highlightedLines()` in `src/render.ts`, which closes and reopens the spans highlight.js runs across line boundaries; it takes highlight.js output specifically and is not a general HTML splitter.
 - **A directory listing carries the last commit** for every entry: message and age, as on GitHub. That is one `git log -1` per entry (`GitRepo.lastCommits`), capped at 250 entries per page so an unusually wide directory degrades to a plain listing instead of a slow page.
+- **The file finder is the way people navigate a repository they know.** `/{collection}/{repo}/find/{ref}` renders every path at that ref and filters it in the browser by subsequence match, the t key reaches it, and Enter opens the first match. No search endpoint and no index: the trade is a page proportional to the tree, capped at 20,000 paths.
 - **Every name has a face.** `avatar()` in `src/avatar.ts` draws a GitHub-style identicon from a hash of the name: a 5 x 5 mirrored grid in one hue. No picture is uploaded and none is fetched from a third party, which is the point; a vault should not phone home to render a page.
 - **The repository root has an About panel** on the right, with the description, the documents a reader looks for (readme, license, site), and the commit, branch, and tag counts. It appears at the root only, as GitHub's does.
 

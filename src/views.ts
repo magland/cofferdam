@@ -136,6 +136,48 @@ function closeMenus(except) {
 }
 document.addEventListener('click', function (e) { closeMenus(e.target); });
 document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMenus(null); });
+// The file finder's matching: every character of the query in order, though
+// not necessarily together, so "srcmn" finds src/compute/mean.py. Matching is
+// done here rather than on the server because the whole list is already in
+// the page.
+function findMatch(hay, needle) {
+  var i = 0;
+  for (var j = 0; j < hay.length && i < needle.length; j++) {
+    if (hay.charCodeAt(j) === needle.charCodeAt(i)) i++;
+  }
+  return i === needle.length;
+}
+function filterFiles(input) {
+  var items = document.getElementById('find-list').children;
+  var q = input.value.trim().toLowerCase();
+  var shown = 0;
+  for (var i = 0; i < items.length; i++) {
+    var hit = q === '' || findMatch(items[i].textContent.toLowerCase(), q);
+    items[i].hidden = !hit;
+    if (hit) shown++;
+  }
+  document.getElementById('find-empty').hidden = shown !== 0;
+}
+// Enter opens the first match, Escape clears the box.
+function findKey(e, input) {
+  if (e.key === 'Escape') { input.value = ''; filterFiles(input); return; }
+  if (e.key !== 'Enter') return;
+  var items = document.getElementById('find-list').children;
+  for (var i = 0; i < items.length; i++) {
+    if (!items[i].hidden) { e.preventDefault(); location.href = items[i].href; return; }
+  }
+}
+// t goes to the file finder, as on GitHub, from any page offering it. A key
+// pressed while typing into something is a keystroke, not a shortcut.
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 't' || e.metaKey || e.ctrlKey || e.altKey) return;
+  var el = document.activeElement;
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+  var btn = document.querySelector('[data-find-url]');
+  if (!btn) return;
+  e.preventDefault();
+  location.href = btn.getAttribute('data-find-url');
+});
 // The filter box above a listing: hide the rows that do not match, and say so
 // when none do.
 function filterRows(input) {

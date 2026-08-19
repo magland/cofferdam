@@ -98,6 +98,15 @@ body_has "settings tab shown" '>Settings<'
 body_has "clone menu present" 'Clone with HTTP'
 body_has "clone menu carries the URL" "value=\"$BASE/demo/proj\""
 body_lacks "no collapsible cli hints" 'cmd-hint'
+body_has "go to file button" 'data-find-url'
+
+# ---- the file finder ----
+
+check "file finder" 200 -b "$JAR" "$BASE/demo/proj/find/main"
+body_has "finder lists a file" 'class="find-item" href="/demo/proj/blob/main/README.md"'
+check "file finder without a ref" 200 -b "$JAR" "$BASE/demo/proj/find"
+body_has "finder defaults to the default branch" 'href="/demo/proj/blob/main/README.md"'
+check "file finder at a missing ref" 404 -b "$JAR" "$BASE/demo/proj/find/nosuchbranch"
 
 check "csrf rejected on POST" 403 -b "$JAR" "$BASE/demo/proj/branches/create" \
   --data-urlencode csrf=bogus --data-urlencode name=x
