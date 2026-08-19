@@ -13,6 +13,7 @@ import { registerIssueApi } from './api/issues';
 import { registerPullApi } from './api/pulls';
 import { registerRepoApi } from './api/repos';
 import { registerAdminApi } from './api/admin';
+import { registerBackupApi } from './api/backup';
 import { registerCiRunApi } from './api/ci';
 import { registerReleaseApi } from './api/releases';
 import { registerWriteApi } from './api/write';
@@ -47,6 +48,9 @@ export function registerApi(
   if (engine) registerCiRunApi(app, root, authLimiter, engine);
   registerReleaseApi(app, root, authLimiter);
   registerAdminApi(app, root, authLimiter);
+  // Reading a whole vault out over HTTP, for `cofferdam backup`. Admin over the
+  // whole vault, and behind the same gate a file listing holds.
+  registerBackupApi(app, root, authLimiter, gates);
 
   // Both helpers live in src/api/auth.ts now that more than one file of routes
   // uses them; this closure only saves passing root at every call site.

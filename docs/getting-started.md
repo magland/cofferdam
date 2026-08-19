@@ -90,7 +90,7 @@ cofferdam user add alice --scope 'alice/*'
 
 What you now have is a vault anyone can read and only your users can write, at a URL you can send to someone. `cofferdam deploy fly my-vault-name` again deploys an update, `cofferdam deploy fly show my-vault-name` says what is running, and the disk, the machine size, and LFS objects in a bucket are flags on the deploy. All of that, and the costs and limits of running one machine against one volume, is in [Deploying a vault](deploying.md).
 
-Two things about a hosted vault are worth being deliberate about. It is readable by anyone who finds the URL, since reads are anonymous by design, so put in it what you are content for a stranger to read. And the vault directory, `/vault` on the volume, is the entire state: a backup is a copy of that directory, taken however you prefer to copy files off the machine, and there is nothing else to arrange.
+Two things about a hosted vault are worth being deliberate about. It is readable by anyone who finds the URL, since reads are anonymous by design, so put in it what you are content for a stranger to read. And the vault directory, `/vault` on the volume, is the entire state: a backup is a copy of that directory, and `cofferdam backup ~/backups/myvault` makes one over HTTP without a shell on the machine ([Backing up a vault](backup.md)). There is nothing else to arrange.
 
 ## 3. A domain of your own
 

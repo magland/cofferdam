@@ -255,6 +255,37 @@ Cancelling a run that is not in progress is 409. Dispatching requires the workfl
 
 **There is nothing behind `gh pr checks`.** cofferdam has no check suites and no commit statuses. The nearest answer is the runs whose sha matches the pull request's head, which is exactly what `cofferdam pr checks` computes.
 
+## Backing up a vault
+
+```
+GET  /api/backup/manifest?exclude=&hash=1       NDJSON: every file and repository in the vault
+POST /api/backup/fetch                          {paths: [...]}, answered as a length-prefixed stream
+```
+
+Two routes, together enough to pull a whole vault onto another disk. `cofferdam backup` is the client; [Backing up a vault](backup.md) describes it and what a backup does not promise. Both require admin scope over the whole vault, with an unrestricted token, since the manifest necessarily names `vault.json` and `.secret`, and both hold the same concurrency gate a file listing does, so a backup in progress cannot crowd out a push.
+
+The manifest streams NDJSON, so a large vault costs the server no more memory than a small one:
+
+```jsonl
+{"kind":"vault","lfs":"volume","excluded":[]}
+{"kind":"file","path":"vault.json","size":812,"mtime":1755600123456,"mode":384}
+{"kind":"repo","path":"alice/webapp.git","collection":"alice","repo":"webapp","refs":"3f9a...","packed":48213004}
+{"kind":"file","path":"alice/webapp.issues/7/issue.json","size":344,"mtime":1755600123456,"mode":420}
+{"kind":"end","files":9143,"bytes":1043221,"repos":12}
+```
+
+Paths are vault-relative and always POSIX-separated, and `mtime` is in milliseconds. `?hash=1` adds `sha256` to each file line, for `--checksum` runs and for `cofferdam backup verify`. `?exclude=` takes any of `runs`, `sites`, `lfs`, `secrets` and leaves those out. A repository is reported as `kind:"repo"` and its contents are deliberately *not* enumerated: git is their transport, and `refs` is a digest over every ref, what it points at, and where `HEAD` points, so a client can skip a repository nothing has changed in. The `end` line is what says the walk completed; a client that does not see one must not treat the manifest as the whole vault.
+
+`POST /api/backup/fetch` takes `{"paths": [...]}` and answers with the bytes of each, framed by a JSON line rather than packed into a tar:
+
+```
+<line: {"path":"alice/webapp.issues/7/issue.json","size":344}\n><344 bytes>
+<line: {"path":...,"size":...}\n><bytes>
+<line: {"end":true,"missing":["alice/webapp.issues/9/body.md"]}\n>
+```
+
+A length-prefixed stream needs no tar on either side, has no symlink, ownership, or path-traversal cases to get wrong, and lets a file that vanished between the manifest and the fetch be reported in the `end` line rather than aborting the transfer. That last case is not hypothetical: CI retention trims run history while a backup of it is in flight. A path that is not inside the vault, including anything with a `..` segment, is a `400` rather than a `missing` entry. One request may name at most 2000 paths and 64 MB of file, over which it is a `400` naming the limit and the client asks for fewer; a request naming a single path is exempt from the byte limit, so a large file is still fetchable.
+
 ## Runners
 
 Registering the runners a vault will hand jobs to. Note the plural: these are `/api/runners`, an ordinary admin surface authenticated by a user's token, and are not the runner protocol below.

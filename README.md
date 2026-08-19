@@ -68,7 +68,7 @@ A vault is a plain directory. Each subdirectory of it is a collection, and each 
     webapp.lfs/           (its Git LFS objects, when no bucket is configured)
 ```
 
-There is no database and no state outside this directory, so backing up a vault is `cp -a` and moving one to another machine is `rsync`. The server reads what is on disk on every request, so each part of a vault can be read, written, and grepped with ordinary tools while it runs. [The vault](docs/vault.md) describes the layout in full.
+There is no database and no state outside this directory, so backing up a vault is `cp -a` and moving one to another machine is `rsync`, where you have a shell. Where you do not, `cofferdam backup <dir>` pulls the same copy over HTTP, incrementally, into a directory that is itself a servable vault. The server reads what is on disk on every request, so each part of a vault can be read, written, and grepped with ordinary tools while it runs. [The vault](docs/vault.md) describes the layout in full, and [Backing up a vault](docs/backup.md) the copies.
 
 ## Documentation
 
@@ -77,6 +77,7 @@ There is no database and no state outside this directory, so backing up a vault 
 - [The command line](docs/cli.md): the `cofferdam` command, `cofferdam login`, pushing, importing, and the commands over repositories, issues, pull requests, releases, and runs
 - [Deploying a vault](docs/deploying.md): `cofferdam deploy fly`, a domain of your own, Docker, and automatic HTTPS with Caddy
 - [Workflows](docs/workflows.md): what runs today, runners, artifacts, and the divergences from GitHub
+- [Backing up a vault](docs/backup.md): `cofferdam backup`, snapshots and retention, and what a backup does not promise
 - [Git LFS](docs/lfs.md): storage backends, bucket configuration, and limitations
 - [The JSON API](docs/api.md): every route, its body, its response, and what it requires of the caller
 - [cofferdam for an agent](docs/agents.md): short enough to paste into a context window, including an honest list of what is not there

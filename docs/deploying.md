@@ -254,7 +254,7 @@ The server honors `X-Forwarded-*` headers when the vault says a proxy is in fron
 
 It is false by default, and deliberately so: `X-Forwarded-For` is supplied by the client, so on a vault exposed directly any visitor could claim any address, which defeats every per-address limit below and lets one attacker fill the limiter's key space. Set it only when a reverse proxy you control is the only way in. `cofferdam deploy fly` sets it for you, since Fly always terminates TLS in front.
 
-Backing up a vault is copying a directory. Moving it to another host, or from your laptop to the cloud, is copying it there. Note that a vault on the open internet is readable by anyone, so say so in your own deployment notes.
+Backing up a vault is copying a directory, and moving it to another host is copying it there, on a machine you have a shell on. On a Fly volume you have neither a shell in the ordinary sense nor rsync at the far end, so `cofferdam backup <dir>` pulls the copy over HTTP instead, incrementally, into a directory that is itself a servable vault: see [Backing up a vault](backup.md). It works the same way against a machine of your own, and is worth preferring there too, since it moves only what changed. Note that a vault on the open internet is readable by anyone, so say so in your own deployment notes.
 
 ## Limits
 

@@ -19,6 +19,7 @@ import { apiCommand } from './cli/api-cmd';
 import { issueCommands } from './cli/issue-cmd';
 import { prCommands } from './cli/pr-cmd';
 import { adminCommands } from './cli/admin-cmd';
+import { backupCommands } from './cli/backup-cmd';
 import { releaseCommands } from './cli/release-cmd';
 import { repoCommands } from './cli/repo-cmd';
 import { runCommands } from './cli/run-cmd';
@@ -56,6 +57,9 @@ Vault layout:
   <vault>/runners.json               registered runners (server-managed)
   <vault>/config.json                vault settings: theme, sites host, CI retention, limits
   <vault>/.secret                    session-cookie signing key (server-managed)
+
+Backing up a hosted vault:
+  cofferdam backup ~/backups/myvault --snapshot   incremental, over HTTP; see docs/backup.md
 
 Themes: ${themeNames().join(', ')} (default ${DEFAULT_THEME}). Pick one under
 Admin > Appearance in the web interface, or write config.json by hand.`;
@@ -599,6 +603,7 @@ and COFFERDAM_RUNNER_TOKEN supplies the token instead of --runner-token.`,
   ...runCommands,
   ...releaseCommands,
   ...adminCommands,
+  ...backupCommands,
   apiCommand,
   {
     path: ['commands'],

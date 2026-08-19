@@ -233,6 +233,20 @@ Tokens are named by an id rather than by their hash, and neither a token nor its
 
 `network.trustProxy` and the `limits` block are not reachable here. They are read once when the server starts, since they hold live counters that cannot be rebuilt per request, so a command that changed them would report a change the running server had not made. Edit `config.json` in the vault and restart.
 
+### Backing up a vault
+
+```bash
+cofferdam backup ~/backups/myvault              # incremental sync over HTTP
+cofferdam backup ~/backups/myvault --snapshot   # ...then snapshot, then prune
+cofferdam backup list ~/backups/myvault
+cofferdam backup verify ~/backups/myvault
+cofferdam backup prune ~/backups/myvault
+```
+
+A vault is a directory, so a copy of one is a directory too, and `cofferdam backup` pulls it over HTTP: no shell on the server, no flyctl, no rsync at the far end. The backup directory is itself a vault, so restoring is `cofferdam serve ~/backups/myvault/current`. Repositories come across as mirrors and a repository nothing was pushed to is skipped without a request; everything else is compared by size and modification time and fetched only where it differs. The token needs admin scope over the whole vault, since the copy includes `vault.json`.
+
+The vault URL, the exclusions, and the retention policy are recorded in the backup directory, so after the first run a cron entry is the command and a directory. [Backing up a vault](backup.md) has the options, the snapshot and hardlink rules, and an honest account of what a backup does not promise.
+
 ### Reaching any route: `cofferdam api`
 
 `cofferdam api` sends a request to any route of the JSON API and prints what comes back, so a capability with no typed command of its own is still one line away:

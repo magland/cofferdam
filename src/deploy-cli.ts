@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { clearLogin, credentialTarget, loadLogin, readCredential, rejectCredential } from './credentials';
+import { backupLineFor } from './cli/backup-cmd';
 import { mintToken } from './vault';
 
 // `cofferdam deploy fly`: put a vault on Fly.io from one command, and deploy
@@ -743,6 +744,11 @@ export async function deployShowCmd(args: string[], usage: () => never): Promise
   console.log(`  vault     ${vault}`);
   const saved = loadLogin();
   if (saved && saved.host.replace(/\/+$/, '') === url) console.log('  login     this is the vault cofferdam commands use');
+  // Fly's own volume snapshots live at the same provider as the volume, so they
+  // are a complement to a backup on a disk of your own rather than a substitute
+  // for one. Whether this machine keeps such a copy is worth one line.
+  const backup = backupLineFor(url);
+  console.log(backup ? `  backup    ${backup}` : '  backup    none on this machine (cofferdam backup <dir>)');
   console.log('');
   console.log(`  fly logs -a ${app}`);
 }

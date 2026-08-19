@@ -59,6 +59,7 @@ run       list view watch cancel rerun download
 user      add grant list view delete token list token revoke
 config    view set
 collection add list delete
+backup    <dir>             pull a whole vault onto this machine; list verify prune
 api       <path>            any route, for anything without a typed command
 ```
 
@@ -130,5 +131,6 @@ The most useful part of this document. Do not go looking for these; they are not
 - **No secrets for workflows** yet, and no scoped token handed to a run, so a workflow cannot call the vault's API as itself.
 - **No `actions/cache`, no Docker actions, no `container:` jobs, no service containers.**
 - **No organizations, no teams.** A user has push scope globs and admin scope globs, and that is the whole model.
+- **No `cofferdam restore`.** `cofferdam backup <dir>` makes a copy whose `<dir>/current` is itself a vault, so restoring is `cofferdam serve <dir>/current` or copying that directory onto a host. Nothing reconciles a backup against a running vault.
 
 Where a capability is missing, the honest workaround is usually git itself: clone, push, and let the vault notice.

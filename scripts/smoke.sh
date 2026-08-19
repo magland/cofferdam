@@ -6,7 +6,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# The suite starts five servers over its life, on PORT and the four ports above
+# The suite starts six servers over its life, on PORT and the five ports above
 # it. Those ports have to sit below the kernel's ephemeral range (32768-60999 on
 # Linux by default, and readable from /proc), because the suite opens thousands
 # of outgoing connections and any of them can be given a port in that range as
@@ -19,7 +19,7 @@ pick_port_block() {
   node -e '
     const net = require("net");
     const fs = require("fs");
-    const span = 5;
+    const span = 6;
     let low = 32768;
     try {
       const parsed = parseInt(fs.readFileSync("/proc/sys/net/ipv4/ip_local_port_range", "utf8").split(/\s+/)[0], 10);
@@ -133,11 +133,13 @@ SERVER_PID=""
 FORGE_PID=""
 PRESET_PID=""
 LIMIT_PID=""
+BACKUP_PID=""
 cleanup() {
   [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true
   [ -n "$FORGE_PID" ] && kill "$FORGE_PID" 2>/dev/null || true
   [ -n "$PRESET_PID" ] && kill "$PRESET_PID" 2>/dev/null || true
   [ -n "${LIMIT_PID:-}" ] && kill "$LIMIT_PID" 2>/dev/null || true
+  [ -n "${BACKUP_PID:-}" ] && kill "$BACKUP_PID" 2>/dev/null || true
   rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -3217,6 +3219,200 @@ CSRF="$(csrf_of)"
 check "remove the runner" 302 -b "$JAR" "$BASE/admin/runners/smoke/remove" --data-urlencode "csrf=$CSRF"
 check "the removed runner's token stops working" 401 -H "Authorization: Bearer $RUNNER_TOKEN" \
   "$BASE/api/runner/whoami"
+
+# ---- backing up the vault to a directory of our own ----
+
+# The whole point of this command is that it needs nothing but HTTP, so it is
+# checked here against the same server everything else uses. Three things are
+# worth checking beyond "it copied something": that the copy is a vault a server
+# will serve, that a second run moves almost nothing, and that a deletion in the
+# vault leaves the deleted thing in a snapshot and nowhere else.
+
+# The suite logged out further up, so these name the vault and the token. After a
+# `cofferdam login` neither is needed, which is what makes a cron entry the
+# command and a directory.
+cofferbk() { cli "$@" --host "$BASE" --token "$OWNER_TOKEN"; }
+
+BK="$TMP/backup1"
+BACKUP_PORT=$((PORT + 5))
+BACKUP_BASE="http://127.0.0.1:$BACKUP_PORT"
+
+# The routes carry vault.json and .secret, so nothing short of admin over the
+# whole vault may call them. narrow has push scope over nothing and no admin.
+api_as "the manifest refuses a token without whole-vault admin" 403 "$NARROW_TOKEN" "$BASE/api/backup/manifest"
+api_as "and so does the fetch" 403 "$NARROW_TOKEN" -X POST -H "$JSON_CT" \
+  --data '{"paths":["vault.json"]}' "$BASE/api/backup/fetch"
+api "a path that leaves the vault is refused" 400 -X POST -H "$JSON_CT" \
+  --data '{"paths":["../../etc/passwd"]}' "$BASE/api/backup/fetch"
+body_has "saying it is not a path inside the vault" 'not a path inside the vault'
+api "an absolute path too" 400 -X POST -H "$JSON_CT" \
+  --data '{"paths":["/etc/passwd"]}' "$BASE/api/backup/fetch"
+api "and an unknown exclusion is named rather than ignored" 400 "$BASE/api/backup/manifest?exclude=nosuchthing"
+
+# A repository of its own to delete further down, so that the deletion checks
+# disturb nothing the rest of the suite still needs.
+run_ok "a repository to delete later" cofferbk repo create demo/gone --description 'here to be deleted'
+run_ok "a first backup of the whole vault" cofferbk backup "$BK"
+dir_exists "the backup holds a mirror of a repository" "$BK/current/demo/proj.git"
+dir_exists "and one of a repository pushed into the vault" "$BK/current/pushed/created.git"
+[ -f "$BK/current/vault.json" ] || { echo "FAIL: the backup has no vault.json"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the backup carries the vault's own state files"
+[ -f "$BK/backup.json" ] || { echo "FAIL: no backup.json in the backup directory"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the backup records what it is a backup of"
+# A mirror clone writes git's own default description and its own config, so
+# these two are the ones a backup has to carry itself.
+cmp -s "$VAULT/demo/proj.git/description" "$BK/current/demo/proj.git/description" \
+  || { echo "FAIL: the mirror did not get the repository's description"; \
+       echo "vault:  [$(cat "$VAULT/demo/proj.git/description" 2>&1)]"; \
+       echo "backup: [$(cat "$BK/current/demo/proj.git/description" 2>&1)]"; exit 1; }
+PASS=$((PASS+1)); echo "ok: a repository's description came across"
+grep -q 'denyDeletes' "$BK/current/pushed/created.git/config" \
+  || { echo "FAIL: the mirror did not get the repository's receive settings"; exit 1; }
+PASS=$((PASS+1)); echo "ok: a repository's push protections came across"
+
+# The restore path, which is the reason the backup has this shape: serving the
+# copy, with no step in between.
+node dist/index.js serve "$BK/current" --port "$BACKUP_PORT" > "$TMP/backup-server.log" 2>&1 &
+BACKUP_PID=$!
+started=0
+for _ in $(seq 1 50); do
+  if curl -s -o /dev/null "$BACKUP_BASE/"; then started=1; break; fi
+  sleep 0.2
+done
+[ "$started" = 1 ] || { echo "FAIL: the backup did not serve"; cat "$TMP/backup-server.log"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the backup directory serves as a vault"
+check "a repository browses in the backup" 200 "$BACKUP_BASE/demo/proj"
+body_has "with the description the vault had" 'A refreshed description'
+check "its file tree is there" 200 "$BACKUP_BASE/demo/proj/tree/main"
+check "its issues came across" 200 "$BACKUP_BASE/demo/proj/issues/1"
+check "its pull requests too" 200 "$BACKUP_BASE/demo/proj/pulls/1"
+check "and a release" 200 "$BACKUP_BASE/demo/proj/releases/tag/v2.0.0"
+check "a published site is in the backup" 200 "$BACKUP_BASE/pushed/created/site/"
+body_has "with its content" 'site ok'
+kill "$BACKUP_PID" 2>/dev/null || true
+wait "$BACKUP_PID" 2>/dev/null || true
+BACKUP_PID=""
+
+# A snapshot, before the vault is changed, so there is something to compare
+# against further down.
+run_ok "a snapshot after a sync" cofferbk backup "$BK" --snapshot
+SNAP1="$(ls "$BK/snapshots" | head -1)"
+[ -n "$SNAP1" ] || { echo "FAIL: --snapshot took no snapshot"; exit 1; }
+PASS=$((PASS+1)); echo "ok: a snapshot was taken ($SNAP1)"
+dir_exists "the snapshot is a vault of its own" "$BK/snapshots/$SNAP1/demo/proj.git"
+
+# Now change the vault in each of the ways a backup has to notice: a commit
+# (which moves a ref), an issue, a comment, and a release.
+run_ok "commit a file, moving a ref" \
+  cofferbk file write backup-note.md --repo demo/proj --body "written for the backup check" --message "A change"
+run_ok "open an issue" cofferbk issue create --repo demo/proj --title "an issue to back up" --body "body" --json=number
+BACKUP_ISSUE="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).number)' "$BODY")"
+[ -n "$BACKUP_ISSUE" ] || { echo "FAIL: no issue number from issue create"; exit 1; }
+run_ok "comment on it" cofferbk issue comment 1 --repo demo/proj --body "a comment to back up"
+run_ok "and cut a release" cofferbk release create v2.0.0 --repo demo/proj --title "Backed up" --notes "notes"
+
+# The second run is the one that has to be cheap: only the repository that moved
+# is fetched, the rest are skipped without a request, and only the files that
+# changed come across.
+run_ok "a second backup, incremental" cofferbk backup "$BK" --json
+node -e '
+  const fs = require("fs");
+  const s = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  if (s.repos.skipped < 1) { console.error("no repository was skipped: " + JSON.stringify(s.repos)); process.exit(1); }
+  if (s.repos.fetched < 1) { console.error("the changed repository was not fetched"); process.exit(1); }
+  if (s.repos.cloned !== 0) { console.error("something was cloned again: " + JSON.stringify(s.repos)); process.exit(1); }
+  if (s.files.bytes > 100000) { console.error("the second run moved " + s.files.bytes + " bytes"); process.exit(1); }
+' "$BODY" || { echo "FAIL: the second backup was not incremental"; head -c 2000 "$BODY"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the second run skipped the quiet repositories and moved almost nothing"
+grep -rq "an issue to back up" "$BK/current/demo/proj.issues" \
+  || { echo "FAIL: the new issue is not in the backup"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the new issue is in the backup"
+grep -rq "a comment to back up" "$BK/current/demo/proj.issues" \
+  || { echo "FAIL: the new comment is not in the backup"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the new comment is in the backup"
+grep -rq "Backed up" "$BK/current/demo/proj.releases" \
+  || { echo "FAIL: the new release is not in the backup"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the new release is in the backup"
+run_ok "the mirror has the new commit" \
+  git --git-dir="$BK/current/demo/proj.git" cat-file -e "main:backup-note.md"
+
+# A second snapshot on the same UTC day replaces the first, because retention
+# keeps the newest snapshot of each day rather than every snapshot of it. That is
+# what grandfather-father-son means, and it is worth a check of its own: a person
+# running this twice in an afternoon should not be surprised later.
+run_ok "a second snapshot" cofferbk backup "$BK" --snapshot
+SNAP2="$(ls "$BK/snapshots" | tail -1)"
+SNAPS="$(ls "$BK/snapshots" | wc -l)"
+[ "$SNAPS" = 1 ] || { echo "FAIL: expected one snapshot per day, found $SNAPS"; ls "$BK/snapshots"; exit 1; }
+PASS=$((PASS+1)); echo "ok: a second snapshot the same day replaces the first ($SNAP2)"
+dir_exists "and it is a vault too" "$BK/snapshots/$SNAP2/demo/proj.git"
+
+# A snapshot costs inodes and not bytes. Measured by asking du about current/ and
+# the snapshot together, since du counts a shared inode once: whatever the
+# snapshot adds over current/ alone is what it really cost.
+CURRENT_KB="$(du -s -k "$BK/current" | cut -f1)"
+BOTH_KB="$(du -s -c -k "$BK/current" "$BK/snapshots/$SNAP2" | tail -1 | cut -f1)"
+SNAP_KB=$((BOTH_KB - CURRENT_KB))
+# Directory entries are real, so this is not zero; it is a small fraction of a
+# copy, which is the claim being checked.
+[ "$SNAP_KB" -lt "$((CURRENT_KB / 2))" ] \
+  || { echo "FAIL: the snapshot cost ${SNAP_KB}kB beside a ${CURRENT_KB}kB current/, so it copied data"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the snapshot cost ${SNAP_KB}kB beside a ${CURRENT_KB}kB current/"
+LINKS="$(stat -c '%h' "$BK/current/vault.json")"
+[ "$LINKS" -ge 2 ] || { echo "FAIL: vault.json has $LINKS link, so the snapshot copied it instead of linking it"; exit 1; }
+PASS=$((PASS+1)); echo "ok: a snapshot hardlinks rather than copies (vault.json has $LINKS links)"
+
+# A deletion in the vault reaches current/ and stops there: the snapshots are
+# the only place deleted data survives, which is what retention is for.
+run_ok "delete the throwaway repository from the vault" cofferbk repo delete demo/gone --yes
+rm -rf "$VAULT/demo/proj.issues/$BACKUP_ISSUE"
+run_ok "back up after the deletions" cofferbk backup "$BK"
+[ ! -e "$BK/current/demo/gone.git" ] || { echo "FAIL: a deleted repository is still in current/"; exit 1; }
+PASS=$((PASS+1)); echo "ok: a repository deleted in the vault is gone from current/"
+[ ! -e "$BK/current/demo/proj.issues/$BACKUP_ISSUE" ] || { echo "FAIL: a deleted issue is still in current/"; exit 1; }
+PASS=$((PASS+1)); echo "ok: a deleted issue is gone from current/"
+dir_exists "but the deleted repository is still in the snapshot" "$BK/snapshots/$SNAP2/demo/gone.git"
+[ -e "$BK/snapshots/$SNAP2/demo/proj.issues/$BACKUP_ISSUE" ] || { echo "FAIL: the deleted issue is not in the snapshot either"; exit 1; }
+PASS=$((PASS+1)); echo "ok: and so is the deleted issue"
+
+run_ok "backup list shows the snapshots" cli backup list "$BK"
+body_has "naming one" "$SNAP2"
+run_ok "backup verify is clean" cofferbk backup verify "$BK"
+body_has "saying what it checked" 'check out against'
+
+# What verify is for: a copy that no longer matches the vault. Both halves are
+# checked, since they are found by different means.
+printf 'corrupted\n' >> "$BK/current/vault.json"
+run_code "verify reports a file that no longer matches" 1 cofferbk backup verify "$BK"
+body_has "naming the file" 'vault.json'
+# And the sync repairs it, because change detection looks at the copy on disk
+# and not only at what the last run recorded.
+run_ok "the next run repairs it" cofferbk backup "$BK"
+run_ok "and verify is clean again" cofferbk backup verify "$BK"
+
+# Retention, applied without syncing. Keeping one daily snapshot leaves one,
+# since both snapshots here were taken on the same UTC day.
+run_ok "prune to one daily snapshot" cli backup prune "$BK" --keep-daily 1 --keep-weekly 0 --keep-monthly 0
+[ "$(ls "$BK/snapshots" | wc -l)" = 1 ] || { echo "FAIL: prune left $(ls "$BK/snapshots" | wc -l) snapshots"; exit 1; }
+PASS=$((PASS+1)); echo "ok: prune applied the retention policy"
+
+# Two runs must not interleave, so a lock nobody is holding is broken and a lock
+# somebody is holding is a conflict.
+printf '{"pid":1,"host":"%s","started":"now"}\n' "$(hostname)" > "$BK/.lock"
+run_code "a second concurrent run exits 5" 5 cofferbk backup "$BK"
+err_has "saying another backup is running" 'Another backup is running'
+rm -f "$BK/.lock"
+printf '{"pid":4194303,"host":"%s","started":"then"}\n' "$(hostname)" > "$BK/.lock"
+run_ok "a stale lock is broken with a warning" cofferbk backup "$BK"
+body_has "which says so" 'stale lock'
+
+# An exclusion is recorded, so a later run does not have to repeat it, and it
+# removes what it excludes from a copy that already had it.
+run_ok "a backup that leaves the sites out" cofferbk backup "$BK" --no-sites
+[ ! -e "$BK/current/pushed/created.site" ] || { echo "FAIL: --no-sites left the site in the backup"; exit 1; }
+PASS=$((PASS+1)); echo "ok: --no-sites removed the site from current/"
+run_ok "and the next run remembers" cli backup list "$BK"
+body_has "recording the exclusion" 'excluded *sites'
 
 # ---- deleting a repository takes its run history with it ----
 
