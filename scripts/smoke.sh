@@ -6,7 +6,45 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-PORT="${SMOKE_PORT:-$((RANDOM % 2000 + 42000))}"
+# The suite starts five servers over its life, on PORT and the four ports above
+# it. Those ports have to sit below the kernel's ephemeral range (32768-60999 on
+# Linux by default, and readable from /proc), because the suite opens thousands
+# of outgoing connections and any of them can be given a port in that range as
+# its source. A listening port picked from inside the range is then a race: the
+# port is free when it is chosen and taken by a curl or a git fetch by the time a
+# server binds it, which surfaces as an EADDRINUSE unrelated to anything under
+# test. Each port of the block is also probed before use, since a port under the
+# range may still belong to something else on the machine.
+pick_port_block() {
+  node -e '
+    const net = require("net");
+    const fs = require("fs");
+    const span = 5;
+    let low = 32768;
+    try {
+      const parsed = parseInt(fs.readFileSync("/proc/sys/net/ipv4/ip_local_port_range", "utf8").split(/\s+/)[0], 10);
+      if (parsed > 0) low = parsed;
+    } catch {}
+    const min = 20000;
+    const max = Math.max(min + 1000, low - span);
+    const free = (port) => new Promise((resolve) => {
+      const probe = net.createServer();
+      probe.once("error", () => resolve(false));
+      probe.listen(port, "127.0.0.1", () => probe.close(() => resolve(true)));
+    });
+    (async () => {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const base = min + Math.floor(Math.random() * (max - min));
+        let ok = true;
+        for (let k = 0; k < span && ok; k++) ok = await free(base + k);
+        if (ok) { console.log(base); return; }
+      }
+      process.exit(1);
+    })();
+  '
+}
+PORT="${SMOKE_PORT:-$(pick_port_block)}"
+[ -n "$PORT" ] || { echo "FAIL: no free block of ports to run the servers on"; exit 1; }
 BASE="http://127.0.0.1:$PORT"
 # The scratch tree needs two things from its filesystem, and a container is
 # not guaranteed to offer both:
