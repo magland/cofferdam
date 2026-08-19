@@ -47,6 +47,7 @@ First start against a directory with no `vault.json` initializes one and prints 
 | `src/lfsstore.ts` | LFS object storage: the interface, the local and s3 backends, transfer-URL signing, backend selection from the environment |
 | `src/pointer.ts` | Strict LFS pointer-file parser, used by the browse and write-operation routes |
 | `src/api.ts` | Bearer-token JSON API used by the CLI |
+| `src/git.ts` | `execGit` and `GitRepo`: every read the interface makes of a repository, and the ref/path/sha validators the routes check against |
 | `src/ci/expr.ts` | The `${{ }}` expression language; used by the server and the runner alike |
 | `src/ci/workflow.ts` | Workflow-file parsing and normalization, and the branch/tag/path filter matcher |
 | `src/ci/engine.ts` | The CI planner and scheduler (3.12): discovery, matrix, `needs`, concurrency, leases |
@@ -71,6 +72,7 @@ First start against a directory with no `vault.json` initializes one and prints 
 | `src/ops.ts` | The shared write-operations layer (section 3.5); enforces no authorization itself |
 | `src/session.ts` | Signed-cookie sessions, `.secret` management, `Viewer`, CSRF check |
 | `src/vault.ts` | `vault.json` load with mtime+size stat cache, token hashing/minting, glob matching, authenticate, `canPush`, `canAdmin`, bootstrap |
+| `src/credentials.ts` | The client side of authentication: `hubbit login`/`logout` talking to git's own credential store, so clone, fetch, push, and git-lfs stop asking. No vault state |
 | `src/config.ts` | `config.json` load/save (vault settings: the theme, and CI run retention) |
 | `src/themes.ts` | The theme set, the active-theme state, and the custom-property block each theme emits |
 | `src/scan.ts` | Vault directory scanning, collection/repo name validation, reserved names, site dir lookup |
@@ -80,15 +82,15 @@ First start against a directory with no `vault.json` initializes one and prints 
 | `src/markdown.ts` | Markdown rendering (section 3.9): markdown-it, KaTeX, highlight.js, the allowlist sanitizer, and the slot mechanism |
 | `src/md-plugins.d.ts` | Ambient declarations for the three markdown-it plugins that ship without types |
 | `src/render.ts` | highlight.js by extension, HTML escaping, binary sniffing, size and date formatting |
+| `src/logo.ts` | The mark and the logotype, drawn as SVG paths so the name needs no font and no static file |
 | `src/diff.ts` | Unified-diff to HTML (line classification, per-file boxes) |
 | `src/style.ts` | The single structural CSS string; every color and font is a `var(--…)` from the active theme |
 | `src/icons.ts` | The icon set: 16-pixel Octicons inlined as SVG, and the `icon()` wrapper |
-| `src/find.ts` | Finding things in a repository: the file finder and the search route |
+| `src/find.ts` | Finding things in a repository: the file finder (every path at a ref, filtered in the browser) and the text search route |
 | `src/releases.ts` | Releases: the store under `<repo>.releases/`, the pages, and the write routes |
 | `src/atom.ts` | Atom feed construction, shared by the release and history feeds |
 | `src/avatar.ts` | Identicons: the drawing a name gets in place of an uploaded picture |
 | `src/languages.ts` | The language breakdown: Linguist's names and colours by extension, and the byte shares the About panel's bar is drawn from |
-| `src/find.ts` | The file finder: every path at a ref, filtered in the browser |
 | `src/compare.ts` | Comparing two revisions: the route and its page |
 | `src/issues.ts` | The issue store: `<repo>.issues/` on disk, and the validation over it |
 | `src/issueweb.ts` | The issue pages and their operations |
@@ -111,6 +113,7 @@ Read routes (anonymous):
 | `GET /:collection/:repo/commits/:ref[/*path]?author=` | History (paginated), narrowed to a path and to an author when either is given (`-F`, so both are literal) |
 | `GET /:collection/:repo/commit/:sha` | The diff view for one commit |
 | `GET /:collection/:repo/search?q=&ref=` | Literal text search over the files at a ref (`git grep`, fixed strings, bounded in results and in time); an unknown ref falls back to the default branch |
+| `GET /:collection/:repo/find[/:ref]` | The file finder: every path at the ref (capped at 20,000), filtered in the browser as you type; without a ref, the default branch |
 | `GET /:collection/:repo/find[/:ref]` | The file finder: every path at a ref, filtered in the browser |
 | `GET /:collection/:repo/blame/:ref/*path` | Blame for one text file; binary or over-large files redirect to the blob page |
 | `GET /:collection/:repo/releases`, `releases/tag/*` | Releases: notes attached to a tag, from `<repo>.releases/<tag>.md` |
