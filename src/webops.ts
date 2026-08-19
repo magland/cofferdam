@@ -8,7 +8,7 @@ import { THEMES, findTheme, setActiveTheme } from './themes';
 import * as forms from './forms';
 import * as ops from './ops';
 import { OpError } from './ops';
-import { findRepo, isValidName, listCollections, repoDescription } from './scan';
+import { findRepo, isValidName, listCollections, repoDescription, reservedRepoSuffix } from './scan';
 import {
   Viewer,
   checkCsrf,
@@ -301,6 +301,11 @@ export function registerWebOps(
         rerender(400, 'Collection and repository names may use letters, digits, dot, underscore, and dash, and must not be reserved words.');
         return;
       }
+      const reserved = reservedRepoSuffix(name);
+      if (reserved) {
+        rerender(400, `A repository name may not end in ${reserved}, which is reserved for the directories a repository keeps beside it.`);
+        return;
+      }
       if (!canPush(viewer.auth, collection, name)) {
         rerender(403, `Your push scope does not cover ${collection}/${name}.`);
         return;
@@ -309,7 +314,20 @@ export function registerWebOps(
         rerender(409, `Repository ${collection}/${name} already exists.`);
         return;
       }
-      const repo = await ops.createRepo(root, collection, name);
+      // The checks above answer every refusal this form can provoke, so the
+      // ops layer's own are a backstop. Rendered rather than thrown all the
+      // same: a backstop that reaches the reader as a 500 is one that says the
+      // server broke when what happened is that it declined.
+      let repo;
+      try {
+        repo = await ops.createRepo(root, collection, name);
+      } catch (e) {
+        if (e instanceof OpError) {
+          rerender(e.kind === 'exists' ? 409 : 400, e.message);
+          return;
+        }
+        throw e;
+      }
       if (description) ops.setDescription(repo.dir, description);
       if (field(req, 'init') === '1') {
         const sha = await ops.commitFileChange(repo.dir, {

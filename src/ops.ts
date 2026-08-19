@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { GitRepo, execGit, execGitStatus, isValidRefName, isValidRepoPath, isValidSha } from './git';
 import type { LfsStore } from './lfsstore';
-import { displayName, findRepo, isValidName } from './scan';
+import { displayName, findRepo, isValidName, repoSiblingSuffixes, reservedRepoSuffix } from './scan';
 
 // The shared write-operations layer. Every function takes explicit arguments
 // and enforces no authorization: the route layer knows the actor and decides.
@@ -52,8 +52,23 @@ export function createCollection(root: string, name: string): string {
   return dir;
 }
 
+/**
+ * Refuse a name that would place a new repository on top of the directories
+ * another repository keeps beside it. Creation is the only place this is
+ * asked: a repository that already carries such a name goes on working.
+ */
+function checkNewRepoName(name: string): void {
+  const suffix = reservedRepoSuffix(name);
+  if (suffix) {
+    throw new OpError(
+      `a repository may not be named to end in ${suffix}, which is reserved for the directories a repository keeps beside it`
+    );
+  }
+}
+
 export async function createRepo(root: string, collection: string, name: string): Promise<GitRepo> {
   if (!isValidName(collection) || !isValidName(name)) throw new OpError('invalid collection or repository name');
+  checkNewRepoName(name);
   fs.mkdirSync(path.join(root, collection), { recursive: true });
   const dir = path.join(root, collection, `${name}.git`);
   await execGit(root, ['init', '--bare', '--initial-branch=main', dir]);
@@ -88,6 +103,7 @@ export async function forkRepo(
   if (!isValidName(toCollection) || !isValidName(toName)) {
     throw new OpError('invalid collection or repository name');
   }
+  checkNewRepoName(toName);
   if (toCollection === collection && toName === name) {
     throw new OpError('a repository cannot be forked onto itself');
   }
@@ -507,18 +523,6 @@ export function containedIn(rootReal: string, target: string): boolean {
   return real.startsWith(rootReal + path.sep);
 }
 
-// The directories a repository accumulates beside its bare repository, by the
-// suffix each one carries. Every feature has its own helper for the directory
-// it owns (siteDir, runsDir, issuesDir, pullsDir, releasesDir), but rename and
-// delete are the two places that need the whole set, and a set spelled out in
-// two places is a set one of them falls behind on. The list therefore lives
-// here, where both read it, so a sibling added later is added once.
-//
-// LFS objects are not in the list. Without a bucket they do sit in a sibling
-// <repo>.lfs, but with one they do not sit on disk at all, so the store is
-// asked to move or drop them rather than having its path assumed.
-export const repoSiblingSuffixes = ['.site', '.runs', '.issues', '.pulls', '.releases'];
-
 function siblingDir(root: string, collection: string, name: string, suffix: string): string {
   return path.join(root, collection, `${displayName(name)}${suffix}`);
 }
@@ -551,6 +555,7 @@ export async function renameRepo(
   if (!isValidName(toCollection) || !isValidName(toName)) {
     throw new OpError('invalid collection or repository name');
   }
+  checkNewRepoName(toName);
   if (toCollection === collection && toName === name) throw new OpError('that is already its name', 'nochange');
   if (findRepo(root, toCollection, toName)) {
     throw new OpError(`${toCollection}/${toName} already exists`, 'exists');

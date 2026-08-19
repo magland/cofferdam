@@ -25,6 +25,52 @@ export function isValidName(name: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) && !name.includes('..');
 }
 
+// The directories a repository accumulates beside its bare repository, by the
+// suffix each one carries. Every feature has its own helper for the directory
+// it owns (siteDir, runsDir, issuesDir, pullsDir, releasesDir), but rename and
+// delete are the two places that need the whole set, and a set spelled out in
+// two places is a set one of them falls behind on. The list therefore lives
+// here, beside the rest of what may and may not be a name, so a sibling added
+// later is added once and is refused as a new repository's name for free.
+//
+// LFS objects are not in the list. Without a bucket they do sit in a sibling
+// <repo>.lfs, but with one they do not sit on disk at all, so the store is
+// asked to move or drop them rather than having its path assumed.
+export const repoSiblingSuffixes = ['.site', '.runs', '.issues', '.pulls', '.releases'];
+
+// Suffixes a repository may not be created under. A repository named
+// webapp.site would land on exactly the path the repository webapp keeps its
+// site in, so without this a user with push scope could shadow another
+// repository's site, or have their own issues served as that repository's.
+// The list is the siblings plus two the siblings do not name: .lfs, which is
+// where LFS objects sit when no bucket is configured, and .git, the ordinary
+// on-disk spelling of a bare repository, since displayName would resolve a
+// new webapp.git back to webapp. Compared case-insensitively, because a
+// case-insensitive filesystem would collide where a case-sensitive one would
+// not, and the refusal should not depend on which one is underneath.
+const reservedRepoSuffixes = [...repoSiblingSuffixes, '.lfs', '.git'];
+
+/**
+ * The reserved suffix a proposed repository name ends in, or null if it ends
+ * in none. Callers report the suffix, since a name is much easier to fix when
+ * the refusal says which part of it is the problem.
+ */
+export function reservedRepoSuffix(name: string): string | null {
+  const lower = name.toLowerCase();
+  return reservedRepoSuffixes.find((s) => lower.endsWith(s)) ?? null;
+}
+
+/**
+ * Whether a repository may be created under this name. This is isValidName
+ * plus the sibling suffixes, and it is asked only where a repository comes
+ * into being. Reading is deliberately more permissive: a repository created
+ * before this check existed keeps working, and listRepoDirs still has to
+ * accept the .git suffix its directory entries carry.
+ */
+export function isValidNewRepoName(name: string): boolean {
+  return isValidName(name) && reservedRepoSuffix(name) === null;
+}
+
 export function isBareRepo(dir: string): boolean {
   try {
     return (

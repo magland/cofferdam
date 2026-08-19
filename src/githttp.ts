@@ -4,7 +4,7 @@ import * as zlib from 'zlib';
 import { CiEngine } from './ci/engine';
 import { GitRepo, execGit } from './git';
 import { createRepo } from './ops';
-import { displayName, findRepo, isValidName } from './scan';
+import { displayName, findRepo, isValidName, reservedRepoSuffix } from './scan';
 import { AuthResult, authenticate, canPush, loadVault } from './vault';
 import { ah } from './web';
 
@@ -186,7 +186,20 @@ export function registerGitHttp(app: Express, root: string, engine?: CiEngine): 
         const auth = requirePushAuth(req, res, collectionName, repoName);
         if (!auth) return;
         let repo = findRepo(root, collectionName, req.params.repo);
-        if (!repo) repo = await createRepo(root, collectionName, repoName);
+        if (!repo) {
+          // Push-to-create, so the name has to survive the same check the web
+          // form applies. An existing repository is served whatever it is
+          // called; only a new one is refused.
+          const reserved = reservedRepoSuffix(repoName);
+          if (reserved) {
+            res
+              .status(400)
+              .type('text/plain')
+              .send(`repository names may not end in ${reserved}, which is reserved for the directories a repository keeps beside it\n`);
+            return;
+          }
+          repo = await createRepo(root, collectionName, repoName);
+        }
         advertise(req, res, 'git-receive-pack', repo.dir);
         return;
       }
@@ -215,7 +228,17 @@ export function registerGitHttp(app: Express, root: string, engine?: CiEngine): 
       const auth = requirePushAuth(req, res, collectionName, repoName);
       if (!auth) return;
       let repo = findRepo(root, collectionName, req.params.repo);
-      if (!repo) repo = await createRepo(root, collectionName, repoName);
+      if (!repo) {
+        const reserved = reservedRepoSuffix(repoName);
+        if (reserved) {
+          res
+            .status(400)
+            .type('text/plain')
+            .send(`repository names may not end in ${reserved}, which is reserved for the directories a repository keeps beside it\n`);
+          return;
+        }
+        repo = await createRepo(root, collectionName, repoName);
+      }
       const target = repo;
       const actor = auth.username;
       const before = await refSnapshot(target);

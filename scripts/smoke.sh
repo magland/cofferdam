@@ -671,6 +671,31 @@ check "first commit via web" 302 -b "$JAR" "$BASE/demo/bare/new/main" \
 check "empty repo now has content" 200 -b "$JAR" "$BASE/demo/bare"
 body_has "readme committed" 'README.md'
 
+# ---- names a new repository may not take ----
+
+# A repository keeps its site, runs, issues, pulls and releases in sibling
+# directories named after it, so a repository named `bare.issues` would occupy
+# the path `bare`'s issues live at. Reading is unaffected: this is a refusal at
+# creation, and a vault that already contains such a name keeps serving it.
+
+check "new repo form for reserved names" 200 -b "$JAR" "$BASE/new"
+CSRF="$(csrf_of)"
+# `ghost` names no repository, so any demo/ghost.* directory appearing here
+# would be one this refusal was supposed to prevent. (demo/bare.git could not
+# serve as the example: that directory is the repository `bare` itself.)
+for suffix in site runs issues pulls releases lfs git; do
+  check "a repository may not be named .$suffix" 400 -b "$JAR" "$BASE/new" \
+    --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode "name=ghost.$suffix"
+  body_has "the refusal names the .$suffix suffix" "may not end in .$suffix"
+  [ ! -e "$VAULT/demo/ghost.$suffix" ] || { echo "FAIL: demo/ghost.$suffix was created anyway"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: nothing was created for demo/ghost.$suffix"
+done
+# The refusal is about the ending, not about dots: a name that merely contains
+# one of these words is ordinary.
+check "a dot inside a name is still fine" 302 -b "$JAR" "$BASE/new" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=my.site.thing
+check "the dotted repository is there" 200 "$BASE/demo/my.site.thing"
+
 # ---- user administration ----
 
 check "admin users page" 200 -b "$JAR" "$BASE/admin/users"
@@ -1145,6 +1170,18 @@ PASS=$((PASS+1)); echo "ok: authenticated push and push-to-create"
 check "pushed commit visible" 200 "$BASE/demo/proj/blob/main/README.md"
 body_has "pushed content" 'pushed line'
 check "push-created repo visible" 200 "$BASE/pushed/created"
+
+# Push-to-create must not hand out a name that would land on another
+# repository's sibling directory: a repository called `created.issues` occupies
+# exactly the path `created`'s issues live at.
+cd "$TMP/clone"
+if git push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/pushed/created.issues" main 2>"$TMP/pusherr"; then
+  echo "FAIL: push-to-create accepted a reserved repository name"; exit 1
+fi
+cd - >/dev/null
+grep -qi 'reserved' "$TMP/pusherr" || { echo "FAIL: the refusal did not say the name is reserved"; cat "$TMP/pusherr"; exit 1; }
+[ ! -e "$VAULT/pushed/created.issues" ] || { echo "FAIL: the refused push created the directory anyway"; exit 1; }
+PASS=$((PASS+2)); echo "ok: push-to-create refuses a name reserved for a sibling directory"
 
 # ---- site ----
 
