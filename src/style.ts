@@ -432,6 +432,20 @@ textarea {
 .danger-zone { border: 1px solid var(--danger); border-radius: var(--radius); padding: 16px 24px; margin-top: 24px; max-width: 620px; }
 .danger-zone h3 { margin-top: 0; color: var(--danger); }
 
+/* Administration: the sections down the left, the page beside them. */
+.admin-layout { display: flex; align-items: flex-start; gap: 32px; }
+.admin-main { flex: 1 1 auto; min-width: 0; }
+.admin-side { flex: 0 0 220px; }
+.admin-side .side-links a { padding: 6px 8px; border-radius: var(--radius); }
+.admin-side .side-links a:hover { background: var(--surface); }
+.admin-side .side-links a.current { background: var(--surface); font-weight: 600; }
+@media (max-width: 800px) {
+  .admin-layout { flex-direction: column; gap: 16px; }
+  .admin-side { flex: 1 1 auto; width: 100%; }
+}
+.with-avatar-row { display: flex; align-items: flex-start; gap: 8px; }
+.with-avatar-row .icon { margin-right: 0; color: var(--fg-muted); }
+
 .card-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; max-width: 760px; }
 .card-list a.card { display: block; border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; color: var(--fg); }
 .card-list a.card:hover { background: var(--surface); text-decoration: none; }
@@ -630,4 +644,16 @@ details.diff-file:not([open]) > summary.diff-file-header { border-bottom: none; 
   padding: 10px 12px; margin-bottom: 16px;
 }
 .cmp-commits { margin-bottom: 20px; }
+
+/* --- contributors, and a filter the reader can take off --- */
+.contributors { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.contributor { display: inline-flex; }
+.contributor:hover { text-decoration: none; opacity: 0.85; }
+.filter-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; font-size: 12px;
+  border: 1px solid var(--border); border-radius: 2em; background: var(--surface); color: var(--fg);
+}
+.filter-chip .octicon { color: var(--fg-muted); }
+.filter-chip a { display: inline-flex; color: var(--fg-muted); }
+.filter-chip a:hover { color: var(--danger); }
 `;

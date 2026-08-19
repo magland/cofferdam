@@ -1,4 +1,5 @@
 import { BlameLine, CommitDetail, CommitSummary, RefInfo, TreeEntry } from './git';
+import { LanguageStat } from './languages';
 import { esc, formatSize, highlightedLines, timeTag } from './render';
 import { Viewer, viewerIsAdmin } from './session';
 import { activeTheme } from './themes';
@@ -453,6 +454,10 @@ export interface TreeView {
   description: string | null;
   readmeHtml: string | null;
   readmeName: string | null;
+  /** The language breakdown, measured at the root only and empty elsewhere. */
+  languages: LanguageStat[];
+  /** Who has committed on this ref, most commits first; the root only. */
+  contributors: { name: string; email: string; commits: number }[];
 }
 
 /** "1,284" - counts in the interface are grouped, as they are on GitHub. */
@@ -461,9 +466,74 @@ function count(n: number): string {
 }
 
 /**
+ * What the repository is written in: one bar in the languages' own colours and
+ * the list that names them. The bar is the same information as the list and no
+ * more, so it is hidden from a screen reader rather than repeated to one.
+ *
+ * The colours are inline because they belong to the languages rather than to
+ * the theme (the rule that structural CSS names no colour holds for the rest
+ * of style.ts); they come from the table in languages.ts and never from
+ * anything a repository contains.
+ */
+function languagesBlock(languages: LanguageStat[]): string {
+  if (languages.length === 0) return '';
+  const pct = (share: number) => `${share.toFixed(1)}%`;
+  const segments = languages
+    .map((l) => `<span class="lang-seg" style="width:${l.share.toFixed(2)}%;background:${l.color}"></span>`)
+    .join('');
+  const items = languages
+    .map(
+      (l) =>
+        `<li><span class="lang-dot" style="background:${l.color}"></span><span class="lang-name">${esc(
+          l.name
+        )}</span> <span class="lang-pct muted">${pct(l.share)}</span></li>`
+    )
+    .join('');
+  return `<div class="side-block">
+  <h3>Languages</h3>
+  <div class="lang-bar" aria-hidden="true">${segments}</div>
+  <ul class="lang-list">${items}</ul>
+</div>`;
+}
+
+/**
  * The About panel beside the repository root: what the repository says it is,
  * and the way in to the documents a reader looks for first.
  */
+/** The most faces the panel shows before it counts the rest as a number. */
+const SHOWN_CONTRIBUTORS = 12;
+
+/**
+ * Who wrote this repository, by commit count, as GitHub lists in its About
+ * panel. Each face leads to that person's commits rather than to a profile
+ * page, since a vault has no profiles: the history is what it knows about
+ * them.
+ */
+function contributorsBlock(ctx: RepoCtx, people: { name: string; email: string; commits: number }[]): string {
+  if (people.length === 0) return '';
+  const base = repoUrl(ctx);
+  const faces = people
+    .slice(0, SHOWN_CONTRIBUTORS)
+    .map(
+      (p) =>
+        `<a class="contributor" href="${base}/commits/${encPath(ctx.ref)}?author=${encodeURIComponent(
+          p.email || p.name
+        )}" title="${esc(p.name)} - ${count(p.commits)} commit${p.commits === 1 ? '' : 's'}">${avatar(
+          p.email || p.name,
+          28
+        )}</a>`
+    )
+    .join('');
+  const more =
+    people.length > SHOWN_CONTRIBUTORS
+      ? `<span class="muted small">+${count(people.length - SHOWN_CONTRIBUTORS)} more</span>`
+      : '';
+  return `<div class="side-block">
+  <h3>Contributors <span class="counter">${count(people.length)}</span></h3>
+  <div class="contributors">${faces}${more}</div>
+</div>`;
+}
+
 function aboutPanel(ctx: RepoCtx, view: TreeView): string {
   const base = repoUrl(ctx);
   const blob = (name: string) => `${base}/blob/${encPath(ctx.ref)}/${encPath(name)}`;
@@ -499,6 +569,8 @@ function aboutPanel(ctx: RepoCtx, view: TreeView): string {
   ${links.length ? `<div class="side-links">${links.join('')}</div>` : ''}
 </div>
 <div class="side-block"><div class="side-links">${facts.join('')}</div></div>
+${contributorsBlock(ctx, view.contributors)}
+${languagesBlock(view.languages)}
 </aside>`;
 }
 
@@ -880,10 +952,12 @@ export function commitsPage(
   commits: CommitSummary[],
   page: number,
   totalPages: number,
-  totalCount: number
+  totalCount: number,
+  author?: string
 ): string {
   const base = repoUrl(ctx);
   const suffix = path === '' ? '' : `/${encPath(path)}`;
+  const query = author ? `?author=${encodeURIComponent(author)}` : '';
   // Each row carries what a reader might want next from that commit: to read
   // it, to take its id, or to browse the tree as it stood then.
   const rows = commits
@@ -901,7 +975,10 @@ export function commitsPage(
     )
     .join('');
   const pager: string[] = [];
-  const pageUrl = (p: number) => `${base}/commits/${encPath(ctx.ref)}${suffix}?page=${p}`;
+  const pageUrl = (p: number) =>
+    `${base}/commits/${encPath(ctx.ref)}${suffix}?page=${p}${
+      author ? `&author=${encodeURIComponent(author)}` : ''
+    }`;
   if (page > 1) pager.push(`<a class="btn" href="${pageUrl(page - 1)}">&larr; Newer</a>`);
   if (page < totalPages) pager.push(`<a class="btn" href="${pageUrl(page + 1)}">Older &rarr;</a>`);
   const scope =
@@ -910,13 +987,22 @@ export function commitsPage(
       : `${breadcrumb(ctx, path)}<span class="muted small">${count(totalCount)} commit${
           totalCount === 1 ? '' : 's'
         } touching this path</span>`;
-  const empty =
-    path === '' ? 'No commits on this ref.' : `Nothing in this ref's history touches ${esc(path)}.`;
+  const empty = author
+    ? `No commits here are by ${esc(author)}.`
+    : path === ''
+      ? 'No commits on this ref.'
+      : `Nothing in this ref's history touches ${esc(path)}.`;
+  // A filter the reader can see is a filter they can take off again.
+  const byAuthor = author
+    ? `<span class="filter-chip">${icon('person')}<span>${esc(author)}</span><a href="${base}/commits/${encPath(
+        ctx.ref
+      )}${suffix}" title="Show every author" aria-label="Show every author">${icon('x')}</a></span>`
+    : '';
   const content = `${repoHeader(ctx, 'commits')}
 <div class="toolbar"><div class="left">${refPicker(
     ctx,
-    (ref) => `${base}/commits/${encPath(ref)}${suffix}`
-  )}${scope}</div></div>
+    (ref) => `${base}/commits/${encPath(ref)}${suffix}${query}`
+  )}${byAuthor}${scope}</div></div>
 ${rows || `<div class="empty-state">${empty}</div>`}
 ${pager.length ? `<div class="pagination">${pager.join('')}</div>` : ''}`;
   return layout(
@@ -1011,36 +1097,62 @@ export function refListPage(ctx: RepoCtx, kind: 'branches' | 'tags'): string {
           `<option value="${esc(b.name)}"${b.name === ctx.defaultBranch ? ' selected' : ''}>${esc(b.name)}</option>`
       )
       .join('');
-    createForm =
+    const form =
       kind === 'branches'
-        ? `<form method="post" action="${base}/branches/create" class="inline-form">${csrfField(
-            viewer
-          )}<input type="text" name="name" placeholder="new-branch-name" required> <label>from <select name="from">${fromOptions}</select></label> <button type="submit" class="btn btn-primary">Create branch</button></form>`
-        : `<form method="post" action="${base}/tags/create" class="inline-form">${csrfField(
-            viewer
-          )}<input type="text" name="name" placeholder="v1.0.0" required> <label>at <select name="at">${fromOptions}</select></label> <button type="submit" class="btn btn-primary">Create tag</button></form>`;
+        ? `<form method="post" action="${base}/branches/create">${csrfField(viewer)}
+<div class="field"><label for="new-ref">New branch name</label><input type="text" id="new-ref" name="name" placeholder="new-branch-name" required></div>
+<div class="field"><label for="ref-from">From</label><select id="ref-from" name="from">${fromOptions}</select></div>
+<button type="submit" class="btn btn-primary">Create branch</button></form>`
+        : `<form method="post" action="${base}/tags/create">${csrfField(viewer)}
+<div class="field"><label for="new-ref">Tag name</label><input type="text" id="new-ref" name="name" placeholder="v1.0.0" required></div>
+<div class="field"><label for="ref-at">At</label><select id="ref-at" name="at">${fromOptions}</select></div>
+<button type="submit" class="btn btn-primary">Create tag</button></form>`;
+    createMenu = `<details class="dropdown">
+<summary class="btn btn-primary">${icon('plus')}<span>New ${noun}</span>${icon('chevron-down', 'caret')}</summary>
+<div class="dropdown-menu dd-right ref-form">${form}</div>
+</details>`;
   }
   const content = `${repoHeader(ctx, kind)}<div class="page-head"><h2>${
     kind === 'branches' ? 'Branches' : 'Tags'
-  }</h2>${createForm}</div>${body}`;
+  }</h2>${createMenu}</div>${body}`;
   return layout(`${kind} - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, `${base}/${kind}`));
 }
 
+/**
+ * The quick-setup page GitHub shows for a repository with no commits: the
+ * address to push to, and the two command sequences that are the usual next
+ * step. It is the one place in the interface that teaches git commands,
+ * because it is the one place where the answer really is a command.
+ */
 export function emptyRepoPage(ctx: RepoCtx): string {
   const base = repoUrl(ctx);
+  const url = ctx.cloneUrl;
+  const block = (lines: string[]) =>
+    `<div class="cmd-block"><pre>${esc(lines.join('\n'))}</pre>${copyButton()}</div>`;
   const readmeBtn = ctx.canPush
-    ? `<p><a class="btn btn-primary" href="${base}/new/main">Create a README</a></p>`
+    ? `<a class="btn btn-primary" href="${base}/new/main">${icon('plus')}<span>Create a README</span></a>`
     : '';
   const content = `${repoHeader(ctx, 'code')}
-<div class="empty-state">
-  <p><b>This repository is empty.</b></p>
-  ${readmeBtn}
-  <div class="empty-cmds">
-${copyRow(`git clone ${ctx.cloneUrl}`)}
-${copyRow(`git push ${ctx.cloneUrl} main`)}
+<div class="box">
+  <div class="box-header">${icon('repo')}Quick setup, if you have done this before</div>
+  <div class="box-body">
+    <div class="cmd-row"><code>${esc(url)}</code>${copyButton()}</div>
+    <p class="muted">Cloning is anonymous. Pushing asks for your username and a token; <span class="mono">hubbit login</span> hands the token to git once so it stops asking.</p>
+    ${readmeBtn}
   </div>
-  <p class="small">Pushing requires a username and token.</p>
-</div>`;
+</div>
+<h3 class="setup-head">&hellip;or create a new repository on the command line</h3>
+${block([
+  `echo "# ${ctx.repo}" >> README.md`,
+  'git init',
+  'git add README.md',
+  'git commit -m "first commit"',
+  'git branch -M main',
+  `git remote add origin ${url}`,
+  'git push -u origin main',
+])}
+<h3 class="setup-head">&hellip;or push an existing repository from the command line</h3>
+${block([`git remote add origin ${url}`, 'git branch -M main', 'git push -u origin main'])}`;
   return layout(`${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, base));
 }
 

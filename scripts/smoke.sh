@@ -467,6 +467,16 @@ grep -qi 'content-security-policy: sandbox' "$TMP/headers" || { echo "FAIL: raw 
 grep -qi 'content-type: text/plain' "$TMP/headers" || { echo "FAIL: raw content-type not text/plain"; exit 1; }
 PASS=$((PASS+2)); echo "ok: raw CSP and content-type"
 
+# ---- contributors, and history by author ----
+
+check "repo home lists contributors" 200 "$BASE/demo/proj"
+body_has "contributors block" '<h3>Contributors'
+body_has "contributor links to their commits" 'commits/main?author='
+check "history filtered by author" 200 --get "$BASE/demo/proj/commits/main" --data-urlencode "author=owner@example.org"
+body_has "author filter is shown" 'class="filter-chip"'
+check "history by an author with no commits" 200 --get "$BASE/demo/proj/commits/main" --data-urlencode "author=nobody@example.org"
+body_has "empty author history says so" 'No commits here are by'
+
 # ---- finding things: by name and by content ----
 
 check "file finder" 200 "$BASE/demo/proj/find/main"
@@ -474,9 +484,11 @@ body_has "finder lists a file" 'class="find-item" href="/demo/proj/blob/main/REA
 check "finder without a ref" 200 "$BASE/demo/proj/find"
 check "search with no query" 200 "$BASE/demo/proj/search"
 body_has "search invites a query" 'Type to search the files at main'
-check "search finds a line" 200 --get "$BASE/demo/proj/search" --data-urlencode "q=Demo"
+# The web edit above replaced the README's body, so the text searched for here
+# is that edit's, not the description the repository was created with.
+check "search finds a line" 200 --get "$BASE/demo/proj/search" --data-urlencode "q=Edited via"
 body_has "search links the matching line" 'class="search-hit" href="/demo/proj/blob/main/README.md#L'
-body_has "search marks the match" '<mark>Demo</mark>'
+body_has "search marks the match" '<mark>Edited via</mark>'
 check "search that matches nothing" 200 --get "$BASE/demo/proj/search" --data-urlencode "q=zzz-no-such-text"
 body_has "empty search says so" 'No file at main contains'
 check "search on an unknown ref falls back to the default branch" 200 --get "$BASE/demo/proj/search" \

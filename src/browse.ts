@@ -2,6 +2,7 @@ import { Express, Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { GitRepo, isValidRefName, isValidRepoPath } from './git';
+import { languageBreakdown } from './languages';
 import { LfsContext } from './lfsstore';
 import { isMarkdownFile, renderMarkdown } from './markdown';
 import { parsePointer } from './pointer';
@@ -86,10 +87,14 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
     const entryPaths = entries
       .slice(0, MAX_LISTED_COMMITS)
       .map((e) => (treePath === '' ? e.name : `${treePath}/${e.name}`));
-    const [latest, entryCommits, commitCount] = await Promise.all([
+    // The language breakdown reads the whole tree, so it is measured only at
+    // the root, which is the only place the About panel that shows it appears.
+    const [latest, entryCommits, commitCount, languages, contributors] = await Promise.all([
       loaded.repo.log(ref, 0, 1, treePath || undefined).then((cs) => cs[0] ?? null),
       loaded.repo.lastCommits(ref, entryPaths),
       loaded.repo.commitCount(ref).catch(() => 0),
+      treePath === '' ? languageBreakdown(loaded.repo.dir, ref) : Promise.resolve([]),
+      treePath === '' ? loaded.repo.contributors(ref) : Promise.resolve([]),
     ]);
     let readmeHtml: string | null = null;
     let readmeName: string | null = null;
@@ -120,8 +125,10 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
         latest,
         commitCount,
         description: repoDescription(loaded.repo.dir),
+        contributors,
         readmeHtml,
         readmeName,
+        languages,
       })
     );
   }
@@ -395,19 +402,28 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
         return;
       }
       const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1);
+      // An author narrows it further: this is where a contributor in the
+      // About panel leads, and it is a literal string rather than a pattern.
+      const author = String(req.query.author ?? '').slice(0, 200) || undefined;
       let total: number;
       try {
-        total = await loaded.repo.commitCount(ref, histPath || undefined);
+        total = await loaded.repo.commitCount(ref, histPath || undefined, author);
       } catch {
         send404(res, `Ref ${ref} not found`, viewer);
         return;
       }
       const totalPages = Math.max(1, Math.ceil(total / COMMITS_PER_PAGE));
-      const commits = await loaded.repo.log(ref, (page - 1) * COMMITS_PER_PAGE, COMMITS_PER_PAGE, histPath || undefined);
+      const commits = await loaded.repo.log(
+        ref,
+        (page - 1) * COMMITS_PER_PAGE,
+        COMMITS_PER_PAGE,
+        histPath || undefined,
+        author
+      );
       res
         .type('html')
         .send(
-          views.commitsPage(await makeCtx(root, req, loaded, ref, viewer), histPath, commits, page, totalPages, total)
+          views.commitsPage(await makeCtx(root, req, loaded, ref, viewer), histPath, commits, page, totalPages, total, author)
         );
     })
   );

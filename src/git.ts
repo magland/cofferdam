@@ -175,9 +175,19 @@ export class GitRepo {
     return execGit(this.dir, ['cat-file', 'blob', `${ref}:${path}`]);
   }
 
-  async log(ref: string, skip: number, limit: number, path?: string): Promise<CommitSummary[]> {
+  async log(
+    ref: string,
+    skip: number,
+    limit: number,
+    path?: string,
+    author?: string
+  ): Promise<CommitSummary[]> {
     const fmt = '%H%x00%an%x00%aI%x00%s';
-    const args = ['log', `--format=${fmt}`, '-n', String(limit), `--skip=${skip}`, ref, '--'];
+    const args = ['log', `--format=${fmt}`, '-n', String(limit), `--skip=${skip}`];
+    // -F makes --author a literal string rather than a pattern, so a name
+    // with a dot or a plus in it means itself.
+    if (author) args.push('-F', `--author=${author}`);
+    args.push(ref, '--');
     if (path) args.push(path);
     let ls: string[];
     try {
@@ -212,8 +222,10 @@ export class GitRepo {
     return found;
   }
 
-  async commitCount(ref: string, path?: string): Promise<number> {
-    const args = ['rev-list', '--count', ref, '--'];
+  async commitCount(ref: string, path?: string, author?: string): Promise<number> {
+    const args = ['rev-list', '--count'];
+    if (author) args.push('-F', `--author=${author}`);
+    args.push(ref, '--');
     if (path) args.push(path);
     const out = (await execGit(this.dir, args)).toString('utf8').trim();
     return parseInt(out, 10);

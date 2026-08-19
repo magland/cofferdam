@@ -104,7 +104,8 @@ Read routes (anonymous):
 | `GET /:collection` | Repo list with descriptions and last-update times |
 | `GET /:collection/:repo` | Repo home: tree at default branch, README, clone box |
 | `GET /:collection/:repo/tree/:ref/*` `blob` `raw` | Browsing; ref may contain `/`, resolved by longest match against real ref names. Markdown blobs render as documents; `?plain=1` shows the source |
-| `GET /:collection/:repo/commits/:ref[/*path]` `commit/:sha` | History (paginated), narrowed to a path when one is given, and the diff view for one commit |
+| `GET /:collection/:repo/commits/:ref[/*path]?author=` | History (paginated), narrowed to a path and to an author when either is given (`-F`, so both are literal) |
+| `GET /:collection/:repo/commit/:sha` | The diff view for one commit |
 | `GET /:collection/:repo/search?q=&ref=` | Literal text search over the files at a ref (`git grep`, fixed strings, bounded in results and in time); an unknown ref falls back to the default branch |
 | `GET /:collection/:repo/find[/:ref]` | The file finder: every path at a ref, filtered in the browser |
 | `GET /:collection/:repo/blame/:ref/*path` | Blame for one text file; binary or over-large files redirect to the blob page |
