@@ -78,6 +78,14 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+// A job lease is a bearer token like any other, so it is compared the way
+// runner tokens are in runners.ts rather than with `!==`.
+function sameToken(a: string, b: string): boolean {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+
 // ---- workflow discovery ----
 
 // Workflows live in .cofferdam/workflows and .github/workflows; both are
@@ -914,7 +922,8 @@ export class CiEngine {
     const ar = this.active.get(runKey(collection, repo, n));
     if (!ar) return null;
     const job = ar.jobs.get(jobId);
-    if (!job || job.status !== 'running' || !job.lease || job.lease.token !== lease) return null;
+    if (!job || job.status !== 'running' || !job.lease) return null;
+    if (!sameToken(job.lease.token, lease)) return null;
     return { ar, job };
   }
 
