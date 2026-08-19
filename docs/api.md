@@ -64,10 +64,15 @@ A user may read their own record and their own token ids without admin scope. Re
 
 ```
 GET    /api/config                     theme, CI retention, sites, network, and limits
-PATCH  /api/config                     {theme?, ci?}                  (admin over everything)
+                                                                      (admin over everything)
+PATCH  /api/config                     {theme?, ci?, sites?}          (admin over everything)
 ```
 
-`network.trustProxy`, the `limits` block, and `sites.host` are readable and not writable. They are read once when the server starts (see [Deploying a vault](deploying.md)), so a route that changed them would report a change the running server had not made. Edit `config.json` in the vault and restart.
+Both take admin scope over the whole vault, not merely some admin scope: a delegated collection administrator should not read or change a vault-wide setting.
+
+`theme`, `ci`, and `sites` are writable. Every reader of them consults `config.json` per request, so a change is in effect on the next one and no restart is involved. `sites` takes a `host` string, and `""` puts sites back on the forge's own hostname under the sandbox; a value that is not a plausible hostname is refused with 400 rather than stored. See [Sites](sites.md) for what a sites host does, and [Deploying a vault](deploying.md#a-hostname-for-each-site) for the DNS and certificates it needs.
+
+`network.trustProxy` and the `limits` block are readable and not writable. They are read once when the server starts (see [Deploying a vault](deploying.md)), so a route that changed them would report a change the running server had not made. Edit `config.json` in the vault and restart.
 
 ## Repositories
 
@@ -78,6 +83,7 @@ GET    /api/repos/:c/:r                            one repository: description, 
 POST   /api/repos                                  create   {collection, name, description?, initReadme?}
 PATCH  /api/repos/:c/:r                            settings {description?, defaultBranch?}
 POST   /api/repos/:c/:r/fork                       fork     {collection, name?}
+                                                   (push on the source, and on where it lands)
 POST   /api/repos/:c/:r/rename                     rename   {name?, collection?}          (admin)
 DELETE /api/repos/:c/:r                            delete   (requires ?confirm=<c>/<r>)   (admin)
 GET    /api/repos/:c/:r/branches                   branches, with the default branch named
@@ -91,6 +97,8 @@ GET    /api/repos/:c/:r/site                       whether a site exists, its fi
 
 `GET /api/repos/:c/:r` also carries `canPush`, so a caller need not discover what it may do by being refused.
 
+Forking takes push scope over the source as well as over the collection the fork lands in, which is stricter than the web's reading of the same operation and stricter than GitHub's. A read-only token is refused. This is the rule to revisit first if forking is ever meant to be something a reader can do.
+
 Branch and tag deletion take the name as a wildcard path segment, because a ref name may contain slashes and `release/1.0` does not fit in one.
 
 `?confirm=` on delete is the API's equivalent of the web's typed confirmation. It costs nothing and it makes an accidental `DELETE` from a loop over a listing impossible.
@@ -100,6 +108,7 @@ The site route is read only. Publishing a site is a workflow's job or a file cop
 ## Contents and history
 
 ```
+GET  /api/repos/:c/:r/tree?ref=&commits=1       the root directory listing
 GET  /api/repos/:c/:r/tree/*?ref=&commits=1     a directory listing; commits=1 adds the last
                                                 commit per entry, at one git log each
 GET  /api/repos/:c/:r/contents/*?ref=           one file: metadata plus text, base64 when binary,
@@ -246,9 +255,23 @@ Cancelling a run that is not in progress is 409. Dispatching requires the workfl
 
 **There is nothing behind `gh pr checks`.** cofferdam has no check suites and no commit statuses. The nearest answer is the runs whose sha matches the pull request's head, which is exactly what `cofferdam pr checks` computes.
 
-## Runner endpoints
+## Runners
 
-`/api/runner/*` is a private protocol between a vault and the runners it hands jobs to, authenticated by a runner token rather than a user's. It is not an interface to program against and is not documented here. [Workflows](workflows.md) describes what a runner is and does.
+Registering the runners a vault will hand jobs to. Note the plural: these are `/api/runners`, an ordinary admin surface authenticated by a user's token, and are not the runner protocol below.
+
+```
+GET    /api/runners                    registered runners, their labels and allow globs   (admin)
+POST   /api/runners                    register one   {name, labels?, allow}              (admin over allow)
+DELETE /api/runners/:name              remove one                                         (admin over its allow)
+```
+
+`POST` returns `{name, token, labels, allow}`, and the token once: it is what `cofferdam runner run --token` presents, and only its hash is kept. `allow` is a list of globs saying which repositories the runner serves and is required, since a runner with no allow list could take no job. `labels` defaults to `["ubuntu-latest"]`.
+
+Registration takes admin scope over exactly the repositories in `allow`, rather than admin scope in general, because a runner executes repository-controlled code on its own machine: granting one a repository is granting that repository's authors the runner. Removing a runner takes admin scope over the allow list it was registered with. A name that is already registered is 409.
+
+## The runner protocol
+
+`/api/runner/*`, singular, is a private protocol between a vault and the runners it hands jobs to, authenticated by a runner token rather than a user's. It is not an interface to program against and is not documented here. [Workflows](workflows.md) describes what a runner is and does.
 
 ## Rate limits
 
