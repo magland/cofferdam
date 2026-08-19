@@ -7,7 +7,10 @@ import { esc } from './render';
 // whether it was added, deleted, or renamed). Both are what a reader uses to
 // orient in a diff, so both are rendered.
 
-const META_PREFIXES = [
+// Lines of a patch that describe the file rather than its content. The file
+// header already says what these say - the path, the status, the counts - so
+// they are dropped from the body, as GitHub drops them.
+const HEADER_PREFIXES = [
   '+++',
   '---',
   'index ',
@@ -15,13 +18,13 @@ const META_PREFIXES = [
   'deleted file',
   'similarity',
   'dissimilarity',
-  'rename',
-  'copy',
+  'rename ',
+  'copy ',
   'old mode',
   'new mode',
-  'Binary files',
-  '\\',
 ];
+// These two do belong in the body: they say something about the content.
+const NOTE_PREFIXES = ['Binary files', '\\'];
 
 /** How many lines of one file's diff we render before offering the file instead. */
 const MAX_FILE_LINES = 2000;
@@ -70,6 +73,11 @@ function parse(patch: string): DiffFile[] {
     else if (line.startsWith('-') && !line.startsWith('---')) cur.removed++;
     cur.lines.push(line);
   }
+  // A patch ends with a newline, which leaves an empty last line that is not
+  // part of anyone's file.
+  for (const f of files) {
+    while (f.lines.length > 0 && f.lines[f.lines.length - 1] === '') f.lines.pop();
+  }
   return files;
 }
 
@@ -114,16 +122,19 @@ function renderBody(file: DiffFile): string {
   // sides, an addition only the new one, a removal only the old one.
   let oldNo = 0;
   let newNo = 0;
-  const rows = file.lines.map((l) => {
+  const rows: string[] = [];
+  for (const l of file.lines) {
     let cls = 'ctx';
     let left = '';
     let right = '';
     const hunk = l.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-    if (hunk) {
+    if (HEADER_PREFIXES.some((p) => l.startsWith(p))) {
+      continue;
+    } else if (hunk) {
       oldNo = parseInt(hunk[1], 10);
       newNo = parseInt(hunk[2], 10);
       cls = 'hunk';
-    } else if (META_PREFIXES.some((p) => l.startsWith(p))) {
+    } else if (NOTE_PREFIXES.some((p) => l.startsWith(p))) {
       cls = 'meta';
     } else if (l.startsWith('+')) {
       cls = 'add';
@@ -135,10 +146,13 @@ function renderBody(file: DiffFile): string {
       left = String(oldNo++);
       right = String(newNo++);
     }
-    return `<div class="dline ${cls}"><span class="dnum">${left}</span><span class="dnum">${right}</span><span class="dtext">${
-      esc(l) || '&nbsp;'
-    }</span></div>`;
-  });
+    rows.push(
+      `<div class="dline ${cls}"><span class="dnum">${left}</span><span class="dnum">${right}</span><span class="dtext">${
+        esc(l) || '&nbsp;'
+      }</span></div>`
+    );
+  }
+  if (rows.length === 0) return `<div class="diff-none muted">No changes to the file's content.</div>`;
   return `<div class="diff-body">${rows.join('')}</div>`;
 }
 

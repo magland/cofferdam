@@ -134,6 +134,10 @@ WEB_SHA="$({ grep -o 'commit/[0-9a-f]\{40\}' "$BODY" || true; } | head -1 | sed 
 [ -n "$WEB_SHA" ] || { echo "FAIL: no commit sha on the commits page"; exit 1; }
 check "commit diff page" 200 -b "$JAR" "$BASE/demo/proj/commit/$WEB_SHA"
 body_has "diff shows the edit" 'Edited via the web interface'
+body_has "diff counts the changed files" 'changed file'
+body_has "diff numbers its lines" 'class="dnum"'
+body_has "diff offers the whole file" 'View file'
+body_lacks "no diff header noise" 'index 0000000'
 body_lacks "no hints on commit page" 'cmd-hint'
 
 # ---- create and delete a file ----
