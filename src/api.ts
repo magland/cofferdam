@@ -12,6 +12,7 @@ import { registerContentsApi } from './api/contents';
 import { registerIssueApi } from './api/issues';
 import { registerPullApi } from './api/pulls';
 import { registerRepoApi } from './api/repos';
+import { registerCiRunApi } from './api/ci';
 import { registerWriteApi } from './api/write';
 
 // The bearer-token JSON API used by the cofferdam CLI. Only Bearer tokens are
@@ -38,6 +39,10 @@ export function registerApi(
   registerIssueApi(app, root, authLimiter);
   registerPullApi(app, root, authLimiter, engine);
   registerWriteApi(app, root, authLimiter, engine);
+  // The engine is constructed in createApp and already handed to registerCiApi,
+  // so these routes take it the same way. A vault serving with no engine has no
+  // workflows to answer about.
+  if (engine) registerCiRunApi(app, root, authLimiter, engine);
 
   // Both helpers live in src/api/auth.ts now that more than one file of routes
   // uses them; this closure only saves passing root at every call site.

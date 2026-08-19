@@ -2,7 +2,7 @@
 
 A remote vault is the same server with a persistent disk and TLS in front; there is nothing else to it, since the vault directory is the entire state. On first start the server initializes the vault and prints the owner token; from then on all administration happens from your own machine, on the web or through the CLI after `cofferdam login`.
 
-The quickest route to a vault on the internet is `cofferdam deploy fly`, below, which needs no machine of your own and no checkout of this repository. Everything after it is for hosting the same container yourself.
+This document assumes you have already run a vault locally and want one other people can reach; [Getting started](getting-started.md) covers the local step and hands over here. It is organized by how far you intend to take it. `cofferdam deploy fly` puts a vault on the internet in one command, needing no machine of your own and no checkout of this repository. [A domain of your own](#a-domain-of-your-own) is the next step once the vault is something you mean to keep, and is also what gives static sites a hostname each. [A machine of your own](#a-machine-of-your-own) is the same container hosted yourself instead. [Limits](#limits) applies to all of them.
 
 ## Fly.io, in one command
 
@@ -87,7 +87,7 @@ my-vault-name  https://my-vault-name.fly.dev
   login     this is the vault cofferdam commands use
 ```
 
-`cofferdam deploy fly destroy my-vault-name` removes the app, the volume, and with them the vault; it asks you to type the app name first (`--yes` skips the prompt, for a script that means it), and also drops the stored credential for a vault that no longer exists. Anything else is flyctl's job, and flyctl is already on your machine: `fly logs -a my-vault-name`, `fly ssh console -a my-vault-name`, `fly certs add vault.example.org` for a domain of your own.
+`cofferdam deploy fly destroy my-vault-name` removes the app, the volume, and with them the vault; it asks you to type the app name first (`--yes` skips the prompt, for a script that means it), and also drops the stored credential for a vault that no longer exists. Anything else is flyctl's job, and flyctl is already on your machine: `fly logs -a my-vault-name`, `fly ssh console -a my-vault-name` for a shell on the volume, and `fly certs` for [a domain of your own](#a-domain-of-your-own).
 
 ### LFS objects in a bucket
 
@@ -98,39 +98,6 @@ cofferdam deploy fly my-vault-name --lfs-bucket
 ```
 
 Tigris' secrets are the ones the server already reads, so there is nothing further to configure (see [Git LFS](lfs.md)). Note that this provisions a billable resource in your Fly organization, and that `deploy fly destroy` leaves the bucket alone: destroying it, and its contents, is `fly storage destroy <name>`.
-
-### Serving sites from their own hostname
-
-By default a repository's static site is served from the vault's own hostname and sandboxed, which costs it cookies, storage, and service workers (see [Sites](sites.md)). Giving each site a real origin means a wildcard hostname and a certificate for it, which is DNS work rather than something the CLI can do.
-
-For a vault at `vault1.magland.org` on a Fly app named `vault1`, with `magland.org` on Cloudflare:
-
-| Type | Name | Content | Proxy |
-|---|---|---|---|
-| CNAME | `vault1` | `vault1.fly.dev` | DNS only |
-| CNAME | `*.vault1-sites` | `vault1.fly.dev` | DNS only |
-| CNAME | `_acme-challenge.vault1-sites` | as printed by `fly certs show` | DNS only |
-
-```bash
-fly certs add vault1.magland.org -a vault1
-fly certs add '*.vault1-sites.magland.org' -a vault1
-fly certs show '*.vault1-sites.magland.org' -a vault1   # prints the DNS-01 target
-fly certs check '*.vault1-sites.magland.org' -a vault1
-```
-
-The plain subdomain is validated over HTTP-01, which Fly can answer itself because requests for that name reach the app. A wildcard cannot be: there is no single name to answer for, so it needs DNS-01, which is why the third record exists and why `fly certs show` has to be run to learn what to put in it.
-
-Then set the host in the vault's `config.json`, which is on the volume:
-
-```json
-{
-  "sites": { "host": "vault1-sites.magland.org" }
-}
-```
-
-This is one Fly app with two hostnames, not two apps. Sites hosts must differ per vault in any case, because two Fly apps cannot hold a certificate for the same hostname.
-
-A Cloudflare-specific trap, since it produces a certificate error rather than a clear failure: Universal SSL covers `example.com` and `*.example.com` only, one label deep, so a proxied `*.vault1-sites.magland.org` is not covered without Advanced Certificate Manager, and proxied wildcard DNS records are an Enterprise feature. All three records stay DNS only, which means no Cloudflare caching or WAF in front of the vault. Note also that a wildcard does not match the bare `vault1-sites.magland.org`, so that name needs its own record and certificate if it is ever to answer; without one it simply does not resolve, and the vault answers a minimal 404 on it if it does.
 
 ### What the deploy does, in flyctl terms
 
@@ -172,6 +139,70 @@ primary_region = "ewr"
 ```
 
 Note `--ha=false`, and `min_machines_running = 0` with auto-start: a vault is a directory on a single volume, so this app runs as exactly one machine. Two machines would mean two volumes and two vaults that silently diverge. For the same reason, a busier vault wants a bigger machine rather than more of them. The machine stops when idle and starts again on the next request, which costs a few seconds on the first request after a quiet spell.
+
+## A domain of your own
+
+A vault on `my-vault-name.fly.dev` is a real HTTPS URL and there is nothing wrong with keeping it. Moving to a name you own buys two things. The vault's address stops naming the host it happens to run on, so it can move later without breaking everyone's remotes. And static sites can be given a hostname each, instead of sharing the vault's under a sandbox that costs them cookies, storage, and service workers.
+
+Those are separate pieces of work, in that order, and the second is optional. Both are DNS records and certificates, which is the part the CLI cannot do for you: `cofferdam deploy fly` never touches your domain.
+
+The examples below are a vault at `vault1.magland.org`, on a Fly app named `vault1`, with `magland.org` on Cloudflare. Another DNS provider differs only in where the records are typed, and another host only in how the certificate is obtained.
+
+### The vault's own hostname
+
+One record and one certificate:
+
+| Type | Name | Content | Proxy |
+|---|---|---|---|
+| CNAME | `vault1` | `vault1.fly.dev` | DNS only |
+
+```bash
+fly certs add vault1.magland.org -a vault1
+fly certs check vault1.magland.org -a vault1
+```
+
+Fly validates this one over HTTP-01, which it can answer itself because requests for that name already reach the app, so there is nothing further to add once the CNAME resolves.
+
+Nothing in the vault has to be told its own name. Clone URLs, redirects, and cookies are all built from the host of the request, so the vault answers correctly on both names at once. That is what makes the change safe to do while people are using it: `.fly.dev` keeps working, and remotes can be re-pointed at leisure with `git remote set-url origin https://vault1.magland.org/alice/webapp`. Log in again under the new name, `cofferdam login https://vault1.magland.org`, so that the CLI and git use it too.
+
+### A hostname for each site
+
+By default a repository's static site is served from the vault's own hostname and sandboxed, which costs it cookies, storage, and service workers (see [Sites](sites.md)). Giving each site a real origin means a wildcard hostname and a certificate for it, which is more DNS work than the plain name above:
+
+| Type | Name | Content | Proxy |
+|---|---|---|---|
+| CNAME | `*.vault1-sites` | `vault1.fly.dev` | DNS only |
+| CNAME | `_acme-challenge.vault1-sites` | as printed by `fly certs show` | DNS only |
+
+```bash
+fly certs add '*.vault1-sites.magland.org' -a vault1
+fly certs show '*.vault1-sites.magland.org' -a vault1   # prints the DNS-01 target
+fly certs check '*.vault1-sites.magland.org' -a vault1
+```
+
+A wildcard cannot be validated over HTTP-01, since there is no single name to answer for, so it needs DNS-01. That is why the `_acme-challenge` record exists, and why `fly certs show` has to be run first to learn what to put in it.
+
+Then set the host in the vault's `config.json`, which lives on the volume rather than in the image:
+
+```bash
+fly ssh console -a vault1 -C 'cat /vault/config.json'   # what is there now
+fly ssh console -a vault1                               # then edit /vault/config.json
+```
+
+```json
+{
+  "network": { "trustProxy": true },
+  "sites": { "host": "vault1-sites.magland.org" }
+}
+```
+
+Keep whatever `deploy fly` seeded there, which is `network.trustProxy`. Leave the file owned by `node`, the user the server runs as. No restart is needed: the config file is re-read when it changes, and a value that is not a plausible hostname is ignored in favour of the default, so a typo serves sites from the vault's own hostname as before rather than from a name no certificate covers.
+
+This is one Fly app with two hostnames, not two apps. Sites hosts must differ per vault in any case, because two Fly apps cannot hold a certificate for the same hostname.
+
+A Cloudflare-specific trap, since it produces a certificate error rather than a clear failure: Universal SSL covers `example.com` and `*.example.com` only, one label deep, so a proxied `*.vault1-sites.magland.org` is not covered without Advanced Certificate Manager, and proxied wildcard DNS records are an Enterprise feature. All three records stay DNS only, which means no Cloudflare caching or WAF in front of the vault. Note also that a wildcard does not match the bare `vault1-sites.magland.org`, so that name needs its own record and certificate if it is ever to answer; without one it simply does not resolve, and the vault answers a minimal 404 on it if it does.
+
+Not every repository is eligible for a hostname of its own, because not every legal repository name is a legal DNS label; an ineligible one keeps being served on the forge host under the sandbox. [Sites](sites.md) gives the rule, and describes what a per-site origin does and does not isolate.
 
 ## A machine of your own
 

@@ -1,7 +1,6 @@
 import { Express, Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
-import { isValidRefName } from '../git';
 import { findRepo, isValidName } from '../scan';
 import { Viewer, getViewer, viewerIsAdmin } from '../session';
 import { canAdmin } from '../vault';
@@ -10,8 +9,8 @@ import { artifactPath, isValidArtifactName, listArtifacts } from './artifacts';
 import { CiEngine, listWorkflowsAt } from './engine';
 import { JobRecord, RunRecord, jobLogPath, listRuns } from './runs';
 import { loadRunners, registerRunner, removeRunner } from './runners';
+import { dispatchWorkflow } from './dispatch';
 import * as ciViews from './views';
-import { WorkflowError } from './workflow';
 
 // The Actions pages and their operations. Reading is anonymous, as everywhere
 // else in a vault; cancelling, re-running, and dispatching require push scope
@@ -306,33 +305,25 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
         fail(res, 403, 'You do not have permission to run workflows in this repository.', actor.viewer);
         return;
       }
-      const workflowPath = field(req, 'workflow');
-      const ref = field(req, 'ref') || loaded.defaultBranch || '';
-      if (!isValidRefName(ref) || ref.startsWith('-')) {
-        fail(res, 400, 'Invalid branch', actor.viewer, base);
-        return;
-      }
-      const branch = loaded.branches.find((b) => b.name === ref);
-      if (!branch) {
-        fail(res, 400, `Branch ${ref} not found`, actor.viewer, base);
-        return;
-      }
+      // The form's own business is reading the form: the input.* fields become
+      // the inputs, and everything after that is dispatchWorkflow's, which the
+      // API dispatch route calls too.
       const inputs: Record<string, unknown> = {};
       for (const [k, v] of Object.entries((req.body ?? {}) as Record<string, unknown>)) {
         if (k.startsWith('input.') && typeof v === 'string') inputs[k.slice(6)] = v;
       }
       try {
-        const run = await engine.handleDispatch(
+        const run = await dispatchWorkflow(
+          engine,
           loaded.repo,
-          workflowPath,
-          `refs/heads/${ref}`,
-          branch.sha,
+          loaded.branches,
+          loaded.defaultBranch,
           actor.viewer.auth.username,
-          inputs
+          { workflow: field(req, 'workflow'), ref: field(req, 'ref'), inputs }
         );
         res.redirect(`${base}/runs/${run.number}`);
       } catch (e) {
-        fail(res, 400, e instanceof WorkflowError ? e.message : String(e), actor.viewer, base);
+        fail(res, 400, e instanceof Error ? e.message : String(e), actor.viewer, base);
       }
     })
   );

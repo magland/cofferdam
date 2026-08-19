@@ -59,6 +59,24 @@ export async function request(
   };
 }
 
+/**
+ * The same, with the body left as bytes. A tar or an archive is not text, and
+ * decoding it as UTF-8 to hand it back would corrupt it beyond recognition.
+ */
+export async function requestBytes(
+  target: RemoteTarget,
+  method: string,
+  pathname: string
+): Promise<{ ok: boolean; status: number; body: Buffer }> {
+  let resp;
+  try {
+    resp = await fetch(`${target.host}${pathname}`, { method, headers: { authorization: `Bearer ${target.token}` } });
+  } catch (e) {
+    throw new CliError(`Could not reach ${target.host}: ${e instanceof Error ? e.message : e}`, EXIT_FAIL);
+  }
+  return { ok: resp.ok, status: resp.status, body: Buffer.from(await resp.arrayBuffer()) };
+}
+
 /** One API call, with the status left to the caller: for the calls where a 404 is an answer rather than a failure. */
 export async function apiTry(
   target: RemoteTarget,

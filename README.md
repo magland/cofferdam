@@ -3,28 +3,37 @@
 cofferdam is a self-hosted git forge with the shape of GitHub: repository browsing, in-browser editing, issues, pull requests, releases, GitHub Actions workflows, static sites, and Git LFS, over anonymous `git clone` and token-authenticated `git push`. It is one Node process that needs nothing installed beside it but git, and it runs the same on a laptop, a home server, a VPS, or a container platform. Reading is anonymous; every write is authorized by a token you minted, and the users who hold those tokens are created by an administrator of the vault rather than registering themselves.
 
 Repositories are grouped into *collections*, and one installation, holding any number of collections, is a *vault*. A vault is a single directory that you point the server at, so an installation is created by choosing a directory and backed up by copying it. A vault is self-contained: users, permissions, and issue and pull request numbers are local to it, and it knows nothing of any other vault.
-## Quick start
+
+## Getting started
+
+There are three points at which cofferdam becomes useful, and each is a small step from the one before. [Getting started](docs/getting-started.md) walks all three.
+
+**1. A vault on your own machine.** Two commands, no account anywhere, and nothing written outside the directory you name:
 
 ```bash
-npx @magland/cofferdam serve /path/to/vault --port 3000
+mkdir myvault
+npx @magland/cofferdam serve myvault
 ```
 
-On the first start with no `vault.json`, the server initializes one and prints an owner token once; save it, since only its hash is stored. Sign in on the web with it, or hand it to the CLI:
+Finding no `vault.json`, the server initializes one and prints an owner token once; save it, since only its hash is stored. Open http://127.0.0.1:3000, sign in at `/login` as `owner` with that token, and push something in. The push creates the repository, and the collection holding it:
+
+```bash
+cd ~/some/project
+git push http://127.0.0.1:3000/alice/myproject main   # username 'owner', password the token
+```
+
+**2. A vault on the internet.** The same server with a persistent disk and TLS in front. With a [Fly.io](https://fly.io) account and flyctl installed, one command creates the app, the volume, and the machine, and prints the owner token:
 
 ```bash
 npm install -g @magland/cofferdam
-cofferdam login http://127.0.0.1:3000    # asks for the token, without echo
-cofferdam user add alice --scope 'alice/*'
-git push http://127.0.0.1:3000/alice/myrepo main
-```
-
-By default the server binds 127.0.0.1. A vault on the internet is the same server with a persistent disk and TLS in front, and one command puts it on Fly.io, owner token and login included:
-
-```bash
 cofferdam deploy fly my-vault-name       # -> https://my-vault-name.fly.dev
+cofferdam login https://my-vault-name.fly.dev
+cofferdam user add alice --scope 'alice/*'
 ```
 
-See [Deploying a vault](docs/deploying.md) for that, for updating it afterwards, and for hosting it on a machine of your own instead. A public vault also wants `network.trustProxy` set, which is what makes its per-address limits meaningful.
+That is a vault anyone can read, only your users can write, and you can send someone a link to. The same command deploys updates. See [Deploying a vault](docs/deploying.md) for the flags, the costs, and for hosting the container yourself instead.
+
+**3. A domain of your own.** Worth doing once the vault is something you mean to keep: the URL stops naming the host it happens to run on, and each repository's static site can be given a hostname of its own instead of sharing the vault's under a sandbox. That part is DNS records and certificates, in [A domain of your own](docs/deploying.md#a-domain-of-your-own).
 
 ## What it does
 
@@ -60,9 +69,10 @@ There is no database and no state outside this directory, so backing up a vault 
 
 ## Documentation
 
+- [Getting started](docs/getting-started.md): a local vault, a vault on the internet, and a domain of your own
 - [The vault](docs/vault.md): the layout on disk, and how signing in relates to the tokens git uses
 - [The command line](docs/cli.md): the `cofferdam` command, `cofferdam login`, pushing, importing, users, scopes, and the JSON API
-- [Deploying a vault](docs/deploying.md): `cofferdam deploy fly`, Docker, and automatic HTTPS with Caddy
+- [Deploying a vault](docs/deploying.md): `cofferdam deploy fly`, a domain of your own, Docker, and automatic HTTPS with Caddy
 - [Workflows](docs/workflows.md): what runs today, runners, artifacts, and the divergences from GitHub
 - [Git LFS](docs/lfs.md): storage backends, bucket configuration, and limitations
 - [Issues and pull requests](docs/issues-and-pull-requests.md), [Sites](docs/sites.md), [Themes](docs/themes.md)

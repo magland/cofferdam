@@ -161,6 +161,26 @@ And a merge that does not apply exits 5 and names the conflicting paths, so a ca
 
 `cofferdam pr checks` deserves its own note: cofferdam has no equivalent of a check suite or a commit status, so there is nothing behind that command but the workflow runs whose commit is the pull request's head. That is what it reports, and that is all it means.
 
+### Workflows and their runs
+
+```bash
+cofferdam workflow list                        # workflows at a ref, and the inputs each takes
+cofferdam workflow run .github/workflows/build.yml --field greeting=hello
+cofferdam run list --status completed
+cofferdam run view 12                          # the run, its jobs, and their step states
+cofferdam run view 12 --log                    # and the failed job's log
+cofferdam run watch 12 --exit-status
+cofferdam run cancel 12
+cofferdam run rerun 12
+cofferdam run download 12 --dir artifacts
+```
+
+A job log comes back as its last 200 lines by default. That is not a convenience: a log can be large, and handing the whole of one to a caller that is diagnosing a failure wastes its attention on the part that succeeded. `--tail 0` asks for all of it, and the response says whether it kept only the end and whether the server capped the log as it was written, which are different things.
+
+`run view --log` without `--job` picks the failed job, or the only job. When neither applies it asks rather than guessing.
+
+`cofferdam run watch` polls until the run finishes and then reports how it went; `--exit-status` makes a failed run a non-zero exit, which is what a script wants. It polls rather than streams because the engine has no event channel and the vault reads its state off disk per request, so a five-second poll against a local process costs nothing and needs no protocol. Note that a vault with no runner registered queues its runs and waits, so a watch there will reach its timeout.
+
 ### Reaching any route: `cofferdam api`
 
 `cofferdam api` sends a request to any route of the JSON API and prints what comes back, so a capability with no typed command of its own is still one line away:

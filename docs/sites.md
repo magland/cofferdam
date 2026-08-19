@@ -67,6 +67,6 @@ So a site wanting private state should use `localStorage` or IndexedDB, which ar
 
 The vault's own session cookie is not affected: it is set only on the forge's hostname, and over https it carries the `__Host-` prefix, which browsers refuse to accept from a cookie bearing a `Domain` attribute. That closes the other direction, where a sibling subdomain shadows a real session with one of its own.
 
-The DNS records and certificates this needs are in [Deploying a vault](deploying.md).
+The DNS records and certificates this needs are in [A domain of your own](deploying.md#a-domain-of-your-own).
 
 GitHub calls this feature Pages, and earlier versions of cofferdam did too, with the directory named `<repo>.pages`. We renamed it because "pages" already means something else in a web interface made of pages. A vault created before the rename needs one command per site: `mv <repo>.pages <repo>.site`.

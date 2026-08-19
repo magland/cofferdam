@@ -773,6 +773,16 @@ check "create user alice" 200 -b "$JAR" "$BASE/admin/users" \
   --data-urlencode "csrf=$CSRF" --data-urlencode username=alice --data-urlencode "scope=demo/*" \
   --data-urlencode "admin="
 ALICE_TOKEN="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+
+# A second user whose scope reaches nothing that exists, for the half of the
+# authorization checks that need a token which may read but not write. alice has
+# demo/* and so cannot stand in for it everywhere.
+check "create user narrow" 200 -b "$JAR" "$BASE/admin/users" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode username=narrow \
+  --data-urlencode "scope=nowhere/*" --data-urlencode "admin="
+NARROW_TOKEN="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+[ -n "$NARROW_TOKEN" ] || { echo "FAIL: no token for the narrow user"; exit 1; }
+PASS=$((PASS+1)); echo "ok: a token that may read everything and write nothing"
 [ -n "$ALICE_TOKEN" ] || { echo "FAIL: no token for alice shown"; exit 1; }
 check "grant to alice" 302 -b "$JAR" "$BASE/admin/users/alice/grant" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "scope=extra/thing" --data-urlencode "admin="
@@ -2382,6 +2392,108 @@ check "dispatch a workflow" 302 -b "$JAR" "$BASE/demo/ci/actions/dispatch" \
 check "dispatching a workflow without the trigger is refused" 400 -b "$JAR" "$BASE/demo/ci/actions/dispatch" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "workflow=.github/workflows/tagsonly.yml" \
   --data-urlencode ref=main
+
+# ---- workflows and runs over the API ----
+
+api "api lists the workflows at a ref" 200 "$BASE/api/repos/demo/ci/workflows"
+body_has "with a name" '"name":"Build"'
+body_has "and the inputs its dispatch takes" '"greeting"'
+body_has "and the parse error on the broken one" '"error"'
+api "api lists the runs" 200 "$BASE/api/repos/demo/ci/runs"
+body_has "as a named array" '{"runs":\['
+body_has "carrying a total" '"total":'
+api "a status filter is checked" 400 "$BASE/api/repos/demo/ci/runs?status=sideways"
+
+# The first run of the fixture, whatever number it took.
+API_RUN_N="$({ grep -o '"number":[0-9]*' "$BODY" || true; } | head -1 | cut -d: -f2)"
+api "api lists the runs again to pick one" 200 "$BASE/api/repos/demo/ci/runs?limit=1"
+API_RUN_N="$({ grep -o '"number":[0-9]*' "$BODY" || true; } | head -1 | cut -d: -f2)"
+[ -n "$API_RUN_N" ] || { echo "FAIL: no run to read over the API"; exit 1; }
+api "api reads one run" 200 "$BASE/api/repos/demo/ci/runs/$API_RUN_N"
+body_has "with its jobs" '"jobs":\['
+body_has "and their step states" '"stepStates"'
+API_JOB="$({ grep -o '"jobs":\[[^]]*' "$BODY" || true; } | head -1 | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)"
+if [ -z "$API_JOB" ]; then
+  API_JOB="$(python3 -c "
+import json,sys,urllib.request
+req=urllib.request.Request(sys.argv[1], headers={'authorization':'Bearer '+sys.argv[2]})
+d=json.load(urllib.request.urlopen(req))
+print(d['jobs'][0]['id'] if d.get('jobs') else '')
+" "$BASE/api/repos/demo/ci/runs/$API_RUN_N" "$OWNER_TOKEN")"
+fi
+[ -n "$API_JOB" ] || { echo "FAIL: the run has no job to read"; exit 1; }
+api "api reads one job" 200 "$BASE/api/repos/demo/ci/runs/$API_RUN_N/jobs/$API_JOB"
+body_has "with its status" '"status":'
+api "api reads a job log" 200 "$BASE/api/repos/demo/ci/runs/$API_RUN_N/jobs/$API_JOB/log"
+body_has "saying how many lines there are in all" '"total":'
+body_has "and whether it kept only the end" '"truncated":'
+api "the whole log is available too" 200 "$BASE/api/repos/demo/ci/runs/$API_RUN_N/jobs/$API_JOB/log?tail=0"
+body_has "and says nothing was left out" '"truncated":false'
+api "a nonsense tail is refused" 400 "$BASE/api/repos/demo/ci/runs/$API_RUN_N/jobs/$API_JOB/log?tail=-3"
+api "an unknown format is refused" 400 "$BASE/api/repos/demo/ci/runs/$API_RUN_N/jobs/$API_JOB/log?format=xml"
+api "api lists artifacts" 200 "$BASE/api/repos/demo/ci/runs/$API_RUN_N/artifacts"
+api "an unknown run is a 404" 404 "$BASE/api/repos/demo/ci/runs/99999"
+api "an unknown job is a 404" 404 "$BASE/api/repos/demo/ci/runs/$API_RUN_N/jobs/nosuchjob"
+
+# Dispatching over the API, which is the same sequence the form performs.
+api "api dispatches a workflow" 201 -H "$JSON_CT" \
+  --data '{"workflow":".github/workflows/build.yml","ref":"main","inputs":{"greeting":"from the api"}}' \
+  "$BASE/api/repos/demo/ci/dispatches"
+body_has "reporting the run it planned" '"number":'
+API_DISPATCHED="$({ grep -o '"number":[0-9]*' "$BODY" || true; } | head -1 | cut -d: -f2)"
+api "a workflow with no dispatch trigger is refused" 400 -H "$JSON_CT" \
+  --data '{"workflow":".github/workflows/tagsonly.yml","ref":"main"}' "$BASE/api/repos/demo/ci/dispatches"
+api "an unknown workflow is refused" 400 -H "$JSON_CT" \
+  --data '{"workflow":".github/workflows/nosuch.yml","ref":"main"}' "$BASE/api/repos/demo/ci/dispatches"
+api "an unknown branch is a 404" 404 -H "$JSON_CT" \
+  --data '{"workflow":".github/workflows/build.yml","ref":"nosuchbranch"}' "$BASE/api/repos/demo/ci/dispatches"
+api_as "dispatching needs push scope" 403 "$NARROW_TOKEN" -H "$JSON_CT" \
+  --data '{"workflow":".github/workflows/build.yml","ref":"main"}' "$BASE/api/repos/demo/ci/dispatches"
+
+# Cancelling and re-running. A vault with no runner leaves its runs queued, which
+# is exactly the state a cancellation is for.
+api "api cancels a queued run" 200 -H "$JSON_CT" --data '{}' "$BASE/api/repos/demo/ci/runs/$API_DISPATCHED/cancel"
+body_has "naming it" "\"cancelled\":$API_DISPATCHED"
+api "cancelling it again is a conflict, not a 404" 409 -H "$JSON_CT" --data '{}' "$BASE/api/repos/demo/ci/runs/$API_DISPATCHED/cancel"
+api "api re-runs it" 200 -H "$JSON_CT" --data '{}' "$BASE/api/repos/demo/ci/runs/$API_DISPATCHED/rerun"
+body_has "as a new run" '"number":'
+
+# The command layer over those routes. The login was undone further up, so these
+# pass the vault and the token explicitly, which is the other supported way.
+ccli() { node dist/index.js "$@" --host "$BASE" --token "$OWNER_TOKEN" --repo demo/ci; }
+run_ok "workflow list" ccli workflow list
+body_has "naming a workflow" 'Build'
+body_has "and the inputs its dispatch takes" 'dispatch: greeting'
+run_ok "run list" ccli run list
+body_has "with a run number" '#'
+run_ok "run list --json" ccli run list --json=number,status
+stdout_is_json "as one JSON value"
+run_ok "run view" ccli run view "$API_RUN_N"
+body_has "naming the workflow" 'Build'
+# With several jobs and none of them failed, there is no one log to mean, so it
+# asks rather than guessing.
+run_code "run view --log asks which job when several could be meant" 2 ccli run view "$API_RUN_N" --log
+err_has "naming the option" -- '--job'
+run_ok "run view --log with the job named" ccli run view "$API_RUN_N" --log --job "$API_JOB"
+run_ok "workflow run dispatches one" ccli workflow run .github/workflows/build.yml --field greeting=cli
+body_has "and says how to wait for it" 'run watch'
+CLI_RUN="$({ grep -o 'run #[0-9]*' "$BODY" || true; } | head -1 | tr -d 'run #')"
+run_ok "run cancel" ccli run cancel "$CLI_RUN"
+run_code "cancelling it twice exits 5" 5 ccli run cancel "$CLI_RUN"
+run_ok "run rerun" ccli run rerun "$CLI_RUN"
+body_has "as a new run" 'Started run #'
+# A vault with no runner leaves its runs queued for ever, which is the only way to
+# exercise the timeout without waiting for real work.
+run_ok "one more run to watch" ccli workflow run .github/workflows/build.yml
+CLI_WATCH="$({ grep -o 'run #[0-9]*' "$BODY" || true; } | head -1 | tr -d 'run #')"
+run_fails "run watch gives up rather than waiting for ever" ccli run watch "$CLI_WATCH" --interval 1 --timeout 2
+body_has "saying so, and what the run was still doing" 'Gave up'
+run_ok "and the run can be cancelled afterwards" ccli run cancel "$CLI_WATCH"
+run_fails "watching a failed run with --exit-status is a non-zero exit" \
+  ccli run watch "$CLI_WATCH" --interval 1 --timeout 20 --exit-status
+body_has "reporting the conclusion it did reach" 'cancelled'
+run_fails "run download says there are no artifacts" ccli run download "$API_RUN_N"
+body_has "plainly" 'no artifacts'
 
 # ---- runner registration and the runner API ----
 

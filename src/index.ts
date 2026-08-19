@@ -19,6 +19,7 @@ import { apiCommand } from './cli/api-cmd';
 import { issueCommands } from './cli/issue-cmd';
 import { prCommands } from './cli/pr-cmd';
 import { repoCommands } from './cli/repo-cmd';
+import { runCommands } from './cli/run-cmd';
 import { CliError, EXIT_FAIL, EXIT_USAGE, jsonErrorsWanted } from './cli/exit';
 import { readStdin } from './cli/input';
 import { JSON_OPTION, jsonMode, pickFields, pickObject, printJson } from './cli/output';
@@ -574,6 +575,7 @@ and COFFERDAM_RUNNER_TOKEN supplies the token instead of --runner-token.`,
   ...repoCommands,
   ...issueCommands,
   ...prCommands,
+  ...runCommands,
   apiCommand,
   {
     path: ['commands'],
@@ -602,6 +604,8 @@ const cli: Cli = {
     { name: 'commit', summary: 'Commits and their patches' },
     { name: 'issue', summary: 'Issues' },
     { name: 'pr', summary: 'Pull requests' },
+    { name: 'workflow', summary: 'Workflow files, and dispatching them by hand' },
+    { name: 'run', summary: 'Workflow runs, their logs, and their artifacts' },
     { name: 'collection', summary: 'Collections: the directories a vault holds repositories in' },
     { name: 'user', summary: 'Users, their scopes, and their tokens' },
     { name: 'deploy', summary: 'Put a vault on Fly.io and manage it there' },
