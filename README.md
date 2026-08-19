@@ -29,6 +29,7 @@ The `.git` suffix on repository directory names is optional; it is stripped for 
 - Markdown files rendered as documents, with a Preview/Code toggle (`?plain=1` for the source, as on GitHub); READMEs shown on directory pages
 - The GitHub markdown feature set: highlighted code with a copy button, LaTeX math through KaTeX (`$…$`, `$$…$$`, and ```` ```math ```` blocks), tables, task lists, footnotes, alert callouts (`> [!NOTE]`), emoji shortcodes, heading anchors, and a sanitized subset of inline HTML
 - Commit history with pagination, and diff views that number both sides of every hunk, count what each file gained and lost, and fold away a file you have read; the History button on any file or directory narrows it to that path
+- Search the files at any ref for a literal string, with the matches grouped by file, and a "Go to file" finder that filters every path as you type (`t` opens it)
 - Blame: every line beside the commit that last touched it, and a step back to the blame before that change
 - Diffs with line numbers on both sides, per-file counts and a changed-files summary, and files that fold away
 - Blame for any text file: each line beside the commit that last touched it, and a link to the blame as it stood before that change

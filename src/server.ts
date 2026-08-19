@@ -7,7 +7,7 @@ import { registerCiApi } from './ci/api';
 import { CiEngine } from './ci/engine';
 import { registerCiWeb } from './ci/web';
 import { loadConfig } from './config';
-import { registerFind } from './find';
+import { registerFind, registerSearch } from './find';
 import { registerGitHttp } from './githttp';
 import { registerLfs } from './lfs';
 import { createLfsStore } from './lfsstore';
@@ -103,6 +103,7 @@ export function createApp(root: string) {
   registerCiWeb(app, root, engine);
   registerWebOps(app, root, lfs, engine);
   registerFind(app, root);
+  registerSearch(app, root);
   registerBrowse(app, root, lfs);
 
   app.use((req, res) => {

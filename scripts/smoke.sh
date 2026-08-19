@@ -434,6 +434,22 @@ grep -qi 'content-security-policy: sandbox' "$TMP/headers" || { echo "FAIL: raw 
 grep -qi 'content-type: text/plain' "$TMP/headers" || { echo "FAIL: raw content-type not text/plain"; exit 1; }
 PASS=$((PASS+2)); echo "ok: raw CSP and content-type"
 
+# ---- finding things: by name and by content ----
+
+check "file finder" 200 "$BASE/demo/proj/find/main"
+body_has "finder lists a file" 'class="find-item" href="/demo/proj/blob/main/README.md"'
+check "finder without a ref" 200 "$BASE/demo/proj/find"
+check "search with no query" 200 "$BASE/demo/proj/search"
+body_has "search invites a query" 'Type to search the files at main'
+check "search finds a line" 200 --get "$BASE/demo/proj/search" --data-urlencode "q=Demo"
+body_has "search links the matching line" 'class="search-hit" href="/demo/proj/blob/main/README.md#L'
+body_has "search marks the match" '<mark>Demo</mark>'
+check "search that matches nothing" 200 --get "$BASE/demo/proj/search" --data-urlencode "q=zzz-no-such-text"
+body_has "empty search says so" 'No file at main contains'
+check "search on an unknown ref falls back to the default branch" 200 --get "$BASE/demo/proj/search" \
+  --data-urlencode "q=Demo" --data-urlencode ref=no-such-ref
+body_has "search box is in the repository header" 'class="repo-search"'
+
 # ---- blame ----
 
 check "blame page" 200 "$BASE/demo/proj/blame/main/README.md"

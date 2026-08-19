@@ -318,9 +318,17 @@ export function repoHeader(
     `<a class="tab${active === id ? ' active' : ''}" href="${href}">${icon(glyph)}<span>${label}</span>${
       count !== undefined ? `<span class="counter">${count}</span>` : ''
     }</a>`;
+  // The search box rides in the title row, so searching this repository is a
+  // keystroke away from every one of its pages.
+  const search = `<form class="repo-search" method="get" action="${base}/search" role="search"><input type="hidden" name="ref" value="${esc(
+    ctx.ref
+  )}"><input class="search-input" type="search" name="q" placeholder="Search this repository" aria-label="Search this repository">${icon(
+    'search',
+    'search-glyph'
+  )}</form>`;
   return `<div class="repo-title">${REPO_ICON}<a href="/${encodeURIComponent(ctx.collection)}">${esc(
     ctx.collection
-  )}</a> <span class="muted">/</span> <a href="${base}"><b>${esc(ctx.repo)}</b></a></div>
+  )}</a> <span class="muted">/</span> <a href="${base}"><b>${esc(ctx.repo)}</b></a>${search}</div>
 <nav class="tabs">
 ${tab('code', 'Code', base, 'code')}
 ${tab('commits', 'Commits', `${base}/commits/${encPath(ctx.ref)}`, 'history')}
@@ -588,6 +596,106 @@ ${atRoot ? aboutPanel(ctx, view) : ''}
  * src/compute/mean.py. Enter opens the first match, which is what makes this
  * a way of navigating rather than a list to read.
  */
+export interface SearchView {
+  files: { path: string; hits: { line: number; text: string }[]; more: number }[];
+  total: number;
+  /** git stopped early: there are more matches than the cap allows. */
+  truncated: boolean;
+  /** Files beyond the ones grouped onto the page. */
+  capped: boolean;
+}
+
+/**
+ * Show one matching line with the query marked in it. The positions come from
+ * the raw text, so the slices around them are escaped individually rather
+ * than searching escaped HTML for something that may no longer look the same.
+ * A long line is cut around its first match: a result list is for finding the
+ * file, not for reading it.
+ */
+function markMatches(text: string, query: string): string {
+  const hay = text.toLowerCase();
+  const needle = query.toLowerCase();
+  let from = needle === '' ? -1 : hay.indexOf(needle);
+  const first = from;
+  const WINDOW = 240;
+  let start = 0;
+  let cut = text;
+  if (text.length > WINDOW && first > WINDOW / 2) {
+    start = first - Math.floor(WINDOW / 3);
+    cut = text.slice(start);
+  }
+  if (cut.length > WINDOW) cut = cut.slice(0, WINDOW);
+  const body = cut.toLowerCase();
+  let out = '';
+  let at = 0;
+  for (let i = needle === '' ? -1 : body.indexOf(needle); i !== -1; i = body.indexOf(needle, at)) {
+    out += esc(cut.slice(at, i)) + `<mark>${esc(cut.slice(i, i + needle.length))}</mark>`;
+    at = i + needle.length;
+  }
+  out += esc(cut.slice(at));
+  return `${start > 0 ? '&hellip;' : ''}${out}${start + cut.length < text.length ? '&hellip;' : ''}`;
+}
+
+/** Search results: the matching lines, grouped by the file they are in. */
+export function searchPage(ctx: RepoCtx, query: string, view: SearchView): string {
+  const base = repoUrl(ctx);
+  const searchUrl = (ref: string) => `${base}/search?q=${encodeURIComponent(query)}&ref=${encodeURIComponent(ref)}`;
+  const form = `<form class="search-form" method="get" action="${base}/search" role="search"><input type="hidden" name="ref" value="${esc(
+    ctx.ref
+  )}"><input class="search-input" type="search" name="q" value="${esc(
+    query
+  )}" placeholder="Search this repository" aria-label="Search this repository" autofocus>${icon(
+    'search',
+    'search-glyph'
+  )}</form>`;
+  const boxes = view.files
+    .map((f) => {
+      const fileUrl = `${base}/blob/${encPath(ctx.ref)}/${encPath(f.path)}`;
+      const lines = f.hits
+        .map(
+          (h) =>
+            `<a class="search-hit" href="${fileUrl}#L${h.line}"><span class="lnum">${h.line}</span><span class="ltext">${markMatches(
+              h.text,
+              query
+            )}</span></a>`
+        )
+        .join('');
+      const more = f.more
+        ? `<a class="search-more" href="${fileUrl}">${count(f.more)} more match${
+            f.more === 1 ? '' : 'es'
+          } in this file</a>`
+        : '';
+      return `<div class="box search-file"><div class="box-header">${FILE_ICON}<a href="${fileUrl}">${esc(
+        f.path
+      )}</a></div><div class="search-hits">${lines}${more}</div></div>`;
+    })
+    .join('');
+  const notes: string[] = [];
+  if (view.truncated) notes.push('There were more matches than this page can show.');
+  if (view.capped) notes.push('Matches in further files were left out.');
+  let body: string;
+  if (query.trim() === '') {
+    body = `<div class="empty-state">Type to search the files at ${esc(ctx.ref)}. Matching is literal text, not a pattern.</div>`;
+  } else if (view.files.length === 0) {
+    body = `<div class="empty-state">No file at ${esc(ctx.ref)} contains ${esc(query)}.</div>`;
+  } else {
+    body = `<p class="muted small">${count(view.total)} matching line${view.total === 1 ? '' : 's'} in ${count(
+      view.files.length
+    )} file${view.files.length === 1 ? '' : 's'}${notes.length ? ` &middot; ${esc(notes.join(' '))}` : ''}</p>${boxes}`;
+  }
+  const content = `${repoHeader(ctx, 'code')}
+<div class="toolbar">
+  <div class="left">${refPicker(ctx, searchUrl)}${form}</div>
+  <div class="right-group">${findButton(ctx)}</div>
+</div>
+${body}`;
+  return layout(
+    `${query ? `Search: ${query}` : 'Search'} - ${ctx.collection}/${ctx.repo}`,
+    content,
+    repoOpts(ctx, `${base}/search`)
+  );
+}
+
 export function findFilePage(ctx: RepoCtx, paths: string[], total: number): string {
   const base = repoUrl(ctx);
   const items = paths

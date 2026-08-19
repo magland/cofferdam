@@ -7,6 +7,8 @@ export class GitError extends Error {}
 export interface ExecGitOptions {
   env?: NodeJS.ProcessEnv;
   input?: Buffer | string;
+  /** Kill the command after this many milliseconds. */
+  timeoutMs?: number;
 }
 
 export function execGit(repoDir: string, args: string[], opts: ExecGitOptions = {}): Promise<Buffer> {
@@ -14,7 +16,7 @@ export function execGit(repoDir: string, args: string[], opts: ExecGitOptions = 
     const child = execFile(
       'git',
       ['-C', repoDir, ...args],
-      { maxBuffer: MAX_BUFFER, encoding: 'buffer' as BufferEncoding, env: opts.env },
+      { maxBuffer: MAX_BUFFER, encoding: 'buffer' as BufferEncoding, env: opts.env, timeout: opts.timeoutMs },
       (err, stdout, stderr) => {
         if (err) {
           const msg = stderr ? stderr.toString().trim() : err.message;
@@ -51,6 +53,13 @@ export interface CommitSummary {
   author: string;
   date: string;
   subject: string;
+}
+
+/** One matching line from a search over the files at a ref. */
+export interface SearchHit {
+  path: string;
+  line: number;
+  text: string;
 }
 
 /** One line of `git blame` output, with the commit that last touched it. */
@@ -228,6 +237,60 @@ export class GitRepo {
       parents: parents ? parents.split(' ').filter((p) => p) : [],
       message: (message ?? '').replace(/\n+$/, ''),
     };
+  }
+
+  /** Every file at a ref, in git's order. */
+  async listPaths(ref: string, limit: number): Promise<{ paths: string[]; truncated: boolean }> {
+    const out = (await execGit(this.dir, ['ls-tree', '-r', '--name-only', '-z', ref])).toString('utf8');
+    const all = out.split('\0').filter((p) => p !== '');
+    return { paths: all.slice(0, limit), truncated: all.length > limit };
+  }
+
+  /**
+   * Text search over the files at a ref, as `git grep` does it: fixed strings
+   * rather than a regular expression, since a search box is not a place to
+   * hand a reader's typing to a matcher that can be made to run away, and
+   * skipping binary files, which have no lines to show. The query travels as
+   * the argument of -e, so a leading dash is a search term and not an option.
+   *
+   * Both the number of results and the time git may spend are bounded: this
+   * is the one read in the interface whose cost the caller cannot predict.
+   */
+  async search(
+    ref: string,
+    query: string,
+    limit = 200,
+    timeoutMs = 10000
+  ): Promise<{ hits: SearchHit[]; truncated: boolean }> {
+    let out: string;
+    try {
+      out = (
+        await execGit(
+          this.dir,
+          ['grep', '-I', '-n', '-z', '--fixed-strings', '--ignore-case', '-e', query, ref, '--'],
+          { timeoutMs }
+        )
+      ).toString('utf8');
+    } catch {
+      // git grep exits non-zero when nothing matched, which is not an error.
+      return { hits: [], truncated: false };
+    }
+    const hits: SearchHit[] = [];
+    let truncated = false;
+    for (const line of out.split('\n')) {
+      if (line === '') continue;
+      if (hits.length >= limit) {
+        truncated = true;
+        break;
+      }
+      // <rev>:<path>\0<lineno>\0<text>
+      const [head, lineNo, ...rest] = line.split('\0');
+      if (lineNo === undefined) continue;
+      const colon = head.indexOf(':');
+      if (colon === -1) continue;
+      hits.push({ path: head.slice(colon + 1), line: parseInt(lineNo, 10), text: rest.join('\0') });
+    }
+    return { hits, truncated };
   }
 
   /**

@@ -567,4 +567,43 @@ details.diff-file:not([open]) > summary.diff-file-header { border-bottom: none; 
   .dnum { width: 34px; }
   .dline .dnum:nth-child(2) { left: 34px; }
 }
+
+/* --- Languages: the share bar in the About panel. Each segment's colour is
+   inline rather than here, because a language's colour belongs to the language
+   (it is Linguist's) and not to the theme; the table in languages.ts is where
+   they live. Only the shape is this file's business. --- */
+.lang-bar { display: flex; height: 8px; border-radius: 6px; overflow: hidden; background: var(--border-soft); margin-bottom: 12px; }
+.lang-seg { display: block; height: 100%; }
+.lang-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.lang-list li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.lang-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; }
+.lang-name { font-weight: 600; }
+.lang-pct { margin-left: auto; }
+
+/* --- search: the box in the repository header, and the results --- */
+.repo-search { margin-left: auto; }
+.search-form { position: relative; display: flex; align-items: center; }
+.repo-search, .search-form { position: relative; }
+.search-input {
+  width: 260px; max-width: 100%; padding: 5px 10px 5px 30px; font-size: 13px; font-family: inherit;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--input-bg); color: var(--fg);
+}
+.search-form .search-input { width: 360px; }
+.search-glyph { position: absolute; left: 8px; top: 50%; margin-top: -8px; color: var(--fg-muted); pointer-events: none; }
+.search-file { margin-top: 16px; }
+.search-file .box-header a { font-family: var(--font-mono); font-size: 12px; }
+.search-hits { background: var(--code-bg); border-radius: 0 0 var(--radius) var(--radius); overflow-x: auto; }
+.search-hit {
+  display: flex; gap: 12px; padding: 2px 12px; color: var(--fg);
+  font-family: var(--font-mono); font-size: 12px; line-height: 20px;
+}
+.search-hit:hover { background: var(--surface); text-decoration: none; }
+.search-hit .lnum { flex: none; width: 44px; text-align: right; color: var(--fg-subtle); position: static; }
+.search-hit .ltext { white-space: pre; padding: 0; }
+.search-hit mark { background: var(--line-mark); color: inherit; font-weight: 600; }
+.search-more { display: block; padding: 6px 12px; font-size: 12px; border-top: 1px solid var(--border-soft); }
+@media (max-width: 860px) {
+  .repo-search { display: none; }
+  .search-form .search-input { width: 100%; }
+}
 `;

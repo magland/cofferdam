@@ -83,6 +83,7 @@ First start against a directory with no `vault.json` initializes one and prints 
 | `src/diff.ts` | Unified-diff to HTML (line classification, per-file boxes) |
 | `src/style.ts` | The single structural CSS string; every color and font is a `var(--…)` from the active theme |
 | `src/icons.ts` | The icon set: 16-pixel Octicons inlined as SVG, and the `icon()` wrapper |
+| `src/find.ts` | Finding things in a repository: the file finder and the search route |
 | `src/avatar.ts` | Identicons: the drawing a name gets in place of an uploaded picture |
 | `src/find.ts` | The file finder: every path at a ref, filtered in the browser |
 | `scripts/create-example.sh` | Builds the example vault, including its `vault.json` with the fixed dev user |
@@ -103,6 +104,8 @@ Read routes (anonymous):
 | `GET /:collection/:repo/tree/:ref/*` `blob` `raw` | Browsing; ref may contain `/`, resolved by longest match against real ref names. Markdown blobs render as documents; `?plain=1` shows the source |
 | `GET /:collection/:repo/commits/:ref[/*path]` `commit/:sha` | History (paginated), narrowed to a path when one is given, and the diff view for one commit |
 | `GET /:collection/:repo/blame/:ref/*path` | Blame for one text file; binary, LFS, and oversized blobs redirect to the blob page |
+| `GET /:collection/:repo/search?q=&ref=` | Literal text search over the files at a ref (`git grep`, fixed strings, bounded in results and in time); an unknown ref falls back to the default branch |
+| `GET /:collection/:repo/find[/:ref]` | The file finder: every path at a ref, filtered in the browser |
 | `GET /:collection/:repo/blame/:ref/*path` | Blame for one text file; binary or over-large files redirect to the blob page |
 | `GET /:collection/:repo/archive/:ref.{tar.gz,tgz,zip}` | Source download, streamed straight from `git archive`; the ref must be one the repository has, or a commit id |
 | `GET /:collection/:repo/branches` `tags` | Ref listings (with operation forms when the session allows) |
