@@ -1105,6 +1105,30 @@ run_fails() {
   if "$@" > "$BODY" 2>&1; then echo "FAIL: $desc (expected a non-zero exit)"; head -c 2000 "$BODY"; echo; exit 1; fi
   PASS=$((PASS+1)); echo "ok: $desc"
 }
+run_code() {
+  local desc="$1" want="$2"; shift 2
+  local got=0
+  "$@" > "$BODY" 2>"$BODY.err" || got=$?
+  if [ "$got" != "$want" ]; then
+    echo "FAIL: $desc (want exit $want, got $got)"; head -c 2000 "$BODY" "$BODY.err"; echo; exit 1
+  fi
+  PASS=$((PASS+1)); echo "ok: $desc"
+}
+# Parseable JSON and nothing else on stdout: the contract a caller piping into
+# a parser depends on. node is already required to run the server, so it is the
+# parser here; the suite has no jq.
+stdout_is_json() {
+  local desc="$1"
+  if ! node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$BODY" 2>/dev/null; then
+    echo "FAIL: $desc (stdout was not one JSON value)"; head -c 2000 "$BODY"; echo; exit 1
+  fi
+  PASS=$((PASS+1)); echo "ok: $desc"
+}
+err_has() {
+  local desc="$1" pattern="$2"
+  grep -q -e "$pattern" "$BODY.err" || { echo "FAIL: $desc (not on stderr: $pattern)"; head -c 2000 "$BODY.err"; echo; exit 1; }
+  PASS=$((PASS+1)); echo "ok: $desc"
+}
 no_prompt() {
   local desc="$1"
   if [ -e "$TRIPPED" ]; then echo "FAIL: $desc (git asked for a credential)"; exit 1; fi
@@ -1142,6 +1166,59 @@ body_has "whoami names the logged-in user and vault" "owner @ $BASE"
 run_ok "user list needs no arguments after login" cli user list
 body_has "user list came from the vault" 'push: *'
 run_ok "runner list needs no arguments after login" cli runner list
+
+# ---- the command registry, `cofferdam api`, and the output contract ----
+
+# Help is per command rather than one dump of all of them, which is what keeps
+# it small enough for a caller with a context window to read.
+run_ok "top-level help lists groups, not every command" cli --help
+body_has "help names a group" 'Command groups:'
+body_lacks "and does not inline a group's commands" 'user grant'
+run_ok "group help lists that group" cli user --help
+body_has "with its commands" 'grant .*Extend an existing'
+run_ok "command help lists that command's options" cli user add --help
+body_has "with an option summary" -- '--token-scope'
+
+run_code "an unknown command is a usage error" 2 cli nosuchcommand
+err_has "and says so" "unknown command 'nosuchcommand'"
+run_code "a misspelled subcommand is suggested" 2 cli user lst
+err_has "by name" "did you mean 'user list'"
+run_code "an unknown option is a usage error" 2 cli whoami --jsn
+err_has "with the nearest real option" 'did you mean --json'
+
+run_ok "commands --json dumps the registry" cli commands --json
+stdout_is_json "the registry is one JSON value on stdout"
+body_has "and names a command path" '"whoami"'
+
+# --json goes to stdout and nothing else does, which is the whole point.
+run_ok "whoami --json" cli whoami --json
+stdout_is_json "whoami --json is parseable"
+body_has "with the fields the API returned" '"username": "owner"'
+run_ok "a field list keeps only those fields" cli whoami --json=username,scope
+body_lacks "dropping the rest" 'tokenScope'
+
+# The generic escape hatch: one read and one write, with the path written the
+# short way to prove the prefix is optional.
+run_ok "api reads a route" cli api whoami
+stdout_is_json "and prints its JSON verbatim"
+body_has "which is the whoami body" '"username":"owner"'
+run_ok "api takes a full path too" cli api /api/collections
+run_ok "api writes with --field" cli api collections -X POST --field name=fromapi
+body_has "and the vault created it" '"created":true'
+check "the collection the api command made is there" 200 "$BASE/fromapi"
+
+# The exit codes an agent retries on. 4 and 5 are the two that earn their keep.
+run_code "a 404 from the vault exits 4" 4 cli api collections/nosuchcollection
+run_code "a 409 from the vault exits 5" 5 cli api collections -X POST --field name=fromapi
+run_code "a rejected token exits 3" 3 cli whoami --token cofferdam_not_a_real_token
+run_code "and reports the refusal as JSON when asked" 3 cli whoami --json --token cofferdam_not_a_real_token
+err_has "on stderr, as an error object" '{"error":'
+if [ -s "$BODY" ]; then echo "FAIL: a failed --json command wrote to stdout"; exit 1; fi
+PASS=$((PASS+1)); echo "ok: nothing on stdout when a --json command fails"
+
+# A token on stdin, so it is in neither argv nor shell history.
+run_ok "--token-stdin reads the token from stdin" sh -c "echo '$OWNER_TOKEN' | $(printf '%s ' env HOME="$CRED_HOME" XDG_CONFIG_HOME="$CRED_HOME/.config" GIT_CONFIG_GLOBAL="$CRED_HOME/.gitconfig" GIT_ASKPASS="$TMP/askpass") node dist/index.js whoami --host '$BASE' --token-stdin"
+body_has "and it worked" "owner @ $BASE"
 
 # Recorded for this host alone, so other remotes keep whatever they use now.
 cred_env git config --global --get-regexp '^credential\.' | grep -q "credential.$BASE.helper store" \
@@ -1202,6 +1279,13 @@ if [ -e "$LOGIN_JSON" ]; then echo "FAIL: logout left the vault recorded"; exit 
 PASS=$((PASS+1)); echo "ok: logout forgot the vault too"
 run_fails "commands stop working after logout" cli whoami
 body_has "and say to log in" 'cofferdam login'
+# A container has no keyring and may have no writable home, so the environment
+# is a source of both, between the flags and the login.
+run_ok "COFFERDAM_HOST and COFFERDAM_TOKEN stand in for a login" \
+  cred_env env COFFERDAM_HOST="$BASE" COFFERDAM_TOKEN="$OWNER_TOKEN" node dist/index.js whoami
+body_has "as the same user" "owner @ $BASE"
+run_ok "and --token still wins over the environment" \
+  cred_env env COFFERDAM_HOST="$BASE" COFFERDAM_TOKEN=cofferdam_wrong node dist/index.js whoami --token "$OWNER_TOKEN"
 run_ok "logout again is not an error" cli logout --host "$BASE"
 body_has "logout says there was nothing stored" 'No stored credential'
 no_prompt "reading the store back never prompts"

@@ -4,15 +4,8 @@ import express, { Express, Request, Response } from 'express';
 import * as ops from './ops';
 import { OpError } from './ops';
 import { displayName, isValidName, listCollections, listRepoDirs } from './scan';
-import {
-  AuthResult,
-  addUserToken,
-  authenticateToken,
-  canAdmin,
-  canCreateCollection,
-  grantScope,
-  loadVault,
-} from './vault';
+import { addUserToken, canAdmin, canCreateCollection, grantScope, loadVault } from './vault';
+import { apiError, requireApiAuth as authenticateRequest } from './api/auth';
 
 // The bearer-token JSON API used by the cofferdam CLI. Only Bearer tokens are
 // accepted; session cookies never authorize API calls.
@@ -20,32 +13,9 @@ import {
 export function registerApi(app: Express, root: string): void {
   app.use('/api', express.json());
 
-  function apiError(res: Response, status: number, message: string) {
-    res.status(status).json({ error: message });
-  }
-
-  function requireApiAuth(req: Request, res: Response): AuthResult | null {
-    const state = loadVault(root);
-    if (state.status === 'missing') {
-      apiError(res, 401, 'no vault.json in this vault; restart the server to initialize one');
-      return null;
-    }
-    if (state.status === 'error') {
-      apiError(res, 500, `vault.json could not be read: ${state.message}`);
-      return null;
-    }
-    const m = (req.get('authorization') ?? '').match(/^bearer\s+(.+)$/i);
-    if (!m) {
-      apiError(res, 401, 'missing bearer token: send Authorization: Bearer <token>');
-      return null;
-    }
-    const auth = authenticateToken(state.vault, m[1].trim());
-    if (!auth) {
-      apiError(res, 401, 'invalid token');
-      return null;
-    }
-    return auth;
-  }
+  // Both helpers live in src/api/auth.ts now that more than one file of routes
+  // uses them; this closure only saves passing root at every call site.
+  const requireApiAuth = (req: Request, res: Response) => authenticateRequest(root, req, res);
 
   function sanitizeGlobs(v: unknown): string[] | null | undefined {
     if (v === undefined || v === null) return undefined;

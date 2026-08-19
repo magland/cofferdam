@@ -183,30 +183,39 @@ export function clearLogin(host: string, file = loginPath()): void {
   }
 }
 
-// The vault a command should talk to, and the token to talk with: the URL from
-// --host or from the last login, the token from --token or from git's
-// credential store for that URL. Both failures are the same instruction, so
-// this reports which vault it looked at and says to log in.
+// The vault a command should talk to, and the token to talk with. Precedence is
+// the same for both: the option, then the environment, then what `cofferdam
+// login` left behind (the URL in login.json, the token in git's credential
+// store).
+//
+// The environment is here for a caller that has no keyring and possibly no
+// writable home directory, which is an agent in a container rather than a
+// person at a laptop. `cofferdam login` remains the one thing a person
+// configures, and the runner already took this shape with
+// COFFERDAM_RUNNER_TOKEN.
 export async function vaultTarget(args: {
   host?: string | null;
   token?: string | null;
 }): Promise<{ host: string; token: string }> {
-  const host = (args.host ?? loadLogin()?.host ?? '').replace(/\/+$/, '');
+  const envHost = process.env.COFFERDAM_HOST?.trim() || null;
+  const envToken = process.env.COFFERDAM_TOKEN?.trim() || null;
+  const host = (args.host ?? envHost ?? loadLogin()?.host ?? '').replace(/\/+$/, '');
   if (!host) {
     throw new CredentialError(
       'No vault. Log in to one first:\n\n' +
         '  cofferdam login https://vault.example.com\n\n' +
-        'or pass --host <url> to a single command.'
+        'or pass --host <url>, or set COFFERDAM_HOST.'
     );
   }
   if (args.token) return { host, token: args.token };
+  if (envToken) return { host, token: envToken };
   const target = credentialTarget(host);
   const stored = await readCredential(target);
   if (!stored) {
     throw new CredentialError(
       `No stored token for ${target.url}. Log in again:\n\n` +
         `  cofferdam login ${target.url}\n\n` +
-        'or pass --token <token> to a single command.'
+        'or pass --token <token>, or set COFFERDAM_TOKEN.'
     );
   }
   return { host, token: stored.password };

@@ -27,13 +27,67 @@ cofferdam collection add mycollection
 cofferdam import https://github.com/owner/repo mycollection
 ```
 
-There is one way to configure the CLI and it is `cofferdam login`: nothing to set in the environment, and no token to re-supply per command. (`cofferdam runner run` is the exception, since a runner holds a token that is not any user's; it reads `COFFERDAM_RUNNER_TOKEN`.) The vault URL is remembered in `~/.config/cofferdam/login.json` (mode 0600) and the token goes to git's own credential store, which is where git needs it anyway for pushing, so a token is kept in one place rather than two (see [Not typing the token every time](#not-typing-the-token-every-time)). `cofferdam logout` undoes both.
+`cofferdam login` is the way to configure the CLI for a person at a keyboard: no token to re-supply per command, and nothing to set in the environment. The vault URL is remembered in `~/.config/cofferdam/login.json` (mode 0600) and the token goes to git's own credential store, which is where git needs it anyway for pushing, so a token is kept in one place rather than two (see [Not typing the token every time](#not-typing-the-token-every-time)). `cofferdam logout` undoes both.
+
+A caller in a container is in a different position: it has no keyring, may have no writable home directory, and gets its secrets as environment variables. So `COFFERDAM_HOST` and `COFFERDAM_TOKEN` are honoured by every command that talks to a vault, and `--token-stdin` reads a token from stdin so that it appears in neither argv nor shell history. Precedence for both the host and the token is the same: the option, then the environment, then what `cofferdam login` left behind.
+
+```bash
+export COFFERDAM_HOST=https://vault.example.com
+export COFFERDAM_TOKEN="$(cat /run/secrets/cofferdam)"
+cofferdam whoami --json
+```
+
+(`cofferdam runner run` reads `COFFERDAM_RUNNER_TOKEN` as well, since a runner holds a token that is not any user's.)
 
 `cofferdam deploy fly <app>` is the exception to the division above in one respect: it drives flyctl rather than a vault, since at the moment it runs there is no vault yet. It creates a vault on Fly.io, or deploys an update to an existing one, and on a new one it mints the owner token locally and logs you in when the server answers, so nothing needs to be read out of a log (see [Deploying a vault](deploying.md)).
 
 Note that login is a client-side arrangement only: it calls the server once to check who the token belongs to, and writes nothing but local files. `cofferdam runner run` is the one command that reads a configuration of its own, since a runner holds a token that is not any user's: it is a long-running process that takes workflow jobs from a vault and executes them locally in Docker (see [Workflows](workflows.md)).
 
 `--host <url>` and `--token <t>` override the login per command, which is how you reach a second vault without logging out of the first. By default the server binds 127.0.0.1. Use `--host 0.0.0.0` on `serve` to expose it on the network; note that this exposes read access to every repository in the vault, and that tokens then travel over plain HTTP unless you put TLS in front. The first line of the `description` file inside a bare repository is shown in listings, as with classic git hosting.
+
+## Finding your way around
+
+Help is per command rather than one dump of all of them, which keeps any single piece of it short enough to read:
+
+```bash
+cofferdam --help              # command groups, and the commands that stand alone
+cofferdam user --help         # the commands in one group
+cofferdam user add --help     # one command's arguments and options
+cofferdam commands --json     # every command, argument, and option, as data
+```
+
+`cofferdam commands --json` is the whole registry, which is enough to discover the surface without reading any of this.
+
+### Output and exit codes
+
+Every command that reads something takes `--json`, which puts a single JSON value on stdout and sends every diagnostic to stderr, so `cofferdam issue list --json | <parser>` never has to filter anything out. A comma-separated field list keeps only those fields, as `gh` does: write it attached, `--json=number,title`, or detached when it names more than one field, `--json number,title`. A name that is not a field of the response is an error naming the ones that are.
+
+Failures are also JSON when `--json` was asked for: `{"error": "..."}` on stderr, and a non-zero exit.
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Success |
+| 1 | Generic failure, including a 4xx or 5xx from the vault with no code of its own |
+| 2 | Usage error: unknown command, unknown flag, missing argument |
+| 3 | Authentication failure: no token, or the vault rejected it (HTTP 401) |
+| 4 | Not found: the vault answered 404 for the addressed resource |
+| 5 | Conflict: the vault answered 409, or the operation was refused because of state |
+
+4 and 5 are the two worth branching on, since "does this exist" and "did someone else get there first" are the questions a retrying caller asks.
+
+### Reaching any route: `cofferdam api`
+
+`cofferdam api` sends a request to any route of the JSON API and prints what comes back, so a capability with no typed command of its own is still one line away:
+
+```bash
+cofferdam api whoami
+cofferdam api collections -X POST --field name=mycollection
+cofferdam api collections/mycollection
+```
+
+The path may be written with or without a leading slash and with or without the `api/` prefix, so `whoami` and `/api/whoami` name the same route. `--field k=v` builds a JSON body, coercing `true`, `false`, `null`, and whole numbers; `--raw-field k=v` keeps the value a string; `--input <file>` sends a file as the body, or stdin for `-`. The method defaults to GET, or POST when a body is given, and `-X` overrides it. The response body is printed verbatim on stdout; a non-2xx status prints it on stderr instead and exits with the code from the table above.
+
+Only the path is taken from the argument. A full URL is accepted, but its host is ignored in favour of the one you are logged in to, so a token is never sent somewhere you did not configure.
 
 ## Pushing
 
