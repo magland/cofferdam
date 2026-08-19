@@ -561,8 +561,23 @@ async function runNodeAction(
 
   if (runs.pre) {
     // A pre script runs before the action's main, and its failure is the
-    // step's failure.
-    if (!(await runScript(runs.pre, 'The pre step', step.id))) return false;
+    // step's failure. `pre-if` gates it the way `post-if` gates the post
+    // script; an unparseable condition runs the script, since skipping setup
+    // silently is the worse of the two failures.
+    let should = true;
+    if (runs.preIf !== undefined) {
+      const jobFailed = ctx.status().failed;
+      const jobCancelled = ctx.status().cancelled;
+      try {
+        should = evalCondition(runs.preIf, {
+          contexts: contextsFor({ spec: ctx.spec, scope, stepEnv: ctx.env, jobFailed, jobCancelled }),
+          functions: statusFunctions(jobFailed, jobCancelled),
+        });
+      } catch {
+        should = true;
+      }
+    }
+    if (should && !(await runScript(runs.pre, 'The pre step', step.id))) return false;
   }
 
   const ok = await runScript(runs.main, 'Process', step.id);

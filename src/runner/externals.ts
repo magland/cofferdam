@@ -44,7 +44,12 @@ function nodeArch(): string {
 }
 
 export class Externals {
-  private containerNode: string | null | undefined;
+  // Tagged with the container it describes, not merely remembered: one
+  // Externals serves every job a runner takes, and consecutive jobs may ask
+  // for different images. An untagged field would answer job two with what was
+  // true of job one's image. A runner runs one job at a time, so one entry is
+  // all there is to keep.
+  private containerNode: { id: string; node: string | null } | null = null;
 
   constructor(private dir: string = defaultExternalsDir()) {}
 
@@ -63,7 +68,7 @@ export class Externals {
   }
 
   private async imageNode(containerId: string): Promise<{ path: string; major: number } | null> {
-    if (this.containerNode === undefined) {
+    if (this.containerNode === null || this.containerNode.id !== containerId) {
       let out = '';
       const handle = execInContainer(
         containerId,
@@ -74,21 +79,29 @@ export class Externals {
       );
       await handle.done;
       const m = out.match(/v(\d+)\./);
-      this.containerNode = m ? m[1] : null;
+      this.containerNode = { id: containerId, node: m ? m[1] : null };
     }
-    if (this.containerNode === null) return null;
-    return { path: 'node', major: parseInt(this.containerNode, 10) };
+    const node = this.containerNode.node;
+    if (node === null) return null;
+    return { path: 'node', major: parseInt(node, 10) };
   }
 
   private async provision(containerId: string, major: number, onLine: (line: string) => void): Promise<string> {
-    const version = NODE_VERSIONS[major] ?? NODE_VERSIONS[20];
+    // An action may name any nodeN; only the runtimes above are provisioned.
+    // Say so, since an action written for a newer one will otherwise fail
+    // somewhere deep inside itself with no hint of why.
+    const version = NODE_VERSIONS[major];
+    if (version === undefined) {
+      onLine(`No node ${major} runtime is available; using node ${NODE_VERSIONS[20]} instead`);
+    }
+    const resolved = version ?? NODE_VERSIONS[20];
     const arch = nodeArch();
-    const name = `node-v${version}-linux-${arch}`;
+    const name = `node-v${resolved}-linux-${arch}`;
     const target = path.join(this.dir, name);
     const bin = path.join(target, 'bin', 'node');
     if (!fs.existsSync(bin)) {
-      onLine(`Providing node ${version} for JavaScript actions (the image has none)`);
-      await this.download(version, name, target);
+      onLine(`Providing node ${resolved} for JavaScript actions (the image has none)`);
+      await this.download(resolved, name, target);
     }
     const containerPath = `${EXTERNALS_MOUNT}/${name}/bin/node`;
     // Fail here, with an explanation, rather than letting the first action
