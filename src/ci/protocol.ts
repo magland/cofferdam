@@ -38,6 +38,13 @@ export interface JobSpec {
   github: Record<string, unknown>; // the github context, built per acquire
   inputs: Record<string, unknown> | null;
   timeoutMinutes: number;
+  /**
+   * Where this repository's site is served, decided by the vault rather than
+   * by the runner: a vault with a sites hostname serves each site at the root
+   * of an origin of its own, and the runner cannot know that. Absent from an
+   * older vault, which the runner falls back for.
+   */
+  site?: { url: string; basePath: string };
 }
 
 export interface AcquireRequest {

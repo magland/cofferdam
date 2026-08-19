@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { AuthLimiter } from '../limit';
 import { isValidName } from '../scan';
+import { siteHostUrl } from '../site';
 import { AuthResult, authenticateToken, canAdmin, loadVault } from '../vault';
 import { baseUrlOf } from '../web';
 import { ArtifactError, artifactPath, artifactsDir, deploySite, isValidArtifactName, listArtifacts } from './artifacts';
@@ -34,6 +35,21 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
 
   function apiError(res: Response, status: number, message: string) {
     res.status(status).json({ error: message });
+  }
+
+  /**
+   * Where a repository's site is served, which only the vault knows: with a
+   * sites hostname configured each site has an origin of its own and sits at
+   * its root, and without one it is a path under the forge host. A runner
+   * computing this from the server URL gets the second answer always, and a
+   * build told the wrong base path produces a site whose every asset URL is
+   * wrong, so the answer travels with the job rather than being guessed.
+   */
+  function siteOf(req: Request, collection: string, repo: string): { url: string; basePath: string } {
+    const own = siteHostUrl(root, req, collection, repo);
+    if (own) return { url: `${own}/`, basePath: '/' };
+    const p = `/${encodeURIComponent(collection)}/${encodeURIComponent(repo)}/site`;
+    return { url: `${baseUrlOf(req)}${p}/`, basePath: p };
   }
 
   // A missing header is not a failed attempt and is not charged; a wrong token
@@ -212,6 +228,7 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
       if (!closed) res.status(204).end();
       return;
     }
+    spec.site = siteOf(req, spec.address.collection, spec.address.repo);
     if (closed) {
       // The runner hung up while we were leasing; release it immediately so
       // the job does not wait out a lease expiry with nobody running it.
@@ -477,7 +494,7 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
       res.json({
         deployed: true,
         files: result.files,
-        url: `${baseUrlOf(req)}/${encodeURIComponent(a.collection)}/${encodeURIComponent(a.repo)}/site/`,
+        url: siteOf(req, a.collection, a.repo).url,
       });
     } catch (e) {
       apiError(res, e instanceof ArtifactError ? 400 : 500, e instanceof Error ? e.message : String(e));

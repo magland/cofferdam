@@ -460,23 +460,36 @@ const downloadArtifact: Override = {
 
 function siteUrls(ctx: StepExecContext): { origin: string; basePath: string; baseUrl: string; host: string } {
   const a = ctx.spec.address;
-  const origin = ctx.serverUrl.replace(/\/+$/, '');
-  const basePath = `/${a.collection}/${a.repo}/site`;
-  let host = origin;
+  // The vault says where the site will be, because only it knows whether a
+  // sites hostname is configured; a site served on one has an origin of its
+  // own and sits at its root, which no amount of arithmetic on the server URL
+  // would reveal. The fallback is the path shape, which is what a vault older
+  // than this field serves.
+  const baseUrl = (ctx.spec.site?.url ?? `${ctx.serverUrl.replace(/\/+$/, '')}/${a.collection}/${a.repo}/site/`).replace(
+    /\/+$/,
+    ''
+  );
+  const basePath = ctx.spec.site?.basePath ?? `/${a.collection}/${a.repo}/site`;
+  let origin = baseUrl;
+  let host = baseUrl;
   try {
-    host = new URL(origin).host;
+    const u = new URL(baseUrl);
+    origin = u.origin;
+    host = u.host;
   } catch {
     // keep the whole string if it is not a URL
   }
-  return { origin, basePath, baseUrl: `${origin}${basePath}`, host };
+  return { origin, basePath, baseUrl, host };
 }
 
 // configure-pages exists to tell the rest of a workflow where the site will
-// live. The real one asks GitHub's API; this answers from the vault's own
-// URL. Note the shape differs from GitHub's: a cofferdam site is served at
-// /<collection>/<repo>/site/ rather than at /<repo>/, so a generator that
-// computes its own base path instead of reading base_path will be wrong, and
-// needs the path passed to it explicitly.
+// live. The real one asks GitHub's API; this answers with what the vault said
+// when it handed out the job. Note the shape differs from GitHub's, and
+// differs between vaults: a site is served at /<collection>/<repo>/site/, or
+// at the root of an origin of its own where a sites hostname is configured,
+// but never at <owner>.github.io/<repo>/. A generator that computes its own
+// base path instead of reading base_path will be wrong on both, and needs the
+// path passed to it explicitly.
 const configurePages: Override = {
   name: 'configure-pages',
   async run({ ctx }) {

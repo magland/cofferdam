@@ -69,7 +69,7 @@ Artifacts are addressed by the job's lease, so only a job that is actually runni
 
 cofferdam checks the repository out into the workspace before the job starts. On GitHub the workspace begins empty and `actions/checkout` fills it, and cofferdam's `checkout` is a re-sync of what is already there. A workflow that deliberately wants an empty workspace will be surprised.
 
-A site is served at `/<collection>/<repo>/site/`, while GitHub serves one at `<owner>.github.io/<repo>/`. A site generator that reads `base_path` from `configure-pages` gets the right answer; one that computes its own from the repository name gets GitHub's shape and produces broken links. Pass the base path explicitly in that case, or have the generator emit relative URLs.
+A site is served at `/<collection>/<repo>/site/`, while GitHub serves one at `<owner>.github.io/<repo>/`, and on a vault with a [sites hostname](sites.md) it is served at the root of an origin of its own instead. A site generator that reads `base_path` from `configure-pages` gets the right answer in every case, because the vault decides it and hands it to the job; one that computes its own from the repository name gets GitHub's shape and produces broken links. Pass the base path explicitly in that case, or have the generator emit relative URLs. Note that `configure-pages` therefore has to run *before* the build that uses it, which is the opposite of where a workflow copied from GitHub usually puts it.
 
 ### Running actions needs node in the container
 

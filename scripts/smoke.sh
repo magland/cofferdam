@@ -3241,6 +3241,34 @@ YML
   grep -q "base path is /demo/ci/site (was /demo/ci/site)" "$RUNS/$SITE_RUN/jobs/build.log" || {
     echo "FAIL: configure-pages reported the wrong base path"; exit 1; }
   PASS=$((PASS+1)); echo "ok: configure-pages reports the vault's own site path, under both variable names"
+
+  # The same question on a vault that gives sites a hostname of their own: the
+  # site is then at the root of an origin of its own, which the runner cannot
+  # work out from the server URL, so the vault has to say so when it hands out
+  # the job. A build told /demo/ci/site here would emit a site whose every
+  # asset URL is wrong.
+  printf '{\n  "theme": "paper",\n  "sites": { "host": "sites.localhost" }\n}\n' > "$VAULT/config.json"
+  cat > "$CI_REPO/.github/workflows/sitehost.yml" <<'YML'
+name: SiteHost
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - id: pages
+        uses: actions/configure-pages@v5
+      - run: echo "base path is [$COFFERDAM_SITE_BASE_PATH] at ${{ steps.pages.outputs.base_url }}"
+YML
+  git -C "$CI_REPO" add -A
+  git -C "$CI_REPO" -c user.email=ci@example.com -c user.name=ci commit -qm "Add a sites-host workflow"
+  git -C "$CI_REPO" push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/demo/ci" main
+  sleep 1
+  run_workflow sitehost.yml SiteHost
+  grep -q "base path is \[/\] at http://ci--demo.sites.localhost" "$RUNS/$RUN_N/jobs/build.log" || {
+    echo "FAIL: configure-pages ignored the vault's sites hostname"
+    cat "$RUNS/$RUN_N/jobs/build.log"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: configure-pages follows a site to its own origin, where the base path is /"
+  printf '{\n  "theme": "paper"\n}\n' > "$VAULT/config.json"
   check "the artifact is listed on the run page" 200 "$BASE/demo/ci/actions/runs/$SITE_RUN"
   body_has "artifact name shown" 'site'
   check "the artifact downloads" 200 "$BASE/demo/ci/actions/runs/$SITE_RUN/artifacts/site"
