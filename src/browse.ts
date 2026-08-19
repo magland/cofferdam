@@ -16,6 +16,7 @@ import { LoadedRepo, ah, loadRepo, makeCtx, send404, wildcard } from './web';
 
 const COMMITS_PER_PAGE = 35;
 const MAX_RENDER_SIZE = 1024 * 1024;
+const MAX_LISTED_COMMITS = 250;
 
 export const IMAGE_TYPES: Record<string, string> = {
   png: 'image/png',
@@ -72,7 +73,18 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
       send404(res, `Path ${treePath || '/'} not found at ${ref}`, viewer);
       return;
     }
-    const latest = (await loaded.repo.log(ref, 0, 1, treePath || undefined))[0] ?? null;
+    // The listing wants a commit per entry, which is a git log per entry: cheap
+    // for the directory sizes people browse, and capped so that an unusually
+    // wide one degrades into a listing without the message and age columns
+    // rather than into a page that takes a second to build.
+    const entryPaths = entries
+      .slice(0, MAX_LISTED_COMMITS)
+      .map((e) => (treePath === '' ? e.name : `${treePath}/${e.name}`));
+    const [latest, entryCommits, commitCount] = await Promise.all([
+      loaded.repo.log(ref, 0, 1, treePath || undefined).then((cs) => cs[0] ?? null),
+      loaded.repo.lastCommits(ref, entryPaths),
+      loaded.repo.commitCount(ref).catch(() => 0),
+    ]);
     let readmeHtml: string | null = null;
     let readmeName: string | null = null;
     const readme = entries.find((e) => e.type === 'blob' && /^readme(\.(md|markdown|txt))?$/i.test(e.name));
@@ -94,7 +106,18 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
         }
       }
     }
-    res.type('html').send(views.treePage(ctx, treePath, entries, latest, readmeHtml, readmeName));
+    res.type('html').send(
+      views.treePage(ctx, {
+        path: treePath,
+        entries,
+        entryCommits,
+        latest,
+        commitCount,
+        description: repoDescription(loaded.repo.dir),
+        readmeHtml,
+        readmeName,
+      })
+    );
   }
 
   app.get(

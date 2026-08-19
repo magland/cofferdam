@@ -26,6 +26,7 @@ import { full as emojiPlugin } from 'markdown-it-emoji';
 import footnotePlugin from 'markdown-it-footnote';
 import sanitizeHtml from 'sanitize-html';
 import { esc } from './render';
+import { copyButton } from './views';
 
 export interface MarkdownOpts {
   /** Base URL for relative image sources (the raw endpoint). */
@@ -182,7 +183,7 @@ export function renderMarkdown(text: string, opts: MarkdownOpts): string {
       `<div class="code-block"><pre><code${cls}>${highlight(
         code,
         lang
-      )}</code></pre><button class="copy-btn" type="button" onclick="copyCmd(this)">Copy</button></div>`
+      )}</code></pre>${copyButton()}</div>`
     )}\n`;
   };
   const mathBlock = (src: string): string => `<div class="math-block">${slot(mathHtml(src, true))}</div>\n`;

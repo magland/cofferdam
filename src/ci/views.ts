@@ -1,6 +1,7 @@
+import { icon } from '../icons';
 import { esc, formatSize, timeTag } from '../render';
 import { Viewer } from '../session';
-import { RepoCtx, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from '../views';
+import { RepoCtx, copyButton, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from '../views';
 import { ArtifactInfo } from './artifacts';
 import { DispatchableWorkflow } from './engine';
 import { JobRecord, RunRecord, StepState } from './runs';
@@ -169,9 +170,9 @@ ${inputs}
           .map((w) => `<option value="${esc(w.path)}">${esc(w.name)}</option>`)
           .join('')}</select></div>`
       : '';
-  return `<details class="dispatch">
-<summary class="btn">Run workflow</summary>
-<div class="dispatch-body">${picker}${panels}</div>
+  return `<details class="dropdown dispatch">
+<summary class="btn">${icon('play')}<span>Run workflow</span>${icon('chevron-down', 'caret')}</summary>
+<div class="dropdown-menu dd-right dispatch-body">${picker}${panels}</div>
 <script>
 function pickWorkflow(sel) {
   var root = sel.closest('.dispatch-body');
@@ -403,7 +404,7 @@ export function runnerTokenPage(viewer: Viewer, name: string, token: string, hos
 <div class="token-box"><code>${esc(token)}</code></div>
 <h2>Start it</h2>
 <p class="muted">On a machine with Docker:</p>
-<div class="cmd-row"><code>hubbit runner run --host ${esc(host)} --runner-token ${esc(token)}</code><button class="copy-btn" type="button" onclick="copyCmd(this)">Copy</button></div>
+<div class="cmd-row"><code>hubbit runner run --host ${esc(host)} --runner-token ${esc(token)}</code>${copyButton()}</div>
 <p class="muted small">Or save it with <code>hubbit runner login</code> once and run <code>hubbit runner run</code> with no arguments afterwards.</p>
 <p><a class="btn" href="/admin/runners">Back to runners</a></p>
 </div>`;

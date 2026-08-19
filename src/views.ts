@@ -85,7 +85,7 @@ ${content}
 function copyCmd(btn) {
   var el = btn.previousElementSibling;
   var text = el && el.tagName === 'INPUT' ? el.value : el.textContent;
-  function done() { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy'; }, 1200); }
+  function done() { btn.classList.add('copied'); setTimeout(function () { btn.classList.remove('copied'); }, 1400); }
   function fallback() {
     var ta = document.createElement('textarea');
     ta.value = text;
@@ -98,6 +98,33 @@ function copyCmd(btn) {
     navigator.clipboard.writeText(text).then(done, function () { fallback(); done(); });
   } else { fallback(); done(); }
 }
+// Menus are <details> elements. These two handlers give them the rest of what
+// a menu is expected to do: close when the reader clicks elsewhere or presses
+// Escape. Nothing else about them needs script.
+function closeMenus(except) {
+  var open = document.querySelectorAll('details.dropdown[open]');
+  for (var i = 0; i < open.length; i++) {
+    if (!except || !open[i].contains(except)) open[i].open = false;
+  }
+}
+document.addEventListener('click', function (e) { closeMenus(e.target); });
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMenus(null); });
+// The filter box in a menu of many items (branches and tags).
+function filterMenu(input) {
+  var menu = input.parentElement;
+  var q = input.value.trim().toLowerCase();
+  var groups = menu.querySelectorAll('.dd-group');
+  for (var g = 0; g < groups.length; g++) {
+    var items = groups[g].querySelectorAll('.dd-item');
+    var shown = 0;
+    for (var i = 0; i < items.length; i++) {
+      var hit = q === '' || items[i].textContent.toLowerCase().indexOf(q) !== -1;
+      items[i].hidden = !hit;
+      if (hit) shown++;
+    }
+    groups[g].hidden = shown === 0;
+  }
+}
 </script>
 </body>
 </html>`;
@@ -107,21 +134,69 @@ export function repoOpts(ctx: RepoCtx, path?: string): PageOpts {
   return { viewer: ctx.viewer, path };
 }
 
-export function copyRow(cmd: string): string {
-  return `<div class="cmd-row"><code>${esc(cmd)}</code><button class="copy-btn" type="button" onclick="copyCmd(this)">Copy</button></div>`;
+/**
+ * The copy button that sits after a <code> or <input> holding the text.
+ * Confirmation is a class the script toggles rather than replaced markup, so
+ * the idle and copied faces are both in the page and neither needs escaping
+ * at click time.
+ */
+export function copyButton(label = ''): string {
+  const face = (glyph: IconName, text: string, cls: string) =>
+    `<span class="${cls}">${icon(glyph)}${label ? `<span>${esc(text)}</span>` : ''}</span>`;
+  return `<button class="copy-btn" type="button" onclick="copyCmd(this)" aria-label="Copy${
+    label ? ` ${esc(label.toLowerCase())}` : ''
+  }">${face('copy', label, 'copy-idle')}${face('check', 'Copied', 'copy-done')}</button>`;
 }
 
-function refSelector(ctx: RepoCtx, urlForRef: (ref: string) => string): string {
-  const option = (r: RefInfo) =>
-    `<option value="${esc(urlForRef(r.name))}"${r.name === ctx.ref ? ' selected' : ''}>${esc(r.name)}</option>`;
-  const branchOpts = ctx.branches.map(option).join('');
-  const tagOpts = ctx.tags.map(option).join('');
-  let inner = '';
-  if (branchOpts) inner += `<optgroup label="Branches">${branchOpts}</optgroup>`;
-  if (tagOpts) inner += `<optgroup label="Tags">${tagOpts}</optgroup>`;
-  const known = ctx.branches.some((b) => b.name === ctx.ref) || ctx.tags.some((t) => t.name === ctx.ref);
-  if (!known) inner = `<option value="" selected>${esc(ctx.ref)}</option>` + inner;
-  return `<select class="ref-select" onchange="if(this.value)location.href=this.value">${inner}</select>`;
+export function copyRow(cmd: string): string {
+  return `<div class="cmd-row"><code>${esc(cmd)}</code>${copyButton()}</div>`;
+}
+
+/**
+ * The branch and tag picker: a button carrying the current ref, opening a
+ * menu of every ref with a filter box, as on GitHub. It is a <details>
+ * element, so it opens, closes, and takes the keyboard without a component
+ * framework; the page script closes it on an outside click and filters the
+ * list as you type.
+ */
+function refPicker(ctx: RepoCtx, urlForRef: (ref: string) => string): string {
+  const isTag = ctx.tags.some((t) => t.name === ctx.ref);
+  const known = isTag || ctx.branches.some((b) => b.name === ctx.ref);
+  const item = (r: RefInfo) => {
+    const current = r.name === ctx.ref;
+    return `<a class="dd-item${current ? ' current' : ''}" href="${esc(urlForRef(r.name))}">${
+      current ? icon('check', 'dd-check') : '<span class="dd-check"></span>'
+    }<span class="dd-label">${esc(r.name)}</span></a>`;
+  };
+  const group = (label: string, refs: RefInfo[]) =>
+    refs.length === 0
+      ? ''
+      : `<div class="dd-group"><div class="dd-section">${label}</div>${refs.map(item).join('')}</div>`;
+  // A ref that is neither branch nor tag is a raw commit the reader navigated
+  // to; name it on the button so the picker never lies about where they are.
+  const glyph = known ? (isTag ? 'tag' : 'git-branch') : 'git-commit';
+  const shown = known ? ctx.ref : ctx.ref.slice(0, 7);
+  return `<details class="dropdown ref-picker">
+<summary class="btn" title="Switch branches or tags">${icon(glyph)}<b class="dd-current">${esc(
+    shown
+  )}</b>${icon('chevron-down', 'caret')}</summary>
+<div class="dropdown-menu">
+  <input class="dd-filter" type="text" placeholder="Find a branch or tag" oninput="filterMenu(this)" aria-label="Filter branches and tags">
+  <div class="dd-scroll">${group('Branches', ctx.branches)}${group('Tags', ctx.tags)}</div>
+</div>
+</details>`;
+}
+
+/** The green Code button, with the clone URL behind it. */
+function cloneMenu(ctx: RepoCtx): string {
+  return `<details class="dropdown clone-menu">
+<summary class="btn btn-primary">${icon('code')}<span>Code</span>${icon('chevron-down', 'caret')}</summary>
+<div class="dropdown-menu dd-right">
+  <div class="dd-section">Clone with HTTP</div>
+  <div class="cmd-row"><input readonly value="${esc(ctx.cloneUrl)}" onclick="this.select()">${copyButton()}</div>
+  <p class="muted small">Anyone can clone. Pushing asks for a username and a token.</p>
+</div>
+</details>`;
 }
 
 export function repoHeader(
@@ -222,77 +297,143 @@ export function collectionPage(
   });
 }
 
-export function treePage(
-  ctx: RepoCtx,
-  path: string,
-  entries: TreeEntry[],
-  latest: CommitSummary | null,
-  readmeHtml: string | null,
-  readmeName: string | null
-): string {
+export interface TreeView {
+  path: string;
+  entries: TreeEntry[];
+  /** The newest commit touching each entry, keyed by its path from the root. */
+  entryCommits: Map<string, CommitSummary>;
+  /** The newest commit at this path, for the bar above the listing. */
+  latest: CommitSummary | null;
+  commitCount: number;
+  description: string | null;
+  readmeHtml: string | null;
+  readmeName: string | null;
+}
+
+/** "1,284" - counts in the interface are grouped, as they are on GitHub. */
+function count(n: number): string {
+  return n.toLocaleString('en-US');
+}
+
+/**
+ * The About panel beside the repository root: what the repository says it is,
+ * and the way in to the documents a reader looks for first.
+ */
+function aboutPanel(ctx: RepoCtx, view: TreeView): string {
   const base = repoUrl(ctx);
+  const blob = (name: string) => `${base}/blob/${encPath(ctx.ref)}/${encPath(name)}`;
+  const license = view.entries.find(
+    (e) => e.type === 'blob' && /^(licen[cs]e|copying)(\.[a-z]+)?$/i.test(e.name)
+  );
+  const links: string[] = [];
+  if (view.readmeName) links.push(`<a href="#readme">${icon('book')}<span>Readme</span></a>`);
+  if (license) links.push(`<a href="${blob(license.name)}">${icon('law')}<span>${esc(license.name)}</span></a>`);
+  if (ctx.hasSite) links.push(`<a href="${base}/site/">${icon('globe')}<span>Site</span></a>`);
+  const settings =
+    ctx.canPush || ctx.canAdmin
+      ? `<a class="side-edit" href="${base}/settings" title="Edit repository details" aria-label="Edit repository details">${icon(
+          'gear'
+        )}</a>`
+      : '';
+  const description = view.description
+    ? `<p class="side-desc">${esc(view.description)}</p>`
+    : `<p class="side-desc muted">No description provided.</p>`;
+  const facts = [
+    `<a href="${base}/commits/${encPath(ctx.ref)}">${icon('history')}<span>${count(view.commitCount)} commit${
+      view.commitCount === 1 ? '' : 's'
+    }</span></a>`,
+    `<a href="${base}/branches">${icon('git-branch')}<span>${count(ctx.branches.length)} branch${
+      ctx.branches.length === 1 ? '' : 'es'
+    }</span></a>`,
+    `<a href="${base}/tags">${icon('tag')}<span>${count(ctx.tags.length)} tag${ctx.tags.length === 1 ? '' : 's'}</span></a>`,
+  ];
+  return `<aside class="repo-side">
+<div class="side-block">
+  <h3>About${settings}</h3>
+  ${description}
+  ${links.length ? `<div class="side-links">${links.join('')}</div>` : ''}
+</div>
+<div class="side-block"><div class="side-links">${facts.join('')}</div></div>
+</aside>`;
+}
+
+export function treePage(ctx: RepoCtx, view: TreeView): string {
+  const base = repoUrl(ctx);
+  const { path, entries } = view;
   const refBase = `${base}/tree/${encPath(ctx.ref)}`;
+  const atRoot = path === '';
   const rows: string[] = [];
-  if (path !== '') {
+  if (!atRoot) {
     const parent = path.split('/').slice(0, -1).join('/');
     const up = parent === '' ? refBase : `${refBase}/${encPath(parent)}`;
-    rows.push(`<tr><td><a href="${up}">..</a></td><td></td><td></td></tr>`);
+    rows.push(`<tr><td class="tree-name"><a href="${up}" aria-label="Parent directory">..</a></td><td></td><td></td></tr>`);
   }
   for (const e of entries) {
-    const childPath = path === '' ? e.name : `${path}/${e.name}`;
+    const childPath = atRoot ? e.name : `${path}/${e.name}`;
+    let name: string;
     if (e.type === 'tree') {
-      rows.push(
-        `<tr><td>${FOLDER_ICON}<a href="${base}/tree/${encPath(ctx.ref)}/${encPath(childPath)}">${esc(
-          e.name
-        )}</a></td><td></td><td></td></tr>`
-      );
+      name = `${FOLDER_ICON}<a href="${refBase}/${encPath(childPath)}">${esc(e.name)}</a>`;
     } else if (e.type === 'blob') {
-      rows.push(
-        `<tr><td>${FILE_ICON}<a href="${base}/blob/${encPath(ctx.ref)}/${encPath(childPath)}">${esc(
-          e.name
-        )}</a></td><td class="right muted small">${e.size !== null ? formatSize(e.size) : ''}</td><td class="right muted small mono">${e.sha.slice(
-          0,
-          7
-        )}</td></tr>`
-      );
+      name = `${FILE_ICON}<a href="${base}/blob/${encPath(ctx.ref)}/${encPath(childPath)}">${esc(e.name)}</a>`;
     } else {
-      rows.push(
-        `<tr><td>${FOLDER_ICON}${esc(e.name)} <span class="muted small">@ ${e.sha.slice(0, 7)} (submodule)</span></td><td></td><td></td></tr>`
-      );
+      name = `${FOLDER_ICON}<span>${esc(e.name)}</span> <span class="muted small mono">@ ${e.sha.slice(
+        0,
+        7
+      )}</span>`;
     }
-  }
-  const latestBar = latest
-    ? `<div class="latest-commit"><span><a href="${base}/commit/${latest.sha}"><b>${esc(
-        latest.subject
-      )}</b></a> <span class="muted small">by ${esc(latest.author)}</span></span><span class="small">${timeTag(
-        latest.date
-      )} <a class="sha" href="${base}/commit/${latest.sha}">${latest.sha.slice(0, 7)}</a></span></div>`
-    : '';
-  const addFileUrl = `${base}/new/${encPath(ctx.ref)}${path === '' ? '' : `/${encPath(path)}`}`;
-  const addFileBtn =
-    ctx.canPush && ctx.refIsBranch ? `<a class="btn" href="${addFileUrl}">Add file</a>` : '';
-  const cloneBox =
-    path === ''
-      ? `<div class="clone-box"><input readonly value="git clone ${esc(ctx.cloneUrl)}" onclick="this.select()"><button class="copy-btn" type="button" onclick="copyCmd(this)">Copy</button></div>`
+    // The message and age columns are what a directory listing on GitHub
+    // shows, and they answer the question a listing is usually asked: what
+    // changed here lately.
+    const commit = view.entryCommits.get(childPath);
+    const message = commit
+      ? `<a href="${base}/commit/${commit.sha}" title="${esc(commit.subject)}">${esc(commit.subject)}</a>`
       : '';
-  const readmePath = path === '' ? readmeName : `${path}/${readmeName}`;
-  const readme = readmeHtml
-    ? `<div class="box"><div class="box-header"><a href="${base}/blob/${encPath(ctx.ref)}/${encPath(
-        readmePath ?? 'README'
-      )}">${esc(readmeName ?? 'README')}</a></div><div class="box-body markdown-body">${readmeHtml}</div></div>`
+    rows.push(
+      `<tr><td class="tree-name">${name}</td><td class="tree-message muted small">${message}</td><td class="tree-age right small">${
+        commit ? timeTag(commit.date) : ''
+      }</td></tr>`
+    );
+  }
+  const latest = view.latest;
+  const latestBar = latest
+    ? `<div class="latest-commit">
+  <span class="lc-main"><b>${esc(latest.author)}</b> <a href="${base}/commit/${latest.sha}">${esc(latest.subject)}</a></span>
+  <span class="lc-meta"><a class="sha" href="${base}/commit/${latest.sha}">${latest.sha.slice(
+        0,
+        7
+      )}</a> ${timeTag(latest.date)} <a class="lc-history" href="${base}/commits/${encPath(ctx.ref)}">${icon(
+        'history'
+      )}<b>${count(view.commitCount)}</b> <span>Commits</span></a></span>
+</div>`
+    : '';
+  const addFileUrl = `${base}/new/${encPath(ctx.ref)}${atRoot ? '' : `/${encPath(path)}`}`;
+  const addFileBtn =
+    ctx.canPush && ctx.refIsBranch ? `<a class="btn" href="${addFileUrl}">${icon('plus')}<span>Add file</span></a>` : '';
+  const readmePath = atRoot ? view.readmeName : `${path}/${view.readmeName}`;
+  const readme = view.readmeHtml
+    ? `<div class="box" id="readme"><div class="box-header">${icon('book')}<a href="${base}/blob/${encPath(
+        ctx.ref
+      )}/${encPath(readmePath ?? 'README')}">${esc(view.readmeName ?? 'README')}</a></div><div class="box-body markdown-body">${
+        view.readmeHtml
+      }</div></div>`
     : '';
   const content = `${repoHeader(ctx, 'code')}
 <div class="toolbar">
-  <div class="left">${refSelector(ctx, (ref) => `${base}/tree/${encPath(ref)}`)}${breadcrumb(ctx, path)}</div>
-  <div class="right-group">${addFileBtn}${cloneBox}</div>
+  <div class="left">${refPicker(ctx, (ref) => `${base}/tree/${encPath(ref)}`)}${breadcrumb(ctx, path)}</div>
+  <div class="right-group">${addFileBtn}${cloneMenu(ctx)}</div>
 </div>
+<div class="repo-layout">
+<div class="repo-main">
 ${latestBar}
-<table class="listing"><tbody>${rows.join('')}</tbody></table>
-${readme}`;
+<table class="listing tree"><tbody>${rows.join('')}</tbody></table>
+${readme}
+</div>
+${atRoot ? aboutPanel(ctx, view) : ''}
+</div>`;
   return layout(
     `${ctx.collection}/${ctx.repo}${path ? ` at ${path}` : ''}`,
     content,
-    repoOpts(ctx, path === '' ? repoUrl(ctx) : `${refBase}/${encPath(path)}`)
+    repoOpts(ctx, atRoot ? repoUrl(ctx) : `${refBase}/${encPath(path)}`)
   );
 }
 
@@ -355,7 +496,7 @@ export function blobPage(
   }
   const content = `${repoHeader(ctx, 'code')}
 <div class="toolbar">
-  <div class="left">${refSelector(ctx, (ref) => `${base}/blob/${encPath(ref)}/${encPath(path)}`)}${breadcrumb(ctx, path)}</div>
+  <div class="left">${refPicker(ctx, (ref) => `${base}/blob/${encPath(ref)}/${encPath(path)}`)}${breadcrumb(ctx, path)}</div>
 </div>
 ${body}`;
   return layout(`${path} at ${ctx.ref} - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, blobUrl));
@@ -384,7 +525,9 @@ export function commitsPage(
   if (page > 1) pager.push(`<a class="btn" href="${pageUrl(page - 1)}">&larr; Newer</a>`);
   if (page < totalPages) pager.push(`<a class="btn" href="${pageUrl(page + 1)}">Older &rarr;</a>`);
   const content = `${repoHeader(ctx, 'commits')}
-<div class="toolbar"><div class="left">${refSelector(ctx, (ref) => `${base}/commits/${encPath(ref)}`)}<span class="muted">${totalCount} commits</span></div></div>
+<div class="toolbar"><div class="left">${refPicker(ctx, (ref) => `${base}/commits/${encPath(ref)}`)}<span class="muted small">${count(
+    totalCount
+  )} commit${totalCount === 1 ? '' : 's'}</span></div></div>
 ${rows || '<div class="empty-state">No commits on this ref.</div>'}
 ${pager.length ? `<div class="pagination">${pager.join('')}</div>` : ''}`;
   return layout(`Commits at ${ctx.ref} - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, `${base}/commits/${encPath(ctx.ref)}`));

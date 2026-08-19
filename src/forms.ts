@@ -2,7 +2,7 @@ import { esc } from './render';
 import { Viewer } from './session';
 import { Theme } from './themes';
 import { UserRecord } from './vault';
-import { PageOpts, RepoCtx, copyRow, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from './views';
+import { PageOpts, RepoCtx, copyButton, copyRow, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from './views';
 
 // Form pages for the UI operations. Every mutating form embeds the session's
 // CSRF value and posts back to a handler that re-checks authorization against
@@ -343,7 +343,7 @@ export function tokenPage(viewer: Viewer, username: string, token: string, creat
   const content = `<div class="form-box">
 <h1>${esc(heading)}</h1>
 <p>Copy the token now; only its SHA-256 hash is stored, so it cannot be shown again.</p>
-<div class="cmd-row"><code>${esc(token)}</code><button class="copy-btn" type="button" onclick="copyCmd(this)">Copy</button></div>
+<div class="cmd-row"><code>${esc(token)}</code>${copyButton()}</div>
 <p class="muted small">Use it as the password with username <b>${esc(
     username
   )}</b> when git asks for credentials, or to sign in here.</p>

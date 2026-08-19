@@ -171,6 +171,27 @@ export class GitRepo {
     });
   }
 
+  /**
+   * The newest commit touching each of `paths`, keyed by path: what fills the
+   * message and age columns of a directory listing. One `git log -1` per path
+   * is what git itself would do to answer this, so the work is bounded by
+   * running a few at a time and by the caller capping how many paths it asks
+   * about. A path with no commit (a submodule gitlink, say) is simply absent
+   * from the map.
+   */
+  async lastCommits(ref: string, paths: string[], concurrency = 8): Promise<Map<string, CommitSummary>> {
+    const found = new Map<string, CommitSummary>();
+    let next = 0;
+    const worker = async () => {
+      for (let i = next++; i < paths.length; i = next++) {
+        const [commit] = await this.log(ref, 0, 1, paths[i]);
+        if (commit) found.set(paths[i], commit);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, paths.length) }, worker));
+    return found;
+  }
+
   async commitCount(ref: string): Promise<number> {
     const out = (await execGit(this.dir, ['rev-list', '--count', ref, '--'])).toString('utf8').trim();
     return parseInt(out, 10);

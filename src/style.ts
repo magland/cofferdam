@@ -15,7 +15,7 @@ body {
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 code, pre, .mono { font-family: var(--font-mono); }
-.container { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+.container { max-width: 1216px; margin: 0 auto; padding: 0 16px; }
 .topbar { background: var(--surface); border-bottom: 1px solid var(--border); }
 .topbar .container { display: flex; align-items: center; gap: 12px; height: 52px; }
 /* The brand is the logotype from logo.ts, which inherits the text colour. Its
@@ -63,14 +63,45 @@ h2 { font-family: var(--font-head); font-size: 18px; }
    selector and drops the breadcrumb onto a second line. */
 .toolbar .left { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; flex: 1 1 auto; min-width: 0; }
 .right-group { display: flex; align-items: center; gap: 6px; }
-/* width:auto opts out of the generic form-field sizing further down. */
-.ref-select { width: auto; max-width: 280px; padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--fg); font-size: 13px; }
 .crumb { font-size: 15px; }
 .crumb b { font-weight: 600; }
-.clone-box { display: flex; align-items: center; gap: 6px; }
-.clone-box input {
-  width: 320px; padding: 4px 8px; font-size: 12px; border: 1px solid var(--border);
-  border-radius: var(--radius); background: var(--surface); color: var(--fg); font-family: var(--font-mono);
+
+/* Menus: a <details> whose summary is a button and whose body is a popover.
+   The ref picker, the Code button, and the workflow dispatch form all use it. */
+.dropdown { position: relative; }
+.dropdown > summary { list-style: none; cursor: pointer; }
+.dropdown > summary::-webkit-details-marker { display: none; }
+.dropdown > summary .caret { opacity: 0.7; }
+.dropdown-menu {
+  position: absolute; left: 0; z-index: 20; margin-top: 6px; width: 320px; max-width: 92vw;
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: 0 8px 24px var(--shadow); text-align: left; overflow: hidden;
+}
+.dropdown-menu.dd-right { left: auto; right: 0; }
+.dropdown-menu > .cmd-row, .dropdown-menu > p { margin: 10px 12px; }
+.dd-section {
+  padding: 8px 12px; font-size: 12px; font-weight: 600; color: var(--fg-muted);
+  border-bottom: 1px solid var(--border-soft); background: var(--surface);
+}
+.dd-group + .dd-group .dd-section { border-top: 1px solid var(--border-soft); }
+.dd-filter {
+  display: block; width: calc(100% - 24px); margin: 10px 12px; padding: 5px 10px; font-size: 13px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--input-bg); color: var(--fg);
+}
+.dd-scroll { max-height: 320px; overflow-y: auto; }
+.dd-item {
+  display: flex; align-items: center; gap: 8px; padding: 7px 12px; color: var(--fg);
+  border-top: 1px solid var(--border-soft); font-size: 13px;
+}
+.dd-item:first-child { border-top: none; }
+.dd-item:hover { background: var(--surface); text-decoration: none; }
+.dd-item.current { font-weight: 600; }
+.dd-item .dd-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-check { width: 16px; flex: none; color: var(--accent); }
+.dd-current { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clone-menu .cmd-row input {
+  flex: 1; min-width: 0; padding: 5px 8px; font-size: 12px; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--input-bg); color: var(--fg); font-family: var(--font-mono);
 }
 .btn {
   display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: 13px;
@@ -85,6 +116,26 @@ h2 { font-family: var(--font-head); font-size: 18px; }
 .btn-danger-outline { color: var(--danger); }
 .btn-danger-outline:hover { background: var(--danger); border-color: var(--danger); color: var(--on-danger); }
 
+/* The repository root: the listing beside the About panel, stacking on a
+   narrow screen. Every other tree page is one column. */
+.repo-layout { display: flex; align-items: flex-start; gap: 24px; }
+.repo-main { flex: 1 1 auto; min-width: 0; }
+.repo-side { flex: 0 0 296px; }
+.side-block { padding-bottom: 16px; margin-bottom: 16px; border-bottom: 1px solid var(--border-soft); }
+.side-block:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+.side-block h3 { display: flex; align-items: center; gap: 8px; font-family: var(--font-head); font-size: 15px; margin: 0 0 8px; }
+.side-edit { margin-left: auto; color: var(--fg-muted); display: flex; }
+.side-edit:hover { color: var(--accent); }
+.side-desc { margin: 0 0 12px; }
+.side-links { display: flex; flex-direction: column; gap: 8px; }
+.side-links a { display: flex; align-items: center; gap: 8px; color: var(--fg); font-size: 13px; }
+.side-links a:hover { color: var(--accent); text-decoration: none; }
+.side-links .octicon { color: var(--fg-muted); }
+@media (max-width: 1000px) {
+  .repo-layout { flex-direction: column; }
+  .repo-side { flex: 1 1 auto; width: 100%; }
+}
+
 table.listing { width: 100%; border-collapse: collapse; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 table.listing th { text-align: left; font-weight: 600; background: var(--surface); padding: 8px 12px; border-bottom: 1px solid var(--border); }
 table.listing td { padding: 7px 12px; border-top: 1px solid var(--border-soft); }
@@ -94,15 +145,38 @@ td.right, th.right { text-align: right; }
 .icon { display: inline-block; width: 16px; text-align: center; margin-right: 6px; color: var(--accent-soft); }
 .icon.file { color: var(--fg-subtle); }
 
+/* Tree listings: name, then the message and age of the commit that last
+   touched the entry. The name column is sized to the content so long file
+   names are not truncated, and the message column takes the slack. */
+table.listing.tree td.tree-name { width: 1%; white-space: nowrap; }
+table.listing.tree td.tree-message { max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+table.listing.tree td.tree-message a { color: var(--fg-muted); }
+table.listing.tree td.tree-message a:hover { color: var(--accent); }
+table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
+@media (max-width: 700px) {
+  table.listing.tree td.tree-message { display: none; }
+}
+
 .latest-commit {
-  display: flex; justify-content: space-between; gap: 12px; align-items: baseline;
+  display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius) var(--radius) 0 0;
   padding: 8px 12px; border-bottom: none;
 }
 .latest-commit + table.listing { border-radius: 0 0 var(--radius) var(--radius); }
+.latest-commit .lc-main { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.latest-commit .lc-main a { color: var(--fg-muted); }
+.latest-commit .lc-main a:hover { color: var(--accent); }
+.latest-commit .lc-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.lc-history { display: flex; align-items: center; gap: 6px; color: var(--fg); padding-left: 8px; border-left: 1px solid var(--border); }
+.lc-history:hover { color: var(--accent); text-decoration: none; }
+.lc-history .octicon { color: var(--fg-muted); }
 
 .box { border: 1px solid var(--border); border-radius: var(--radius); margin-top: 24px; }
-.box-header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 8px 12px; font-weight: 600; border-radius: var(--radius) var(--radius) 0 0; }
+.box-header {
+  display: flex; align-items: center; gap: 8px; background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 8px 12px; font-weight: 600; border-radius: var(--radius) var(--radius) 0 0;
+}
+.box-header .octicon { color: var(--fg-muted); }
 .box-body { padding: 16px 24px; }
 .box-header a { color: var(--fg); }
 .box-header a:hover { color: var(--accent); text-decoration: none; }
@@ -225,10 +299,16 @@ pre.codeview { margin: 0; padding: 10px 16px; overflow-x: auto; flex: 1; font-si
   border: 1px solid var(--border); border-radius: var(--radius); font-size: 12px;
 }
 .copy-btn {
-  padding: 4px 10px; font-size: 12px; border: 1px solid var(--border); border-radius: var(--radius);
-  background: var(--surface); cursor: pointer; color: var(--fg); white-space: nowrap; font-family: inherit;
+  display: inline-flex; align-items: center; padding: 4px 10px; font-size: 12px; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--surface); cursor: pointer; color: var(--fg);
+  white-space: nowrap; font-family: inherit; line-height: 1.5;
 }
 .copy-btn:hover { background: var(--surface-hover); }
+/* Both faces of the button are in the page; copying swaps which one shows. */
+.copy-btn span { display: inline-flex; align-items: center; gap: 6px; }
+.copy-btn .copy-done { display: none; color: var(--alert-tip); }
+.copy-btn.copied .copy-idle { display: none; }
+.copy-btn.copied .copy-done { display: inline-flex; }
 .empty-cmds { max-width: 520px; margin: 12px auto; text-align: left; }
 
 .empty-state { border: 1px dashed var(--border); border-radius: var(--radius); padding: 48px; text-align: center; color: var(--fg-muted); }
@@ -299,10 +379,7 @@ textarea.code-editor {
 .wf-filter a { padding: 4px 10px; border: 1px solid var(--border); border-radius: 2em; color: var(--fg-muted); font-size: 13px; }
 .wf-filter a:hover { background: var(--surface); text-decoration: none; }
 .wf-filter a.current { color: var(--fg); border-color: var(--accent); font-weight: 600; }
-.dispatch { position: relative; }
-.dispatch > summary { list-style: none; cursor: pointer; }
-.dispatch > summary::-webkit-details-marker { display: none; }
-.dispatch-body { position: absolute; right: 0; z-index: 20; margin-top: 6px; width: 340px; max-width: 90vw; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; box-shadow: 0 6px 24px rgba(0,0,0,0.14); text-align: left; }
+.dispatch-body { padding: 16px; }
 .run-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .run-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .run-title h2 { margin: 0; }

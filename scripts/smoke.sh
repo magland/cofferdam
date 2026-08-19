@@ -95,7 +95,8 @@ check "create demo/proj" 302 -b "$JAR" "$BASE/new" \
 check "repo page renders" 200 -b "$JAR" "$BASE/demo/proj"
 body_has "README rendered" 'Demo project'
 body_has "settings tab shown" '>Settings<'
-body_has "clone box present" 'git clone'
+body_has "clone menu present" 'Clone with HTTP'
+body_has "clone menu carries the URL" "value=\"$BASE/demo/proj\""
 body_lacks "no collapsible cli hints" 'cmd-hint'
 
 check "csrf rejected on POST" 403 -b "$JAR" "$BASE/demo/proj/branches/create" \
