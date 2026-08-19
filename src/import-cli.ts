@@ -21,10 +21,21 @@ interface ImportArgs {
   host: string | null;
   token: string | null;
   lfs: boolean;
+  description: string | null;
+  noDescription: boolean;
 }
 
 function parseImportArgs(args: string[], usage: () => never): ImportArgs {
-  const out: ImportArgs = { src: null, collection: null, name: null, host: null, token: null, lfs: false };
+  const out: ImportArgs = {
+    src: null,
+    collection: null,
+    name: null,
+    host: null,
+    token: null,
+    lfs: false,
+    description: null,
+    noDescription: false,
+  };
   let positional = 0;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -34,6 +45,8 @@ function parseImportArgs(args: string[], usage: () => never): ImportArgs {
     else if (a === '--collection') out.collection = args[++i];
     else if (a === '--name') out.name = args[++i];
     else if (a === '--lfs') out.lfs = true;
+    else if (a === '--description') out.description = args[++i];
+    else if (a === '--no-description') out.noDescription = true;
     else if (a.startsWith('-')) {
       console.error(`Unknown option: ${a}`);
       process.exit(1);
@@ -82,6 +95,30 @@ const CREDENTIAL_HELPER =
 
 function pushArgs(dir: string): string[] {
   return ['-C', dir, '-c', 'credential.helper=', '-c', `credential.helper=${CREDENTIAL_HELPER}`];
+}
+
+/**
+ * A repository's one-line description is not part of its git data, so a clone
+ * and a mirror push carry everything except that. For a GitHub source we can
+ * ask for it: one unauthenticated call to the REST API, which answers for a
+ * public repository and declines for a private one. Nothing here is worth
+ * failing an import that has already arrived, so every failure is a null and
+ * the caller says so in one line.
+ */
+async function githubDescription(gh: { owner: string; repo: string }): Promise<string | null> {
+  const url = `https://api.github.com/repos/${encodeURIComponent(gh.owner)}/${encodeURIComponent(gh.repo)}`;
+  try {
+    const resp = await fetch(url, {
+      headers: { accept: 'application/vnd.github+json', 'user-agent': 'cofferdam-import' },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as { description?: unknown };
+    const description = typeof data.description === 'string' ? data.description.trim() : '';
+    return description === '' ? null : description;
+  } catch {
+    return null;
+  }
 }
 
 export async function importCmd(args: string[], usage: () => never): Promise<void> {
@@ -176,11 +213,27 @@ export async function importCmd(args: string[], usage: () => never): Promise<voi
     // here would skip this and leave the bare clone behind.
     cleanup();
   }
+  // The description is set after the push rather than before it, since the
+  // repository does not exist until the push creates it.
+  let described: string | null = a.description?.trim() || null;
+  if (!described && !a.noDescription && source.github) described = await githubDescription(source.github);
+  if (described) {
+    const patch = await apiTry(target, 'PATCH', `/api/repos/${encodeURIComponent(collection)}/${encodeURIComponent(name)}`, {
+      description: described,
+    });
+    if (!patch.ok) {
+      console.error(`The repository arrived, but its description could not be set: ${patch.data.error ?? `HTTP ${patch.status}`}`);
+      described = null;
+    }
+  }
+
   console.log('');
   console.log(`Imported ${collection}/${name}`);
   console.log(`  ${dest}`);
   // Worth saying rather than leaving to be discovered: a mirror push carries
   // LFS pointer files, so the files look present and read as missing.
+  if (described) console.log(`  ${described}`);
+  else if (source.github && !a.noDescription) console.log('  (no description came across; set one in repository settings)');
   if (!a.lfs) console.log('  (Git LFS objects, if it has any, were not carried over; import again with --lfs)');
 }
 

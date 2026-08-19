@@ -19,6 +19,8 @@ export interface ImportSource {
   url: string;
   /** The last segment, without a `.git` suffix: the repository's default name. */
   name: string;
+  /** Set when the source is a GitHub repository, which has a description we can ask for. */
+  github: { owner: string; repo: string } | null;
 }
 
 function nameOf(spec: string): string {
@@ -34,7 +36,17 @@ function localSource(input: string): ImportSource | null {
     return null;
   }
   const name = nameOf(dir);
-  return name === '' ? null : { url: dir, name };
+  return name === '' ? null : { url: dir, name, github: null };
+}
+
+// GitHub keeps a repository's one-line description outside the git data, so an
+// import that carries it has to ask GitHub for it separately. Recognizing the
+// source is the first half of that; asking is in the import command.
+const GITHUB_REPO_URL = /^(?:https:\/\/github\.com\/|git@github\.com:)([A-Za-z0-9][A-Za-z0-9._-]*)\/([A-Za-z0-9][A-Za-z0-9._-]*?)(?:\.git)?$/;
+
+function githubOf(url: string): { owner: string; repo: string } | null {
+  const m = GITHUB_REPO_URL.exec(url);
+  return m ? { owner: m[1], repo: m[2] } : null;
 }
 
 export function parseSource(input: string): ImportSource | null {
@@ -49,5 +61,5 @@ export function parseSource(input: string): ImportSource | null {
   const url = GITHUB_SHORTHAND.test(input) ? `https://github.com/${input}.git` : input;
   if (!HTTPS_SOURCE.test(url) && !SSH_SOURCE.test(url)) return null;
   const name = nameOf(url);
-  return name === '' ? null : { url, name };
+  return name === '' ? null : { url, name, github: githubOf(url) };
 }

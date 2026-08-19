@@ -432,7 +432,15 @@ and remove the clone again. The source is an https or ssh git URL, owner/repo
 for GitHub, or a directory on this machine; the name defaults to its last
 segment. Nothing happens on the server, so the source is read with whatever git
 credentials this machine already has. Branches and tags come across; --lfs
-carries Git LFS objects too, and needs git-lfs installed.`,
+carries Git LFS objects too, and needs git-lfs installed.
+
+A description is not part of a repository's git data. For a public GitHub
+source it is read from GitHub's API afterwards and set here.
+
+Options:
+  --lfs                    carry Git LFS objects too
+  --description <text>     set this description instead of the source's
+  --no-description         leave the description empty`,
     importCmd
   ),
   raw(

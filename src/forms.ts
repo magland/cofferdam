@@ -147,7 +147,7 @@ ${copyRow(`cofferdam login ${opts.vaultUrl}`)}
 ${copyRow(`cofferdam import https://github.com/owner/repo ${collection}`)}
 <p class="muted small">The source may be an https or ssh git URL, or <span class="mono">owner/repo</span> for GitHub. The repository takes its name from the source; write <span class="mono">${esc(
     collection
-  )}/another-name</span> to choose another. Add <span class="mono">--lfs</span> to carry Git LFS objects too. A collection that does not exist yet is created by the push.</p>
+  )}/another-name</span> to choose another. Add <span class="mono">--lfs</span> to carry Git LFS objects too. A collection that does not exist yet is created by the push. A public GitHub source also has its description read from GitHub and set here.</p>
 ${fallback}
 ${back}
 </div>`;
