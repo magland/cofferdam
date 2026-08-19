@@ -53,6 +53,17 @@ export interface CommitSummary {
   subject: string;
 }
 
+/** One line of `git blame` output, with the commit that last touched it. */
+export interface BlameLine {
+  sha: string;
+  author: string;
+  date: string;
+  summary: string;
+  /** The commit and path this line came from before that change, if any. */
+  previous: { sha: string; path: string } | null;
+  text: string;
+}
+
 export interface CommitDetail {
   sha: string;
   author: string;
@@ -217,6 +228,51 @@ export class GitRepo {
       parents: parents ? parents.split(' ').filter((p) => p) : [],
       message: (message ?? '').replace(/\n+$/, ''),
     };
+  }
+
+  /**
+   * `git blame` for one file, one entry per line in file order. The porcelain
+   * format repeats every header for every line, which costs a little output
+   * and saves the parser from carrying state between lines; the caller groups
+   * consecutive lines that share a commit.
+   */
+  async blame(ref: string, path: string): Promise<BlameLine[]> {
+    const out = (
+      await execGit(this.dir, ['blame', '--line-porcelain', ref, '--', path])
+    ).toString('utf8');
+    const lines: BlameLine[] = [];
+    let cur: Partial<BlameLine> & { time?: number } = {};
+    for (const line of out.split('\n')) {
+      if (line.startsWith('\t')) {
+        // The content line closes an entry: everything before it described it.
+        lines.push({
+          sha: cur.sha ?? '',
+          author: cur.author ?? '',
+          date: cur.time ? new Date(cur.time * 1000).toISOString() : '',
+          summary: cur.summary ?? '',
+          previous: cur.previous ?? null,
+          text: line.slice(1),
+        });
+        cur = {};
+        continue;
+      }
+      const m = line.match(/^([0-9a-f]{40}) \d+ \d+/);
+      if (m) {
+        cur = { sha: m[1] };
+        continue;
+      }
+      const sp = line.indexOf(' ');
+      const key = sp === -1 ? line : line.slice(0, sp);
+      const value = sp === -1 ? '' : line.slice(sp + 1);
+      if (key === 'author') cur.author = value;
+      else if (key === 'author-time') cur.time = parseInt(value, 10);
+      else if (key === 'summary') cur.summary = value;
+      else if (key === 'previous') {
+        const sep = value.indexOf(' ');
+        if (sep !== -1) cur.previous = { sha: value.slice(0, sep), path: value.slice(sep + 1) };
+      }
+    }
+    return lines;
   }
 
   async commitPatch(sha: string): Promise<string> {

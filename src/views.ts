@@ -1,4 +1,4 @@
-import { CommitDetail, CommitSummary, RefInfo, TreeEntry } from './git';
+import { BlameLine, CommitDetail, CommitSummary, RefInfo, TreeEntry } from './git';
 import { esc, formatSize, highlightedLines, timeTag } from './render';
 import { Viewer, viewerIsAdmin } from './session';
 import { activeTheme } from './themes';
@@ -563,8 +563,14 @@ export function blobPage(
   const historyBtn = `<a class="btn" href="${base}/commits/${encPath(ctx.ref)}/${encPath(
     path
   )}" title="Commits touching this file">${icon('history')}<span>History</span></a>`;
+  const blameBtn =
+    view.kind === 'code'
+      ? `<a class="btn" href="${base}/blame/${encPath(ctx.ref)}/${encPath(
+          path
+        )}" title="Who last changed each line">${icon('versions')}<span>Blame</span></a>`
+      : '';
   const meta = (left: string, extra = '') =>
-    `<div class="code-meta"><span class="muted small">${left}</span><span class="right-group">${toggle}${extra}${historyBtn}<a class="btn" href="${rawUrl}" title="View the file as it was committed">${icon(
+    `<div class="code-meta"><span class="muted small">${left}</span><span class="right-group">${toggle}${extra}${blameBtn}${historyBtn}<a class="btn" href="${rawUrl}" title="View the file as it was committed">${icon(
       'download'
     )}<span>Raw</span></a>${editBtns}</span></div>`;
   if (view.kind === 'code') {
@@ -606,6 +612,61 @@ export function blobPage(
 </div>
 ${body}`;
   return layout(`${path} at ${ctx.ref} - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, blobUrl));
+}
+
+/**
+ * The blame view: every line of a file beside the commit that last touched
+ * it, with consecutive lines from the same commit forming a block, as on
+ * GitHub. A block that has a previous revision also offers the blame as it
+ * stood before that change, which is how a reader walks a line backwards
+ * through history.
+ */
+export function blamePage(ctx: RepoCtx, path: string, html: string, lines: BlameLine[], size: number): string {
+  const base = repoUrl(ctx);
+  const blobUrl = `${base}/blob/${encPath(ctx.ref)}/${encPath(path)}`;
+  const texts = highlightedLines(html);
+  const rows = lines
+    .map((l, i) => {
+      const n = i + 1;
+      const starts = i === 0 || lines[i - 1].sha !== l.sha;
+      const prior =
+        starts && l.previous
+          ? `<a class="blame-prior" href="${base}/blame/${encPath(l.previous.sha)}/${encPath(
+              l.previous.path
+            )}" title="Blame this file before this change" aria-label="Blame this file before this change">${icon(
+              'versions'
+            )}</a>`
+          : '';
+      const about = starts
+        ? `<a class="sha" href="${base}/commit/${l.sha}">${l.sha.slice(0, 7)}</a><a class="blame-subject" href="${base}/commit/${
+            l.sha
+          }" title="${esc(l.summary)}">${esc(l.summary)}</a><span class="blame-when small muted">${esc(
+            l.author
+          )} ${timeTag(l.date)}</span>${prior}`
+        : '';
+      return `<div class="blame-row${starts ? ' blame-start' : ''}" id="L${n}"><span class="blame-commit">${about}</span><a class="lnum" href="#L${n}" aria-label="Line ${n}">${n}</a><span class="ltext">${
+        texts[i] ?? ''
+      }</span></div>`;
+    })
+    .join('');
+  const toggle = `<span class="seg"><a href="${blobUrl}">Code</a><a class="current" href="${base}/blame/${encPath(
+    ctx.ref
+  )}/${encPath(path)}">Blame</a></span>`;
+  const content = `${repoHeader(ctx, 'code')}
+<div class="toolbar">
+  <div class="left">${refPicker(ctx, (ref) => `${base}/blame/${encPath(ref)}/${encPath(path)}`)}${breadcrumb(ctx, path)}</div>
+</div>
+<div class="code-meta"><span class="muted small">${lines.length} line${lines.length === 1 ? '' : 's'} &middot; ${esc(
+    formatSize(size)
+  )}</span><span class="right-group">${toggle}<a class="btn" href="${base}/commits/${encPath(ctx.ref)}/${encPath(
+    path
+  )}" title="Commits touching this file">${icon('history')}<span>History</span></a></span></div>
+<div class="blame">${rows}</div>`;
+  return layout(
+    `Blame ${path} at ${ctx.ref} - ${ctx.collection}/${ctx.repo}`,
+    content,
+    repoOpts(ctx, `${base}/blame/${encPath(ctx.ref)}/${encPath(path)}`)
+  );
 }
 
 export function commitsPage(

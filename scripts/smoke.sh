@@ -421,6 +421,17 @@ grep -qi 'content-security-policy: sandbox' "$TMP/headers" || { echo "FAIL: raw 
 grep -qi 'content-type: text/plain' "$TMP/headers" || { echo "FAIL: raw content-type not text/plain"; exit 1; }
 PASS=$((PASS+2)); echo "ok: raw CSP and content-type"
 
+# ---- blame ----
+
+check "blame page" 200 "$BASE/demo/proj/blame/main/README.md"
+body_has "blame names a commit" 'class="blame-subject"'
+body_has "blame numbers its lines" 'id="L1"'
+body_has "blame links back to the file view" ">Code<"
+check "blame of a directory 404s" 404 "$BASE/demo/proj/blame/main"
+check "blame of a missing file 404s" 404 "$BASE/demo/proj/blame/main/no-such-file"
+check "blame button on the blob page" 200 "$BASE/demo/proj/blob/main/README.md"
+body_has "blob page offers blame" "/demo/proj/blame/main/README.md"
+
 # ---- history for one path ----
 
 check "history of a file" 200 "$BASE/demo/proj/commits/main/README.md"
@@ -429,6 +440,15 @@ body_has "history row links the commit" 'class="title" href="/demo/proj/commit/'
 check "history of a path that was never in the repository" 200 "$BASE/demo/proj/commits/main/nothing-here.txt"
 body_has "empty history says so" "Nothing in this ref's history touches"
 check "history of a bad ref 404s" 404 "$BASE/demo/proj/commits/no-such-ref"
+
+# ---- blame ----
+
+check "blame a file" 200 "$BASE/demo/proj/blame/main/README.md"
+body_has "blame names the commit" 'class="blame-subject"'
+body_has "blame numbers its lines" 'id="L1"'
+body_has "blame links back to the code view" "href=\"/demo/proj/blob/main/README.md\""
+check "blame of a directory 404s" 404 "$BASE/demo/proj/blame/main"
+check "blame of a missing file 404s" 404 "$BASE/demo/proj/blame/main/nope.txt"
 
 # ---- source archives ----
 

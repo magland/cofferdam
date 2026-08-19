@@ -258,6 +258,37 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
     })
   );
 
+  // Blame: who last changed each line, and the way back to the revision
+  // before that change. Only for a file we would show as text anyway; the
+  // rest redirect to the blob page, which explains what they are.
+  app.get(
+    '/:collection/:repo/blame/*',
+    ah(async (req, res) => {
+      const viewer = getViewer(req, root);
+      const loaded = await loadRepo(root, req, res, viewer);
+      if (!loaded) return;
+      const { ref, path: filePath } = loaded.repo.resolveRefAndPath(wildcard(req), loaded.refNames);
+      if (!isValidRefName(ref) || !isValidRepoPath(filePath) || filePath === '') {
+        send404(res, 'Not found', viewer);
+        return;
+      }
+      const ctx = await makeCtx(root, req, loaded, ref, viewer);
+      const blobUrl = `${repoUrl(ctx)}/blob/${encPath(ref)}/${encPath(filePath)}`;
+      if ((await loaded.repo.entryType(ref, filePath)) !== 'blob') {
+        send404(res, `File ${filePath} not found at ${ref}`, viewer);
+        return;
+      }
+      const buf = await loaded.repo.catBlob(ref, filePath);
+      if (isBinary(buf) || buf.length > MAX_RENDER_SIZE) {
+        res.redirect(blobUrl);
+        return;
+      }
+      const lines = await loaded.repo.blame(ref, filePath);
+      const text = lines.map((l) => l.text).join('\n');
+      res.type('html').send(views.blamePage(ctx, filePath, highlightCode(text, filePath), lines, buf.length));
+    })
+  );
+
   app.get(
     '/:collection/:repo/raw/*',
     ah(async (req, res) => {
