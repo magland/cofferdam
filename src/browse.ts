@@ -5,6 +5,7 @@ import { GitRepo, isValidRefName, isValidRepoPath } from './git';
 import { languageBreakdown } from './languages';
 import { LfsContext } from './lfsstore';
 import { isMarkdownFile, renderMarkdown } from './markdown';
+import { containedIn } from './ops';
 import { parsePointer } from './pointer';
 import { esc, highlightCode, isBinary } from './render';
 import { atomFeed } from './atom';
@@ -523,6 +524,16 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
         );
         return;
       }
+      // The real path of the site directory, which every path we serve has to
+      // sit under. It is resolved once here so that a vault reached through a
+      // symlinked root still compares equal.
+      let dirReal: string;
+      try {
+        dirReal = fs.realpathSync(dir);
+      } catch {
+        send404(res);
+        return;
+      }
       const segs = wildcard(req)
         .split('/')
         .filter((s) => s !== '' && s !== '.');
@@ -530,28 +541,47 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
         send404(res);
         return;
       }
-      let target = path.join(dir, ...segs);
-      let stat: fs.Stats | null = null;
-      try {
-        stat = fs.statSync(target);
-      } catch {
-        stat = null;
-      }
-      if (stat && stat.isDirectory()) {
+      // Site content is written by whatever published it, which may be a
+      // workflow unpacking a tar, so it can contain symlinks. Refusing `..`
+      // segments stops a traversal spelled in the URL but not a link on disk
+      // pointing at /etc/passwd, at the vault's own files, or into another
+      // repository's site, which has a different owner. Every path we are
+      // about to read is therefore resolved and required to land strictly
+      // under dirReal; containedIn refuses the directory itself as well as
+      // anything outside it, so only files below the site root are servable.
+      //
+      // Resolving and then opening is two syscalls, so a link swapped in
+      // between them would still be followed. Closing that window means
+      // holding an open handle and checking what we hold, which is more
+      // machinery than this is worth; the interesting case is content that
+      // was already on disk when the request arrived.
+      const statInside = (p: string): fs.Stats | null => {
+        if (!containedIn(dirReal, p)) return null;
+        try {
+          return fs.statSync(p);
+        } catch {
+          return null;
+        }
+      };
+      const requested = path.join(dir, ...segs);
+      // The site root is the directory itself, which statInside refuses; it is
+      // still a directory request, and resolves to the index.html below it.
+      const isDir = segs.length === 0 || statInside(requested)?.isDirectory() === true;
+      let target = requested;
+      if (isDir) {
         if (!req.path.endsWith('/')) {
           res.redirect(`${req.path}/`);
           return;
         }
-        target = path.join(target, 'index.html');
-        try {
-          stat = fs.statSync(target);
-        } catch {
-          stat = null;
-        }
+        target = path.join(requested, 'index.html');
       }
+      // A refused path answers exactly as a missing one does, so a prober
+      // learns nothing about what is really there from the difference.
+      const stat = statInside(target);
       if (!stat || !stat.isFile()) {
         const notFound = path.join(dir, '404.html');
-        if (fs.existsSync(notFound)) {
+        const notFoundStat = statInside(notFound);
+        if (notFoundStat && notFoundStat.isFile()) {
           res.status(404).sendFile(notFound);
         } else {
           send404(res, 'Page not found in this site');

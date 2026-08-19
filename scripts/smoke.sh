@@ -1242,10 +1242,39 @@ PASS=$((PASS+2)); echo "ok: push-to-create refuses a name reserved for a sibling
 
 # ---- site ----
 
-mkdir -p "$VAULT/pushed/created.site"
-echo '<h1>site ok</h1>' > "$VAULT/pushed/created.site/index.html"
+SITE="$VAULT/pushed/created.site"
+mkdir -p "$SITE/sub"
+echo '<h1>site ok</h1>' > "$SITE/index.html"
+echo '<h1>sub index</h1>' > "$SITE/sub/index.html"
+echo 'a real file' > "$SITE/sub/real.txt"
+echo '<h1>site not found</h1>' > "$SITE/404.html"
 check "site served" 200 "$BASE/pushed/created/site/"
 body_has "site content" 'site ok'
+check "a directory redirects to its slash" 302 "$BASE/pushed/created/site/sub"
+check "a directory serves its index" 200 "$BASE/pushed/created/site/sub/"
+body_has "the subdirectory index is served" 'sub index'
+check "an ordinary file is served" 200 "$BASE/pushed/created/site/sub/real.txt"
+check "a missing path gets the site's own 404" 404 "$BASE/pushed/created/site/nope.html"
+body_has "the site's 404 page is used" 'site not found'
+
+# A site is published by whatever can write the directory, a workflow included,
+# and a tar unpacked into it can carry symlinks. What is served is therefore
+# what is really inside the directory: a link resolving out of it reads as a
+# missing file, and says no more than that, so a prober cannot tell a refused
+# path from an absent one. A link within the site keeps working.
+ln -s /etc/passwd "$SITE/escape.txt"
+ln -s ../../vault.json "$SITE/vault.json"
+ln -s /etc "$SITE/etcdir"
+ln -s index.html "$SITE/inner.html"
+check "a symlink out of the site is not served" 404 "$BASE/pushed/created/site/escape.txt"
+body_lacks "and none of its content leaks" 'root:'
+body_has "it reads as a missing file" 'site not found'
+check "a symlink up into the vault is not served" 404 "$BASE/pushed/created/site/vault.json"
+body_lacks "and the vault's users do not leak" 'tokens'
+# Not a redirect: answering 302 here would tell a prober the directory is there.
+check "a symlinked directory out of the site is not served" 404 "$BASE/pushed/created/site/etcdir"
+check "a symlink within the site still works" 200 "$BASE/pushed/created/site/inner.html"
+body_has "the in-site link serves its target" 'site ok'
 
 # ---- Git LFS: batch API and local transfer routes ----
 # All of this runs against the local backend, so the suite needs no bucket
