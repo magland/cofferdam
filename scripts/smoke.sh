@@ -359,7 +359,7 @@ check "created file renders" 200 -b "$JAR" "$BASE/demo/proj/blob/main/docs/notes
 body_has "created file content" 'Some notes.'
 check "duplicate create rejected" 200 -b "$JAR" "$BASE/demo/proj/new/main"
 CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
-check "duplicate create is an error" 400 -b "$JAR" "$BASE/demo/proj/new/main" \
+check "duplicate create is a conflict" 409 -b "$JAR" "$BASE/demo/proj/new/main" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
   --data-urlencode filename=docs/notes.md --data-urlencode content=dup --data-urlencode message=dup
 

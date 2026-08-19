@@ -511,8 +511,10 @@ export function registerPulls(app: Express, root: string, engine?: CiEngine): vo
             author: viewer.auth.username,
             body: text,
           });
-        } catch {
-          // A comment too long to store must not stop the state change.
+        } catch (e) {
+          // As in the issue route: a comment the writer got wrong must not stop
+          // the state change, but a failure to write at all should surface.
+          if (!(e instanceof OpError)) throw e;
         }
       }
       try {

@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { GitRepo } from '../git';
 import { AuthLimiter } from '../limit';
-import { OpError } from '../ops';
+import { OpError, opErrorStatus } from '../ops';
 import { findRepo } from '../scan';
 import { AuthResult, authenticateToken, canAdmin, canPush, loadVault } from '../vault';
 
@@ -160,20 +160,11 @@ export function sendOpError(res: Response, e: unknown, fallback = 'the operation
     apiError(res, 500, fallback);
     return;
   }
-  switch (e.kind) {
-    case 'notfound':
-      apiError(res, 404, e.message);
-      return;
-    case 'exists':
-    case 'conflict':
-      apiError(res, 409, e.message);
-      return;
-    case 'nochange':
-      res.json({ changed: false, message: e.message });
-      return;
-    default:
-      apiError(res, 400, e.message);
+  if (e.kind === 'nochange') {
+    res.json({ changed: false, message: e.message });
+    return;
   }
+  apiError(res, opErrorStatus(e.kind), e.message);
 }
 
 /** A route body, with the shape checked far enough to read fields off it. */

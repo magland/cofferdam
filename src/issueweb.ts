@@ -526,8 +526,12 @@ export function registerIssues(app: Express, root: string): void {
       if (text !== '') {
         try {
           issues.addComment(root, ctx.collection, ctx.repo, issue.number, { author: viewer.auth.username, body: text });
-        } catch {
-          // A comment too long to store must not stop the state change.
+        } catch (e) {
+          // A comment too long to store must not stop the state change, which
+          // is the reason this is swallowed rather than reported. Only the
+          // validation failures are: a disk that is full or a directory that
+          // cannot be written is not something to close an issue quietly over.
+          if (!(e instanceof OpError)) throw e;
         }
       }
       issues.setIssueState(root, ctx.collection, ctx.repo, issue.number, state, viewer.auth.username);

@@ -18,6 +18,7 @@ import {
   deleteRepo,
   deleteTag,
   forkRepo,
+  opErrorStatus,
   renameRepo,
   setDefaultBranch,
   setDescription,
@@ -121,7 +122,7 @@ async function baseFor(ctx: ReadContext, body: WriteBody): Promise<string | null
 function reportWriteError(res: Response, e: unknown): void {
   // A branch that could not be made is not a file that could not be written.
   if (e instanceof NewBranchError) {
-    apiError(res, e.kind === 'exists' ? 409 : 400, e.message);
+    apiError(res, opErrorStatus(e.kind), e.message);
     return;
   }
   sendOpError(res, e, 'the write failed');

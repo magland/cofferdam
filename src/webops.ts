@@ -9,7 +9,7 @@ import { looksLikePointer } from './pointer';
 import { THEMES, findTheme, setActiveTheme } from './themes';
 import * as forms from './forms';
 import * as ops from './ops';
-import { MAX_EDIT_SIZE, MAX_UPLOAD_SIZE, OpError } from './ops';
+import { MAX_EDIT_SIZE, MAX_UPLOAD_SIZE, OpError, opErrorStatus } from './ops';
 import { findRepo, isValidName, listCollections, repoDescription, reservedRepoSuffix } from './scan';
 import {
   Viewer,
@@ -254,7 +254,7 @@ export function registerWebOps(
       ops.createCollection(root, name);
     } catch (e) {
       if (e instanceof OpError) {
-        rerender(e.kind === 'exists' ? 409 : 400, e.message);
+        rerender(opErrorStatus(e.kind), e.message);
         return;
       }
       throw e;
@@ -316,7 +316,7 @@ export function registerWebOps(
         });
       } catch (e) {
         if (e instanceof OpError) {
-          rerender(e.kind === 'exists' ? 409 : 400, e.message);
+          rerender(opErrorStatus(e.kind), e.message);
           return;
         }
         throw e;
@@ -389,11 +389,11 @@ export function registerWebOps(
     // A branch that could not be made is not a file that could not be written:
     // a name already taken is somebody else's branch, and 409 says so.
     if (e instanceof ops.NewBranchError) {
-      fail(res, e.kind === 'exists' ? 409 : 400, e.message, viewer, retryUrl);
+      fail(res, opErrorStatus(e.kind), e.message, viewer, retryUrl);
       return;
     }
     if (e instanceof OpError) {
-      fail(res, e.kind === 'notfound' ? 404 : 400, e.message, viewer, retryUrl);
+      fail(res, opErrorStatus(e.kind), e.message, viewer, retryUrl);
       return;
     }
     throw e;
@@ -582,7 +582,7 @@ export function registerWebOps(
           await ops.createBranch(loaded.repo.dir, wanted, expected);
         } catch (e) {
           const message2 = e instanceof OpError ? e.message : 'Could not create that branch.';
-          fail(res, e instanceof OpError && e.kind === 'exists' ? 409 : 400, message2, viewer, retryUrl);
+          fail(res, e instanceof OpError ? opErrorStatus(e.kind) : 400, message2, viewer, retryUrl);
           return;
         }
         onto = wanted;
@@ -759,7 +759,7 @@ export function registerWebOps(
         if (tip) fire(loaded.repo, name, null, tip, viewer.auth.username);
       } catch (e) {
         if (e instanceof OpError) {
-          fail(res, e.kind === 'notfound' ? 404 : 400, e.message, viewer, backUrl);
+          fail(res, opErrorStatus(e.kind), e.message, viewer, backUrl);
           return;
         }
         throw e;
@@ -806,7 +806,7 @@ export function registerWebOps(
         await ops.createTag(loaded.repo.dir, name, at);
       } catch (e) {
         if (e instanceof OpError) {
-          fail(res, e.kind === 'notfound' ? 404 : 400, e.message, viewer, backUrl);
+          fail(res, opErrorStatus(e.kind), e.message, viewer, backUrl);
           return;
         }
         throw e;
@@ -934,7 +934,7 @@ export function registerWebOps(
       } catch (e) {
         const message = e instanceof OpError ? e.message : 'Could not fork the repository.';
         res
-          .status(e instanceof OpError && e.kind === 'exists' ? 409 : 400)
+          .status(e instanceof OpError ? opErrorStatus(e.kind) : 400)
           .type('html')
           .send(forms.forkPage(ctx, viewer, names, { collection: toCollection, name: toName }, message));
         return;
@@ -972,7 +972,7 @@ export function registerWebOps(
         await ops.renameRepo(root, loaded.repo.collection, loaded.repo.name, toCollection, toName, lfs?.store);
       } catch (e) {
         const message = e instanceof OpError ? e.message : 'Could not move the repository.';
-        fail(res, e instanceof OpError && e.kind === 'exists' ? 409 : 400, message, viewer, backUrl);
+        fail(res, e instanceof OpError ? opErrorStatus(e.kind) : 400, message, viewer, backUrl);
         return;
       }
       const to = repoUrl({ collection: toCollection, repo: toName });

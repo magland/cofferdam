@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import express, { Express, Request, Response } from 'express';
 import * as ops from './ops';
-import { MAX_UPLOAD_SIZE, OpError } from './ops';
+import { MAX_UPLOAD_SIZE, OpError, opErrorStatus } from './ops';
 import { displayName, isValidName, listCollections, listRepoDirs } from './scan';
 import { addUserToken, canAdmin, canCreateCollection, grantScope, loadVault } from './vault';
 import { apiError, requireApiAuth as authenticateRequest } from './api/auth';
@@ -113,7 +113,7 @@ export function registerApi(
       ops.createCollection(root, name);
     } catch (e) {
       if (e instanceof OpError) {
-        apiError(res, e.kind === 'exists' ? 409 : 400, e.message);
+        apiError(res, opErrorStatus(e.kind), e.message);
         return;
       }
       throw e;

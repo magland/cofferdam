@@ -21,6 +21,33 @@ export class OpError extends Error {
   }
 }
 
+/**
+ * The HTTP status a failed operation deserves.
+ *
+ * Both transports were deciding this inline, and the spellings had drifted from
+ * each other: several read `kind === 'exists' ? 409 : 400`, which is right about
+ * a name already taken and wrong about a `conflict`, so a branch that moved
+ * under an edit came back as a malformed request. Since the whole point of the
+ * kind is to tell a caller whether retrying could help, that distinction is
+ * worth keeping in one place.
+ *
+ * `nochange` is 400 here because a caller that asked for a state the vault is
+ * already in has changed nothing. The JSON API answers it as a success instead,
+ * since it can say `changed: false` in the body where a rendered page cannot;
+ * `sendOpError` settles that case before consulting this.
+ */
+export function opErrorStatus(kind: OpErrorKind): number {
+  switch (kind) {
+    case 'notfound':
+      return 404;
+    case 'exists':
+    case 'conflict':
+      return 409;
+    default:
+      return 400;
+  }
+}
+
 export interface CommitAuthor {
   name: string;
   email: string;
