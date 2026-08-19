@@ -1,7 +1,7 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { writeFileAtomic } from '../atomic';
+import { withFileLock, writeFileAtomic } from '../atomic';
 import { globMatch } from '../vault';
 
 // The runner registry, in <vault>/runners.json. A runner is not a user: it
@@ -90,6 +90,23 @@ function write(root: string, registry: RunnerRegistry): void {
   cache = null;
 }
 
+/**
+ * Hold the registry's lock across a read, an edit, and the write back.
+ *
+ * `cofferdam runner add` from a shell and the same call through the API edit
+ * this file the same way, and either one overlapping the other loses a runner
+ * outright. The cache is dropped on the way in because the decision it makes,
+ * that a file with an unchanged mtime and size has unchanged contents, is one
+ * this function cannot afford: another process may have written in the interval
+ * since the last read, and the copy about to be edited must be the one on disk.
+ */
+function editRunners<T>(root: string, fn: () => T): T {
+  return withFileLock(`${runnersFilePath(root)}.lock`, () => {
+    cache = null;
+    return fn();
+  });
+}
+
 export function hashRunnerToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
@@ -99,26 +116,30 @@ export function registerRunner(
   name: string,
   opts: { labels: string[]; allow: string[]; createdBy: string }
 ): { token: string; runner: RunnerRecord } {
-  const registry = loadRunners(root);
-  const token = 'cofferdam_runner_' + crypto.randomBytes(32).toString('hex');
-  const runner: RunnerRecord = {
-    hash: hashRunnerToken(token),
-    labels: opts.labels,
-    allow: opts.allow,
-    createdBy: opts.createdBy,
-    createdAt: new Date().toISOString(),
-  };
-  registry.runners[name] = runner;
-  write(root, registry);
-  return { token, runner };
+  return editRunners(root, () => {
+    const registry = loadRunners(root);
+    const token = 'cofferdam_runner_' + crypto.randomBytes(32).toString('hex');
+    const runner: RunnerRecord = {
+      hash: hashRunnerToken(token),
+      labels: opts.labels,
+      allow: opts.allow,
+      createdBy: opts.createdBy,
+      createdAt: new Date().toISOString(),
+    };
+    registry.runners[name] = runner;
+    write(root, registry);
+    return { token, runner };
+  });
 }
 
 export function removeRunner(root: string, name: string): boolean {
-  const registry = loadRunners(root);
-  if (!registry.runners[name]) return false;
-  delete registry.runners[name];
-  write(root, registry);
-  return true;
+  return editRunners(root, () => {
+    const registry = loadRunners(root);
+    if (!registry.runners[name]) return false;
+    delete registry.runners[name];
+    write(root, registry);
+    return true;
+  });
 }
 
 export interface RunnerAuth {

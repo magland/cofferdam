@@ -1,7 +1,7 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { writeFileAtomic } from './atomic';
+import { withFileLock, writeFileAtomic } from './atomic';
 
 export const VAULT_FILE = 'vault.json';
 
@@ -211,12 +211,25 @@ function writeVault(file: string, vault: Vault): void {
   writeFileAtomic(file, JSON.stringify(vault, null, 2) + '\n', { mode: 0o600 });
 }
 
-export function addUserToken(
-  root: string,
+/**
+ * Every edit to vault.json is a read, a change in memory, and a write back, and
+ * they are all short. Holding one lock across the whole of one makes them
+ * serial against a second server and against a CLI run on the same directory,
+ * which is the arrangement the documentation invites by saying a vault is just
+ * a directory. Readers do not take the lock: they see the old file or the new
+ * one, which the atomic rename already guarantees.
+ */
+function editVault<T>(root: string, fn: (file: string) => T): T {
+  return withFileLock(path.join(root, `${VAULT_FILE}.lock`), () => fn(vaultFilePath(root)));
+}
+
+// The body of addUserToken, without the lock, so that bootstrapVault can put
+// its own check-then-act inside the same one rather than nesting a second.
+function addUserTokenLocked(
+  file: string,
   username: string,
-  opts: { scope?: string[]; admin?: string[]; tokenScope?: string[]; token?: string } = {}
+  opts: { scope?: string[]; admin?: string[]; tokenScope?: string[]; token?: string }
 ): { token: string; created: boolean; user: UserRecord } {
-  const file = vaultFilePath(root);
   let vault: Vault = { users: {} };
   if (fs.existsSync(file)) {
     vault = normalizeVault(JSON.parse(fs.readFileSync(file, 'utf8')));
@@ -242,28 +255,37 @@ export function addUserToken(
   return { token, created, user };
 }
 
+export function addUserToken(
+  root: string,
+  username: string,
+  opts: { scope?: string[]; admin?: string[]; tokenScope?: string[]; token?: string } = {}
+): { token: string; created: boolean; user: UserRecord } {
+  return editVault(root, (file) => addUserTokenLocked(file, username, opts));
+}
+
 export function grantScope(
   root: string,
   username: string,
   globs: { scope?: string[]; admin?: string[] }
 ): UserRecord {
-  const file = vaultFilePath(root);
-  if (!fs.existsSync(file)) {
-    throw new Error(`no vault.json at ${file}; create the user first with: cofferdam user add ${username}`);
-  }
-  const vault = normalizeVault(JSON.parse(fs.readFileSync(file, 'utf8')));
-  const user = vault.users[username];
-  if (!user) {
-    throw new Error(`user ${username} does not exist; create it with: cofferdam user add ${username}`);
-  }
-  for (const g of globs.scope ?? []) {
-    if (!user.scope.includes(g)) user.scope.push(g);
-  }
-  for (const g of globs.admin ?? []) {
-    if (!user.admin.includes(g)) user.admin.push(g);
-  }
-  writeVault(file, vault);
-  return user;
+  return editVault(root, (file) => {
+    if (!fs.existsSync(file)) {
+      throw new Error(`no vault.json at ${file}; create the user first with: cofferdam user add ${username}`);
+    }
+    const vault = normalizeVault(JSON.parse(fs.readFileSync(file, 'utf8')));
+    const user = vault.users[username];
+    if (!user) {
+      throw new Error(`user ${username} does not exist; create it with: cofferdam user add ${username}`);
+    }
+    for (const g of globs.scope ?? []) {
+      if (!user.scope.includes(g)) user.scope.push(g);
+    }
+    for (const g of globs.admin ?? []) {
+      if (!user.admin.includes(g)) user.admin.push(g);
+    }
+    writeVault(file, vault);
+    return user;
+  });
 }
 
 /**
@@ -281,7 +303,6 @@ export function bootstrapVault(
   root: string,
   presetToken?: string | null
 ): { username: string; token: string; preset: boolean } | null {
-  if (fs.existsSync(vaultFilePath(root))) return null;
   const preset = (presetToken ?? '').trim();
   if (presetToken !== undefined && presetToken !== null && presetToken !== '' && !preset) {
     throw new Error('the owner token given for a new vault is blank');
@@ -295,12 +316,19 @@ export function bootstrapVault(
         'printable, and contain no spaces'
     );
   }
-  const { token } = addUserToken(root, 'owner', {
-    scope: ['*'],
-    admin: ['*'],
-    ...(preset ? { token: preset } : {}),
+  // The existence check and the creation are one operation. Two servers started
+  // against one fresh directory would otherwise both find no vault.json and both
+  // bootstrap, and the second owner token to be written would be the only one
+  // that worked, while both had been printed as if they were the credential.
+  return editVault(root, (file) => {
+    if (fs.existsSync(file)) return null;
+    const { token } = addUserTokenLocked(file, 'owner', {
+      scope: ['*'],
+      admin: ['*'],
+      ...(preset ? { token: preset } : {}),
+    });
+    return { username: 'owner', token, preset: preset !== '' };
   });
-  return { username: 'owner', token, preset: preset !== '' };
 }
 
 
@@ -310,23 +338,25 @@ export function bootstrapVault(
  * and vault.json remains hand-editable either way.
  */
 export function revokeToken(root: string, username: string, id: string): { revoked: boolean; remaining: number } {
-  const file = vaultFilePath(root);
-  const vault = normalizeVault(JSON.parse(fs.readFileSync(file, 'utf8')));
-  const user = vault.users[username];
-  if (!user) throw new Error(`no user ${username}`);
-  const before = user.tokens.length;
-  user.tokens = user.tokens.filter((t) => tokenId(t) !== id);
-  if (user.tokens.length === before) return { revoked: false, remaining: before };
-  writeVault(file, vault);
-  return { revoked: true, remaining: user.tokens.length };
+  return editVault(root, (file) => {
+    const vault = normalizeVault(JSON.parse(fs.readFileSync(file, 'utf8')));
+    const user = vault.users[username];
+    if (!user) throw new Error(`no user ${username}`);
+    const before = user.tokens.length;
+    user.tokens = user.tokens.filter((t) => tokenId(t) !== id);
+    if (user.tokens.length === before) return { revoked: false, remaining: before };
+    writeVault(file, vault);
+    return { revoked: true, remaining: user.tokens.length };
+  });
 }
 
 /** Remove a user, and with them every token they hold. */
 export function removeUser(root: string, username: string): boolean {
-  const file = vaultFilePath(root);
-  const vault = normalizeVault(JSON.parse(fs.readFileSync(file, 'utf8')));
-  if (!vault.users[username]) return false;
-  delete vault.users[username];
-  writeVault(file, vault);
-  return true;
+  return editVault(root, (file) => {
+    const vault = normalizeVault(JSON.parse(fs.readFileSync(file, 'utf8')));
+    if (!vault.users[username]) return false;
+    delete vault.users[username];
+    writeVault(file, vault);
+    return true;
+  });
 }

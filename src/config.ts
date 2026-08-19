@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { writeFileAtomic } from './atomic';
+import { withFileLock, writeFileAtomic } from './atomic';
 import { normalizeHostname } from './siteshost';
 import { DEFAULT_THEME, findTheme } from './themes';
 
@@ -170,11 +170,35 @@ export function loadConfig(root: string): VaultConfig {
   return config;
 }
 
-export function saveConfig(root: string, changes: Partial<VaultConfig>): VaultConfig {
+/**
+ * Hold config.json's lock across a read, an edit, and the write back.
+ *
+ * `cofferdam config set` and `PATCH /api/config` merge changes into whatever is
+ * on disk, so two of them overlapping keeps one change and drops the other. The
+ * cache is dropped on the way in for the same reason it is in the runner
+ * registry: an unchanged mtime and size is a good enough guess for a read, and
+ * not good enough for the read half of a read-modify-write.
+ *
+ * The lock is not reentrant, so anything that needs to look at the file before
+ * deciding whether to save calls `saveLocked` from inside its own `editConfig`
+ * rather than calling `saveConfig`.
+ */
+function editConfig<T>(root: string, fn: () => T): T {
+  return withFileLock(`${configFilePath(root)}.lock`, () => {
+    cache = null;
+    return fn();
+  });
+}
+
+function saveLocked(root: string, changes: Partial<VaultConfig>): VaultConfig {
   const next: VaultConfig = { ...loadConfig(root), ...changes };
   writeFileAtomic(configFilePath(root), JSON.stringify(next, null, 2) + '\n');
   cache = null;
   return next;
+}
+
+export function saveConfig(root: string, changes: Partial<VaultConfig>): VaultConfig {
+  return editConfig(root, () => saveLocked(root, changes));
 }
 
 /**
@@ -191,14 +215,16 @@ export function saveConfig(root: string, changes: Partial<VaultConfig>): VaultCo
  * turning it off by hand stays turned off.
  */
 export function seedTrustProxy(root: string): boolean {
-  let parsed: Record<string, unknown> = {};
-  try {
-    parsed = JSON.parse(fs.readFileSync(configFilePath(root), 'utf8')) as Record<string, unknown>;
-  } catch {
-    parsed = {};
-  }
-  const network = typeof parsed.network === 'object' && parsed.network !== null ? (parsed.network as Record<string, unknown>) : {};
-  if (typeof network.trustProxy === 'boolean') return false;
-  saveConfig(root, { network: { trustProxy: true } });
-  return true;
+  return editConfig(root, () => {
+    let parsed: Record<string, unknown> = {};
+    try {
+      parsed = JSON.parse(fs.readFileSync(configFilePath(root), 'utf8')) as Record<string, unknown>;
+    } catch {
+      parsed = {};
+    }
+    const network = typeof parsed.network === 'object' && parsed.network !== null ? (parsed.network as Record<string, unknown>) : {};
+    if (typeof network.trustProxy === 'boolean') return false;
+    saveLocked(root, { network: { trustProxy: true } });
+    return true;
+  });
 }
