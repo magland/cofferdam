@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { writeFileAtomic } from './atomic';
 import { GitRepo, execGit, execGitStatus, isValidRefName, isValidRepoPath, isValidSha } from './git';
 import type { LfsStore } from './lfsstore';
 import { displayName, findRepo, isValidName, repoSiblingSuffixes, reservedRepoSuffix } from './scan';
@@ -122,7 +123,7 @@ export async function forkRepo(
     ? fs.readFileSync(path.join(source.dir, 'description'), 'utf8')
     : '';
   if (description.trim() !== '' && !description.startsWith('Unnamed repository')) {
-    fs.writeFileSync(path.join(dir, 'description'), description);
+    writeFileAtomic(path.join(dir, 'description'), description);
   }
   return new GitRepo(dir, toCollection, toName);
 }
@@ -510,7 +511,7 @@ export async function setDefaultBranch(repoDir: string, branch: string): Promise
 
 export function setDescription(repoDir: string, text: string): void {
   const line = text.replace(/\s+/g, ' ').trim();
-  fs.writeFileSync(path.join(repoDir, 'description'), line === '' ? '' : line + '\n');
+  writeFileAtomic(path.join(repoDir, 'description'), line === '' ? '' : line + '\n');
 }
 
 export function containedIn(rootReal: string, target: string): boolean {

@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { atomFeed } from './atom';
+import { writeFileAtomic } from './atomic';
 import { RefInfo, isValidRefName } from './git';
 import { icon } from './icons';
 import { renderMarkdown } from './markdown';
@@ -119,7 +120,7 @@ export function saveRelease(root: string, collection: string, repo: string, rele
     created: release.created,
     prerelease: release.prerelease,
   }).trimEnd();
-  fs.writeFileSync(fileFor(dir, release.tag), `---\n${head}\n---\n${release.body}\n`, 'utf8');
+  writeFileAtomic(fileFor(dir, release.tag), `---\n${head}\n---\n${release.body}\n`);
 }
 
 export function deleteRelease(root: string, collection: string, repo: string, tag: string): boolean {
