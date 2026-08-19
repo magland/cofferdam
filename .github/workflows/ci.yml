@@ -106,7 +106,10 @@ jobs:
       - name: Install the tarball and run the command it provides
         run: |
           npm install -g --prefix "$RUNNER_TEMP/global" "$TARBALL"
-          "$RUNNER_TEMP/global/bin/cofferdam" --help | grep -q 'cofferdam serve'
+          help="$("$RUNNER_TEMP/global/bin/cofferdam" --help)"
+          echo "$help"
+          echo "$help" | grep -q 'Usage: cofferdam <command>' || { echo "--help printed no usage line"; exit 1; }
+          echo "$help" | grep -qE '^  serve ' || { echo "--help does not list the serve command"; exit 1; }
 
       - name: Serve a fresh vault from the installed package
         run: |

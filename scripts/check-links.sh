@@ -27,7 +27,15 @@ while IFS= read -r file; do
       echo "BROKEN $file -> $target"
       fail=1
     fi
-  done < <(grep -oE '\]\([^)]+\)' "$file" | sed -e 's/^](//' -e 's/)$//')
+  done < <(
+    # Code is not prose: drop fenced blocks and inline code spans first, so a
+    # regex or a shell snippet that happens to contain ](...) is not read as a
+    # link.
+    awk '/^[[:space:]]*```/ { fenced = !fenced; next } !fenced' "$file" \
+      | sed -e 's/`[^`]*`//g' \
+      | grep -oE '\]\([^)]+\)' \
+      | sed -e 's/^](//' -e 's/)$//'
+  )
 done < <(git ls-files '*.md')
 
 if [ "$fail" = 0 ]; then
