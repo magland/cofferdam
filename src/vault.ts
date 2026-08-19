@@ -8,6 +8,20 @@ export const VAULT_FILE = 'vault.json';
 export interface TokenRecord {
   hash: string;
   scope?: string[];
+  /**
+   * A stable identifier, so that a token can be named without naming its hash.
+   * Minted with the token; a record from before this existed has none, and is
+   * then identified by the first eight characters of its hash instead, so
+   * existing vaults keep working without migration.
+   */
+  id?: string;
+  /** When the token was minted. Absent on a record from before this existed. */
+  created?: string;
+}
+
+/** How a token is named in a listing or a revocation: its id, or a stand-in for one. */
+export function tokenId(t: TokenRecord): string {
+  return t.id ?? t.hash.slice(0, 8);
 }
 
 export interface UserRecord {
@@ -63,10 +77,15 @@ function normalizeVault(parsed: unknown): Vault {
       if (typeof t === 'string') return { hash: t };
       if (typeof t === 'object' && t !== null && typeof (t as Record<string, unknown>).hash === 'string') {
         const tRec = t as Record<string, unknown>;
-        if (tRec.scope === undefined) return { hash: tRec.hash as string };
-        const ts = asStringArray(tRec.scope);
-        if (!ts) throw new Error(`user ${name}: token ${i} "scope" must be a list of strings`);
-        return { hash: tRec.hash as string, scope: ts };
+        const rec: TokenRecord = { hash: tRec.hash as string };
+        if (typeof tRec.id === 'string' && tRec.id !== '') rec.id = tRec.id;
+        if (typeof tRec.created === 'string' && tRec.created !== '') rec.created = tRec.created;
+        if (tRec.scope !== undefined) {
+          const ts = asStringArray(tRec.scope);
+          if (!ts) throw new Error(`user ${name}: token ${i} "scope" must be a list of strings`);
+          rec.scope = ts;
+        }
+        return rec;
       }
       throw new Error(`user ${name}: token ${i} must be a hash string or an object with a "hash"`);
     });
@@ -216,8 +235,8 @@ export function addUserToken(
   // a vault can be bootstrapped with a token its operator already holds. Only
   // the hash is stored either way, so the two cases differ in nothing else.
   const { token, hash } = opts.token ? { token: opts.token, hash: hashToken(opts.token) } : mintToken();
-  const rec: TokenRecord =
-    opts.tokenScope && opts.tokenScope.length ? { hash, scope: opts.tokenScope } : { hash };
+  const rec: TokenRecord = { hash, id: crypto.randomBytes(4).toString('hex'), created: new Date().toISOString() };
+  if (opts.tokenScope && opts.tokenScope.length) rec.scope = opts.tokenScope;
   user.tokens.push(rec);
   writeVault(file, vault);
   return { token, created, user };
@@ -282,4 +301,32 @@ export function bootstrapVault(
     ...(preset ? { token: preset } : {}),
   });
   return { username: 'owner', token, preset: preset !== '' };
+}
+
+
+/**
+ * Revoke one token by its id. Revoking the token currently in use is allowed and
+ * reported plainly rather than refused: locking yourself out is your business,
+ * and vault.json remains hand-editable either way.
+ */
+export function revokeToken(root: string, username: string, id: string): { revoked: boolean; remaining: number } {
+  const file = vaultFilePath(root);
+  const vault = normalizeVault(JSON.parse(fs.readFileSync(file, 'utf8')));
+  const user = vault.users[username];
+  if (!user) throw new Error(`no user ${username}`);
+  const before = user.tokens.length;
+  user.tokens = user.tokens.filter((t) => tokenId(t) !== id);
+  if (user.tokens.length === before) return { revoked: false, remaining: before };
+  writeVault(file, vault);
+  return { revoked: true, remaining: user.tokens.length };
+}
+
+/** Remove a user, and with them every token they hold. */
+export function removeUser(root: string, username: string): boolean {
+  const file = vaultFilePath(root);
+  const vault = normalizeVault(JSON.parse(fs.readFileSync(file, 'utf8')));
+  if (!vault.users[username]) return false;
+  delete vault.users[username];
+  writeVault(file, vault);
+  return true;
 }

@@ -1420,6 +1420,100 @@ PASS=$((PASS+1)); echo "ok: a commit made over the API triggers a workflow run, 
 check "and the run is listed on the web" 200 "$BASE/apis/made/actions"
 body_has "under the workflow's name" 'From the api'
 
+# ---- releases, sites, and administration over the API ----
+
+api "api creates a tag to hang a release on" 201 -H "$JSON_CT" \
+  --data '{"name":"v0.1.0","at":"main"}' "$BASE/api/repos/apis/repo/tags"
+api "a release for a tag that is not there is a 404" 404 -X PUT -H "$JSON_CT" \
+  --data '{"name":"nothing"}' "$BASE/api/repos/apis/repo/releases/v9.9.9"
+body_has "saying to make the tag first" 'create the tag first'
+api "api publishes a release" 201 -X PUT -H "$JSON_CT" \
+  --data '{"name":"First cut","body":"It works.","prerelease":true}' "$BASE/api/repos/apis/repo/releases/v0.1.0"
+body_has "with its notes" '"body":"It works."'
+# PUT rather than POST, so creating and editing are the same call and a caller
+# never has to retry an "already exists" as an edit.
+api "the same call edits it" 200 -X PUT -H "$JSON_CT" \
+  --data '{"body":"It really works."}' "$BASE/api/repos/apis/repo/releases/v0.1.0"
+body_has "keeping the title it had" '"name":"First cut"'
+body_has "and the author who published it" '"author":"owner"'
+api "api lists releases" 200 "$BASE/api/repos/apis/repo/releases"
+body_has "as a named array" '{"releases":\['
+api_as "publishing needs push scope" 403 "$NARROW_TOKEN" -X PUT -H "$JSON_CT" \
+  --data '{"name":"no"}' "$BASE/api/repos/apis/repo/releases/v0.1.0"
+api "api deletes the release" 200 -X DELETE "$BASE/api/repos/apis/repo/releases/v0.1.0"
+body_has "and says the tag stayed" '"tagKept":true'
+api "the tag is still in the repository" 200 "$BASE/api/repos/apis/repo/tags"
+body_has "where it was" '"name":"v0.1.0"'
+
+# The site route is read only, deliberately: an upload path here would be a second
+# way to write the one directory whose contents are served to browsers.
+api "api says a repository with no site has none" 200 "$BASE/api/repos/apis/repo/site"
+body_has "plainly" '"exists":false'
+mkdir -p "$VAULT/apis/made.site/css"
+echo '<h1>made</h1>' > "$VAULT/apis/made.site/index.html"
+echo 'body{}' > "$VAULT/apis/made.site/css/site.css"
+api "api reports a repository's site" 200 "$BASE/api/repos/apis/made/site"
+body_has "saying it has one" '"exists":true'
+body_has "and how many files are in it" '"entries":2'
+
+# Tokens are named by an id, never by their hash and never by the token.
+api "api reads a user" 200 "$BASE/api/users/narrow"
+body_has "with their scope" '"scope":\["nowhere/\*"\]'
+body_has "and a token id" '"id":"'
+body_lacks "but no hash" '"hash"'
+NARROW_TOKEN_ID="$({ grep -o '"id":"[^"]*"' "$BODY" || true; } | head -1 | cut -d'"' -f4)"
+api "api lists a user's tokens" 200 "$BASE/api/users/narrow/tokens"
+body_lacks "still without a hash" '"hash"'
+api_as "a user may read their own record" 200 "$NARROW_TOKEN" "$BASE/api/users/narrow"
+api_as "but not somebody else's" 403 "$NARROW_TOKEN" "$BASE/api/users/owner"
+api "an unknown user is a 404" 404 "$BASE/api/users/nosuchperson"
+
+api "api revokes one token" 200 -X DELETE "$BASE/api/users/narrow/tokens/$NARROW_TOKEN_ID"
+body_has "saying how many are left" '"remaining":0'
+check "and the revoked token stops working" 401 -H "authorization: Bearer $NARROW_TOKEN" "$BASE/api/whoami"
+api "revoking it again is a 404" 404 -X DELETE "$BASE/api/users/narrow/tokens/$NARROW_TOKEN_ID"
+# A user with no tokens is still a user, so mint one back for the checks below.
+api "mint a token back for the narrow user" 200 -H "$JSON_CT" \
+  --data '{"username":"narrow"}' "$BASE/api/users"
+NARROW_TOKEN="$({ grep -o '"token":"cofferdam_[0-9a-f]*"' "$BODY" || true; } | head -1 | cut -d'"' -f4)"
+[ -n "$NARROW_TOKEN" ] || { echo "FAIL: no replacement token for the narrow user"; exit 1; }
+PASS=$((PASS+1)); echo "ok: a user with no tokens can be given another"
+
+# Removing a user is the one place this adds a capability rather than exposing
+# one, so it takes a confirmation and refuses to remove the caller.
+api "removing a user without a confirmation is refused" 400 -X DELETE "$BASE/api/users/narrow"
+api "removing yourself is refused" 409 -X DELETE "$BASE/api/users/owner?confirm=owner"
+body_has "saying who could" 'another admin can'
+
+api "an empty collection to remove" 200 -H "$JSON_CT" \
+  --data '{"name":"disposable"}' "$BASE/api/collections"
+api "api removes an empty collection" 200 -X DELETE "$BASE/api/collections/disposable"
+body_has "naming it" '"deleted":"disposable"'
+api "a collection with something in it is refused" 409 -X DELETE "$BASE/api/collections/apis"
+body_has "plainly" 'not empty'
+api "an unknown collection is a 404" 404 -X DELETE "$BASE/api/collections/nosuchcollection"
+api_as "removing a collection needs admin scope over it" 403 "$ALICE_TOKEN" -X DELETE "$BASE/api/collections/viaapi"
+api_as "and a collection admin may remove one inside their scope" 409 "$COLLECTION_TOKEN" -X DELETE "$BASE/api/collections/demo"
+body_has "getting as far as the emptiness check" 'not empty'
+
+
+api "api reads the vault settings" 200 "$BASE/api/config"
+body_has "with the theme" '"theme":'
+body_has "and the themes to choose from" '"themes":\['
+body_has "and the limits, which are read only here" '"requestsPerMinute":'
+api "api changes the theme and the retention" 200 -X PATCH -H "$JSON_CT" \
+  --data '{"theme":"slate","ci":{"runs":7,"days":3,"artifactMb":100}}' "$BASE/api/config"
+body_has "reporting what it saved" '"runs":7'
+api "an unknown theme is refused, naming the real ones" 400 -X PATCH -H "$JSON_CT" \
+  --data '{"theme":"chartreuse"}' "$BASE/api/config"
+body_has "by listing them" 'paper'
+api "changing nothing is refused" 400 -X PATCH -H "$JSON_CT" --data '{}' "$BASE/api/config"
+# Not merely an admin: a delegated collection administrator should not restyle
+# the whole vault, which is the rule the web applies to the same setting.
+api_as "vault settings need admin over everything" 403 "$COLLECTION_TOKEN" "$BASE/api/config"
+body_has "saying as much" 'whole vault'
+api "put the theme back" 200 -X PATCH -H "$JSON_CT" --data '{"theme":"paper"}' "$BASE/api/config"
+
 # ---- cofferdam login: the token in git's credential store ----
 
 # An isolated HOME so this never touches the developer's own git configuration,
@@ -1654,6 +1748,49 @@ PASS=$((PASS+1)); echo "ok: the clone is there"
 run_code "repo delete refuses without --yes" 2 cli repo delete clirepos/made
 run_ok "repo delete with --yes" cli repo delete clirepos/made --yes
 check "and the repository is gone" 404 "$BASE/clirepos/made"
+
+# ---- releases, users, and settings from the command line ----
+
+run_ok "release create on an existing tag" \
+  cli release create v0.1.0 --repo apis/repo --title "From the cli" --notes "Notes." --prerelease
+run_ok "release list" cli release list --repo apis/repo
+body_has "with the tag" 'v0.1.0'
+body_has "marked a prerelease" 'prerelease'
+run_ok "release view" cli release view v0.1.0 --repo apis/repo
+body_has "showing the notes" 'Notes.'
+run_ok "release edit --latest clears the prerelease flag" cli release edit v0.1.0 --repo apis/repo --latest
+run_ok "and it is no longer one" cli release view v0.1.0 --repo apis/repo --json=prerelease
+body_has "plainly" '"prerelease": false'
+run_code "release delete refuses without --yes" 2 cli release delete v0.1.0 --repo apis/repo
+run_ok "release delete with --yes" cli release delete v0.1.0 --repo apis/repo --yes
+body_has "saying the tag stayed" 'tag itself is still there'
+
+# A user of its own to revoke and remove, so that the checks further down still
+# have the narrow user they expect.
+run_ok "user add, to have one to remove" cli user add spare --scope 'nowhere/*'
+run_ok "user view" cli user view spare
+body_has "with their scope" 'push: nowhere/\*'
+run_ok "user token list" cli user token list spare
+CLI_TOKEN_ID="$(head -1 "$BODY" | awk '{print $1}')"
+[ -n "$CLI_TOKEN_ID" ] || { echo "FAIL: no token id listed"; exit 1; }
+PASS=$((PASS+1)); echo "ok: a token is named by an id rather than by its hash"
+run_code "user token revoke refuses without --yes" 2 cli user token revoke spare "$CLI_TOKEN_ID"
+run_ok "user token revoke with --yes" cli user token revoke spare "$CLI_TOKEN_ID" --yes
+body_has "counting what is left" 'token'
+run_code "user delete refuses without --yes" 2 cli user delete spare
+run_ok "user delete with --yes" cli user delete spare --yes
+run_code "and the user is gone" 4 cli user view spare
+
+run_ok "collection add, to have one to remove" cli collection add throwaway
+run_code "collection delete refuses without --yes" 2 cli collection delete throwaway
+run_ok "collection delete with --yes" cli collection delete throwaway --yes
+check "and the collection is gone" 404 "$BASE/throwaway"
+
+run_ok "config view" cli config view
+body_has "naming the theme" 'theme'
+body_has "and saying which settings a write cannot reach" 'read at startup'
+run_ok "config set" cli config set --ci-runs 11
+body_has "reporting what it kept" 'keep 11 runs'
 run_code "and a conflict is reported with its paths" 5 cli pr merge 2 --repo apis/repo
 err_has "naming the file that conflicts" 'This pull request is not open'
 

@@ -146,53 +146,45 @@ A vault on `my-vault-name.fly.dev` is a real HTTPS URL and there is nothing wron
 
 Those are separate pieces of work, in that order, and the second is optional. Both are DNS records and certificates, which is the part the CLI cannot do for you: `cofferdam deploy fly` never touches your domain.
 
-The examples below are a vault at `vault1.magland.org`, on a Fly app named `vault1`, with `magland.org` on Cloudflare. Another DNS provider differs only in where the records are typed, and another host only in how the certificate is obtained.
+The examples below are a vault at `vault.example.org`, on a Fly app named `my-vault-name`, with `example.org` at some DNS provider. Substitute your own throughout.
 
 ### The vault's own hostname
 
-One record and one certificate:
-
-| Type | Name | Content | Proxy |
-|---|---|---|---|
-| CNAME | `vault1` | `vault1.fly.dev` | DNS only |
+Three commands, in this order:
 
 ```bash
-fly certs add vault1.magland.org -a vault1
-fly certs check vault1.magland.org -a vault1
+fly certs add vault.example.org -a my-vault-name
+fly certs setup vault.example.org -a my-vault-name
+fly certs check vault.example.org -a my-vault-name
 ```
 
-Fly validates this one over HTTP-01, which it can answer itself because requests for that name already reach the app, so there is nothing further to add once the CNAME resolves.
+`fly certs setup` is the one that does the work of telling you what to do: it looks at the app and prints the exact DNS records to create for that name. Take them from there rather than guessing, since which records they are depends on the app, and a plausible-looking `CNAME` to `my-vault-name.fly.dev` is not reliably the right answer. Add what it prints at your DNS provider, then run `fly certs check` until the certificate is issued, which is usually a minute or two after the records resolve.
 
-Nothing in the vault has to be told its own name. Clone URLs, redirects, and cookies are all built from the host of the request, so the vault answers correctly on both names at once. That is what makes the change safe to do while people are using it: `.fly.dev` keeps working, and remotes can be re-pointed at leisure with `git remote set-url origin https://vault1.magland.org/alice/webapp`. Log in again under the new name, `cofferdam login https://vault1.magland.org`, so that the CLI and git use it too.
+Nothing in the vault has to be told its own name. Clone URLs, redirects, and cookies are all built from the host of the request, so the vault answers correctly on both names at once. That is what makes the change safe to do while people are using it: `.fly.dev` keeps working, and remotes can be re-pointed at leisure with `git remote set-url origin https://vault.example.org/alice/webapp`. Log in again under the new name, `cofferdam login https://vault.example.org`, so that the CLI and git use it too.
 
 ### A hostname for each site
 
-By default a repository's static site is served from the vault's own hostname and sandboxed, which costs it cookies, storage, and service workers (see [Sites](sites.md)). Giving each site a real origin means a wildcard hostname and a certificate for it, which is more DNS work than the plain name above:
-
-| Type | Name | Content | Proxy |
-|---|---|---|---|
-| CNAME | `*.vault1-sites` | `vault1.fly.dev` | DNS only |
-| CNAME | `_acme-challenge.vault1-sites` | as printed by `fly certs show` | DNS only |
+By default a repository's static site is served from the vault's own hostname and sandboxed, which costs it cookies, storage, and service workers (see [Sites](sites.md)). Giving each site a real origin means a wildcard hostname, and a wildcard certificate is more work than the plain name above:
 
 ```bash
-fly certs add '*.vault1-sites.magland.org' -a vault1
-fly certs show '*.vault1-sites.magland.org' -a vault1   # prints the DNS-01 target
-fly certs check '*.vault1-sites.magland.org' -a vault1
+fly certs add '*.vault-sites.example.org' -a my-vault-name
+fly certs setup '*.vault-sites.example.org' -a my-vault-name
+fly certs check '*.vault-sites.example.org' -a my-vault-name
 ```
 
-A wildcard cannot be validated over HTTP-01, since there is no single name to answer for, so it needs DNS-01. That is why the `_acme-challenge` record exists, and why `fly certs show` has to be run first to learn what to put in it.
+A wildcard cannot be validated over HTTP-01, since there is no single name for the app to answer on, so it needs DNS-01. That is the difference from the plain name, and it means `fly certs setup` asks for two kinds of record rather than one: the records pointing `*.vault-sites.example.org` at the app, and an `_acme-challenge.vault-sites` record proving you control the name. `fly certs show '*.vault-sites.example.org' -a my-vault-name` prints the challenge target again if you need to look it up later.
 
 Then set the host in the vault's `config.json`, which lives on the volume rather than in the image:
 
 ```bash
-fly ssh console -a vault1 -C 'cat /vault/config.json'   # what is there now
-fly ssh console -a vault1                               # then edit /vault/config.json
+fly ssh console -a my-vault-name -C 'cat /vault/config.json'   # what is there now
+fly ssh console -a my-vault-name                               # then edit /vault/config.json
 ```
 
 ```json
 {
   "network": { "trustProxy": true },
-  "sites": { "host": "vault1-sites.magland.org" }
+  "sites": { "host": "vault-sites.example.org" }
 }
 ```
 
@@ -200,7 +192,7 @@ Keep whatever `deploy fly` seeded there, which is `network.trustProxy`. Leave th
 
 This is one Fly app with two hostnames, not two apps. Sites hosts must differ per vault in any case, because two Fly apps cannot hold a certificate for the same hostname.
 
-A Cloudflare-specific trap, since it produces a certificate error rather than a clear failure: Universal SSL covers `example.com` and `*.example.com` only, one label deep, so a proxied `*.vault1-sites.magland.org` is not covered without Advanced Certificate Manager, and proxied wildcard DNS records are an Enterprise feature. All three records stay DNS only, which means no Cloudflare caching or WAF in front of the vault. Note also that a wildcard does not match the bare `vault1-sites.magland.org`, so that name needs its own record and certificate if it is ever to answer; without one it simply does not resolve, and the vault answers a minimal 404 on it if it does.
+A Cloudflare-specific trap, if that is your DNS provider, since it produces a certificate error rather than a clear failure: every record for these names must be **DNS only** rather than proxied. Universal SSL covers `example.org` and `*.example.org` only, one label deep, so a proxied `*.vault-sites.example.org` is not covered without Advanced Certificate Manager, and proxied wildcard DNS records are an Enterprise feature. Leaving them unproxied means no Cloudflare caching or WAF in front of the vault. Note also that a wildcard does not match the bare `vault-sites.example.org`, so that name needs its own record and certificate if it is ever to answer; without one it simply does not resolve, and the vault answers a minimal 404 on it if it does.
 
 Not every repository is eligible for a hostname of its own, because not every legal repository name is a legal DNS label; an ineligible one keeps being served on the forge host under the sandbox. [Sites](sites.md) gives the rule, and describes what a per-site origin does and does not isolate.
 

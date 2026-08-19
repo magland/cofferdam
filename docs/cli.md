@@ -181,6 +181,32 @@ A job log comes back as its last 200 lines by default. That is not a convenience
 
 `cofferdam run watch` polls until the run finishes and then reports how it went; `--exit-status` makes a failed run a non-zero exit, which is what a script wants. It polls rather than streams because the engine has no event channel and the vault reads its state off disk per request, so a five-second poll against a local process costs nothing and needs no protocol. Note that a vault with no runner registered queues its runs and waits, so a watch there will reach its timeout.
 
+### Releases, users, and settings
+
+```bash
+cofferdam release list
+cofferdam release create v1.0.0 --title 'First cut' --notes-file NOTES.md
+cofferdam release edit v1.0.0 --latest          # clear the prerelease flag
+cofferdam release delete v1.0.0 --yes
+
+cofferdam user view alice
+cofferdam user token list alice
+cofferdam user token revoke alice <token-id> --yes
+cofferdam user delete alice --yes
+cofferdam collection delete emptyone --yes
+
+cofferdam config view
+cofferdam config set --theme slate --ci-runs 50
+```
+
+A release hangs on a tag that already exists: notes for a tag nobody can check out are notes about nothing, so `cofferdam tag create` comes first. Creating and editing are the same call underneath, since a release is keyed by its tag, which takes a whole class of "already exists, retry as an edit" logic out of a caller. Deleting a release deletes its notes and leaves the tag; the two are separate operations.
+
+There is no `release upload`. A release's downloads are the archive routes, so there is nothing to upload and no asset endpoints exist.
+
+Tokens are named by an id rather than by their hash, and neither a token nor its hash is ever returned: only a SHA-256 hash is stored, so there is nothing to return. An id, a creation time, and any scope of its own is what a listing gives, which is what revocation takes. Revoking the token you are using is allowed and reported rather than refused; locking yourself out is your business, and `vault.json` remains hand-editable.
+
+`cofferdam config set` reaches the theme and the CI retention settings and nothing else. `network.trustProxy`, the `limits` block, and `sites.host` are read once when the server starts (see [Deploying a vault](deploying.md)), so a command that changed them would report a change the running server had not made. Edit `config.json` in the vault and restart.
+
 ### Reaching any route: `cofferdam api`
 
 `cofferdam api` sends a request to any route of the JSON API and prints what comes back, so a capability with no typed command of its own is still one line away:

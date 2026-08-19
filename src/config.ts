@@ -21,7 +21,7 @@ export interface CiConfig {
 export interface SitesConfig {
   /**
    * Hostname whose subdomains serve repository sites, e.g.
-   * "vault1-sites.magland.org". Empty means sites are served on the forge
+   * "vault-sites.example.org". Empty means sites are served on the forge
    * host, sandboxed.
    */
   host: string;

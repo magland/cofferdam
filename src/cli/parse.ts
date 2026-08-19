@@ -375,6 +375,15 @@ export async function dispatch(cli: Cli, argv: string[]): Promise<void> {
         if (sub === undefined) throw new CliError(`'cofferdam ${head}' needs a command: ${subs.join(', ')}`, EXIT_USAGE);
         return;
       }
+      // A group may nest twice ('user token list'), so a second word that names
+      // one of those is a group in its own right rather than a misspelling.
+      const deeper = under.filter((c) => c.path.length > 2 && c.path[1] === sub);
+      if (deeper.length && argv[2] === undefined) {
+        throw new CliError(
+          `'cofferdam ${head} ${sub}' needs a command: ${[...new Set(deeper.map((c) => c.path[2]))].join(', ')}`,
+          EXIT_USAGE
+        );
+      }
       // What was typed is one word, so it is compared against single words.
       const near = nearest(sub, [...new Set(under.map((c) => c.path[1]))]);
       throw new CliError(

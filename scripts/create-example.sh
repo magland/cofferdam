@@ -317,17 +317,27 @@ issue alice/hello-numerics 2 closed "Document the Makefile targets" dev document
 sed -i 's/^state: closed$/state: closed\nclosedBy: author\nclosedAt: 2026-02-13T11:20:00.000Z/' \
   "$ROOT/alice/hello-numerics.issues/2/issue.md"
 
-# ---- vault.json with a dev user (fixed token, example vault only) ----
+# ---- vault.json with two users (fixed tokens, example vault only) ----
 
+# 'dev' owns the vault. 'reader' can read everything and write nothing, which is
+# what half of the authorization checks need: a token that is perfectly valid and
+# still not allowed to do the thing being asked.
 DEV_TOKEN="cofferdam_example_dev_token"
 DEV_HASH="$(printf %s "$DEV_TOKEN" | sha256sum | cut -d' ' -f1)"
+READER_TOKEN="cofferdam_example_reader_token"
+READER_HASH="$(printf %s "$READER_TOKEN" | sha256sum | cut -d' ' -f1)"
 cat > "$ROOT/vault.json" <<EOF
 {
   "users": {
     "dev": {
-      "tokens": [{ "hash": "$DEV_HASH" }],
+      "tokens": [{ "hash": "$DEV_HASH", "id": "exampledev" }],
       "scope": ["*"],
       "admin": ["*"]
+    },
+    "reader": {
+      "tokens": [{ "hash": "$READER_HASH", "id": "examplerdr" }],
+      "scope": ["nowhere/*"],
+      "admin": []
     }
   }
 }
@@ -336,4 +346,5 @@ EOF
 echo "Example content created under $ROOT"
 echo ""
 echo "Sign in on the web (or push) as user 'dev' with token: $DEV_TOKEN"
-echo "This fixed token is for the example vault only."
+echo "A read-only user is there too: 'reader' with token: $READER_TOKEN"
+echo "These fixed tokens are for the example vault only."

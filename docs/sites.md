@@ -45,11 +45,11 @@ Set one in the vault's `config.json`:
 
 ```json
 {
-  "sites": { "host": "vault1-sites.magland.org" }
+  "sites": { "host": "vault-sites.example.org" }
 }
 ```
 
-Each eligible repository's site is then served from `<repo>--<collection>.<sites host>`, so `webapp` in collection `alice` becomes `webapp--alice.vault1-sites.magland.org`. On that hostname the repository is the origin root: `/index.html` is the site's own, and so are `/assets/style.css` and `/favicon.svg`, which the forge does not shadow there. No session is ever resolved on a sites hostname and no cookie is set on one, so a site cannot see a visitor's session even in principle. Responses carry `X-Content-Type-Options: nosniff` and nothing else; the sandbox is gone, because the origin is now doing that work.
+Each eligible repository's site is then served from `<repo>--<collection>.<sites host>`, so `webapp` in collection `alice` becomes `webapp--alice.vault-sites.example.org`. On that hostname the repository is the origin root: `/index.html` is the site's own, and so are `/assets/style.css` and `/favicon.svg`, which the forge does not shadow there. No session is ever resolved on a sites hostname and no cookie is set on one, so a site cannot see a visitor's session even in principle. Responses carry `X-Content-Type-Options: nosniff` and nothing else; the sandbox is gone, because the origin is now doing that work.
 
 The forge path keeps working and redirects: `/<collection>/<repo>/site/...` answers `302` to the same path on the site's origin, query string included. It is a temporary redirect on purpose, so removing `sites.host` takes effect on the next request rather than after every cache in the way has forgotten it. The Site tab links straight to the origin.
 
@@ -61,7 +61,7 @@ A value that is not a plausible hostname is ignored and the default used, the sa
 
 ### What a hostname does and does not isolate
 
-Per-repository hostnames give each site its own storage, its own DOM, and its own service worker scope. They do **not** isolate cookies. The cookie boundary is the registrable domain, not the hostname, so a site at `a--alice.vault1-sites.magland.org` can set a cookie with `Domain=vault1-sites.magland.org`, which every other site on that host then receives. Fixing that would need the sites domain on the Public Suffix List, which is a submission rather than a code change.
+Per-repository hostnames give each site its own storage, its own DOM, and its own service worker scope. They do **not** isolate cookies. The cookie boundary is the registrable domain, not the hostname, so a site at `a--alice.vault-sites.example.org` can set a cookie with `Domain=vault-sites.example.org`, which every other site on that host then receives. Fixing that would need the sites domain on the Public Suffix List, which is a submission rather than a code change.
 
 So a site wanting private state should use `localStorage` or IndexedDB, which are keyed by origin and therefore genuinely separate. Treat cookies on a shared sites host as readable by every site on it.
 
