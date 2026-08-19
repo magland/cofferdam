@@ -1948,6 +1948,12 @@ echo 'a real file' > "$SITE/sub/real.txt"
 echo '<h1>site not found</h1>' > "$SITE/404.html"
 check "site served" 200 "$BASE/pushed/created/site/"
 body_has "site content" 'site ok'
+# The collection listing points at the site directly, so a visitor scanning a
+# collection reaches the published page without going through the repository.
+check "the collection listing is served" 200 "$BASE/pushed"
+body_has "with a link to the site" 'class="site-link" href="/pushed/created/site/"'
+check "a collection whose repositories have no site" 200 "$BASE/demo"
+body_lacks "carries no site link" 'class="site-link"'
 check "a directory redirects to its slash" 302 "$BASE/pushed/created/site/sub"
 check "a directory serves its index" 200 "$BASE/pushed/created/site/sub/"
 body_has "the subdirectory index is served" 'sub index'
@@ -2016,6 +2022,9 @@ check "and does so from the missing-slash path in one hop" 302 -D "$TMP/headers"
 header_has "landing on the origin root" "location: http://$SITE_HOST/"
 check "a path with a query string redirects too" 302 -D "$TMP/headers" "$BASE/pushed/created/site/sub/real.txt?x=1"
 header_has "keeping the query" "location: http://$SITE_HOST/sub/real.txt?x=1"
+
+check "the collection listing follows the site to its own origin" 200 "$BASE/pushed"
+body_has "linking there rather than through the forge path" "class=\"site-link\" href=\"http://$SITE_HOST/\""
 
 check "the site serves on its own hostname" 200 -D "$TMP/headers" -H "Host: $SITE_HOST" "$BASE/"
 body_has "with its own index" 'site ok'

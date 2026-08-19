@@ -431,7 +431,13 @@ export function homePage(
 
 export function collectionPage(
   collection: string,
-  repoList: { name: string; description: string | null; updated: string | null }[],
+  repoList: {
+    name: string;
+    description: string | null;
+    updated: string | null;
+    /** Where this repository's published site is, or null if it has none. */
+    siteUrl?: string | null;
+  }[],
   viewer: Viewer | null
 ): string {
   const rows = repoList
@@ -439,7 +445,13 @@ export function collectionPage(
       (r) =>
         `<tr><td>${REPO_ICON}<a href="/${encodeURIComponent(collection)}/${encodeURIComponent(r.name)}"><b>${esc(
           r.name
-        )}</b></a>${r.description ? `<div class="muted small">${esc(r.description)}</div>` : ''}</td><td class="right small">${
+        )}</b></a>${
+          r.siteUrl
+            ? `<a class="site-link" href="${esc(r.siteUrl)}" title="Site" aria-label="Site for ${esc(
+                r.name
+              )}">${icon('globe')}</a>`
+            : ''
+        }${r.description ? `<div class="muted small">${esc(r.description)}</div>` : ''}</td><td class="right small">${
           r.updated ? `Updated ${timeTag(r.updated)}` : ''
         }</td></tr>`
     )

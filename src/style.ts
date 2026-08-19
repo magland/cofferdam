@@ -219,6 +219,12 @@ td.right, th.right { text-align: right; }
 .icon { display: inline-block; width: 16px; text-align: center; margin-right: 6px; color: var(--accent-soft); }
 .icon.file { color: var(--fg-subtle); }
 
+/* The link to a repository's published site, in a collection listing. It sits
+   after the name as an icon alone, muted until the row is pointed at, so it
+   reads as an aside to the repository rather than a second name. */
+.site-link { display: inline-flex; vertical-align: text-bottom; margin-left: 8px; color: var(--fg-subtle); }
+.site-link:hover { color: var(--accent); }
+
 /* Tree listings: name, then the message and age of the commit that last
    touched the entry. The name column is sized to the content so long file
    names are not truncated, and the message column takes the slack. */

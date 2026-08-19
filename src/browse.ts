@@ -10,7 +10,7 @@ import { parsePointer } from './pointer';
 import { esc, highlightCode, isBinary } from './render';
 import { atomFeed } from './atom';
 import { renderDiff } from './diff';
-import { displayName, isValidName, listCollections, listRepoDirs, repoDescription } from './scan';
+import { displayName, isValidName, listCollections, listRepoDirs, repoDescription, siteDir } from './scan';
 import { getViewer } from './session';
 import { serveSite, siteHostUrl } from './site';
 import * as views from './views';
@@ -60,11 +60,23 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
       const dirs = listRepoDirs(root, collection);
       const repoList = await Promise.all(
         dirs.map(async (d) => {
-          const repo = new GitRepo(`${root}/${collection}/${d}`, collection, displayName(d));
+          const name = displayName(d);
+          const repo = new GitRepo(`${root}/${collection}/${d}`, collection, name);
+          // A repository with a site is linked straight to it from the listing,
+          // at its own origin where it has one, so a visitor scanning a
+          // collection reaches the published page without stopping at the
+          // repository first.
+          const hasSite = siteDir(root, collection, name) !== null;
+          const origin = hasSite ? siteHostUrl(root, req, collection, name) : null;
           return {
-            name: displayName(d),
+            name,
             description: repoDescription(repo.dir),
             updated: await repo.lastUpdated(),
+            siteUrl: !hasSite
+              ? null
+              : origin
+                ? `${origin}/`
+                : `/${encodeURIComponent(collection)}/${encodeURIComponent(name)}/site/`,
           };
         })
       );
