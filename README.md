@@ -23,7 +23,7 @@ The `.git` suffix on repository directory names is optional; it is stripped for 
 
 - Collection and repository listings
 - A GitHub-shaped interface: a branch and tag picker, a Code menu with the clone URL, directory listings that show each entry's last commit and how long ago it landed, an About panel, and times written as ages
-- File browsing at any branch or tag, with syntax highlighting; directory listings name the commit that last touched each entry, as GitHub's do
+- File browsing at any branch or tag, with syntax highlighting and linkable line numbers; directory listings name the commit that last touched each entry, as GitHub's do
 - A branch and tag picker with a filter box, and an About panel on the repository page
 - Markdown files rendered as documents, with a Preview/Code toggle (`?plain=1` for the source, as on GitHub); READMEs shown on directory pages
 - The GitHub markdown feature set: highlighted code with a copy button, LaTeX math through KaTeX (`$…$`, `$$…$$`, and ```` ```math ```` blocks), tables, task lists, footnotes, alert callouts (`> [!NOTE]`), emoji shortcodes, heading anchors, and a sanitized subset of inline HTML
