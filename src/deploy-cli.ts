@@ -62,9 +62,13 @@ interface DeployArgs {
 // Quiet commands, whose output this code reads rather than the user. A non-zero
 // exit is often the answer and not a failure (`fly status` on an app that does
 // not exist), so the code is reported instead of thrown.
-function fly(args: string[]): Promise<FlyResult> {
+//
+// The optional stdin is how a secret is handed over. An argument would be
+// readable in `ps` by every other user on this machine for as long as the child
+// runs, and a token is worth more than that.
+function fly(args: string[], stdin?: string): Promise<FlyResult> {
   return new Promise((resolve, reject) => {
-    execFile('fly', args, { maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
+    const child = execFile('fly', args, { maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
       const code = (err as NodeJS.ErrnoException | null)?.code;
       if (code === 'ENOENT') {
         reject(new Error('flyctl is not on PATH. Install it from https://fly.io/docs/flyctl/install/'));
@@ -72,6 +76,12 @@ function fly(args: string[]): Promise<FlyResult> {
       }
       resolve({ code: typeof code === 'number' ? code : err ? 1 : 0, stdout: String(stdout), stderr: String(stderr) });
     });
+    if (stdin !== undefined) {
+      // A child that exits before reading breaks the pipe; that failure is
+      // already reported by its exit code above, so it is not raised twice.
+      child.stdin?.on('error', () => undefined);
+      child.stdin?.end(stdin);
+    }
   });
 }
 
@@ -136,6 +146,28 @@ function parseDeployArgs(args: string[], usage: () => never): DeployArgs {
     else die(`Unexpected argument: ${a}`);
   }
   return out;
+}
+
+// `deploy show` and `deploy destroy` take an app name and nothing else, apart
+// from --yes on destroy. The flags that shape a deployment are parsed by the
+// same function they share, so accepting one here and then ignoring it would
+// look like it had been applied. Only the first one found is named, since fixing
+// it means dropping it and running the command again either way.
+function rejectFlyFlags(a: DeployArgs, usage: string, allowYes: boolean): void {
+  const used: [string, boolean][] = [
+    ['--region', a.region !== null],
+    ['--volume', a.volumeGb !== null],
+    ['--vm-size', a.vmSize !== null],
+    ['--vm-memory', a.memory !== null],
+    ['--image', a.image !== null],
+    ['--org', a.org !== null],
+    ['--lfs-bucket', a.lfsBucket],
+    ['--yes', a.yes && !allowYes],
+  ];
+  const flag = used.find(([, given]) => given);
+  if (!flag) return;
+  if (flag[0] === '--yes') die(`--yes confirms a destroy, and there is nothing here to confirm.\nUsage: ${usage}`);
+  die(`${flag[0]} says how to deploy, and this command deploys nothing.\nUsage: ${usage}`);
 }
 
 // Fly's own machine sizes name a CPU kind and a count: shared-cpu-4x,
@@ -448,6 +480,10 @@ export async function deployFlyCmd(args: string[], usage: () => never): Promise<
     console.log('==> A bucket is already configured (BUCKET_NAME is set), leaving it alone');
   }
 
+  // Set once the operator has the token, either stored by git or printed. It is
+  // what the exit hook below checks before printing the token as a last resort.
+  let tokenDelivered = false;
+
   // An owner token is minted only for a vault that has none. The question is
   // whether the vault has been initialized rather than whether the app exists,
   // because a first deploy that fails leaves the app behind: on the next
@@ -466,8 +502,31 @@ export async function deployFlyCmd(args: string[], usage: () => never): Promise<
   const ownerToken = existed && (await machines(app)).length > 0 ? null : mintToken().token;
   if (ownerToken) {
     console.log('==> Setting the one-time owner token as a Fly secret');
-    const r = await fly(['secrets', 'set', `${OWNER_TOKEN_SECRET}=${ownerToken}`, '-a', app, '--stage']);
+    // `secrets import` reads KEY=VALUE lines from stdin, which keeps the token
+    // off the child's argv and so out of `ps`.
+    const r = await fly(['secrets', 'import', '-a', app, '--stage'], `${OWNER_TOKEN_SECRET}=${ownerToken}\n`);
     if (r.code !== 0) die(`Could not set the owner token secret:\n${r.stderr.trim() || r.stdout.trim()}`);
+    // From here the token exists in two places: this process, and a Fly secret
+    // that can be written but never read back. So every way out of the rest of
+    // this command has to end with the operator either logged in with it or
+    // looking at it, and an exit hook is the one place that covers them all,
+    // including a `die()` from deeper down and an unexpected throw.
+    process.on('exit', () => {
+      if (tokenDelivered) return;
+      // Written with writeSync rather than console.error, which is the whole
+      // point of doing it here: on Linux a write to a pipe is asynchronous, so
+      // console.error from an exit handler is discarded when the output is
+      // piped into a file or a pager, which is a plausible thing to do with a
+      // deploy. The one message that must not be lost cannot go out that way.
+      fs.writeSync(
+        2,
+        '\nThe owner token this run staged as a Fly secret, shown here because nothing\n' +
+          'else has a copy of it. A Fly secret can be written but not read back, and this\n' +
+          'token is the owner of the vault if this app initialized one:\n' +
+          `\n  ${ownerToken}\n` +
+          `\nKeep it, then: cofferdam login ${appUrl(app)} --token ${ownerToken}\n`
+      );
+    });
   }
 
   const config = writeTempConfig(app, settings);
@@ -486,8 +545,18 @@ export async function deployFlyCmd(args: string[], usage: () => never): Promise<
   fs.rmSync(path.dirname(config), { recursive: true, force: true });
   if (code !== 0) {
     console.error('');
-    console.error('The deploy failed. Nothing here is lost: the app, the volume, and the vault on it');
-    console.error('survive, so fix the cause and run the same command again.');
+    console.error('The deploy failed. The app and the volume survive, so fix the cause and run the');
+    console.error('same command again.');
+    if (ownerToken) {
+      // The retry will not mint a second token if a machine was left behind by
+      // this attempt, and it could not overwrite a secret it cannot read even
+      // if it did. So this run's token is the one the vault ends up with, and
+      // the exit hook is about to print it.
+      console.error('');
+      console.error('The retry may not mint a token of its own, because the one shown at the end of');
+      console.error('this output is already the token the vault will be initialized with. Keep it,');
+      console.error('and log in with it once a deploy succeeds.');
+    }
     if (a.image === null) {
       console.error('');
       console.error(`If the image is the problem, check that ${image} exists,`);
@@ -501,7 +570,23 @@ export async function deployFlyCmd(args: string[], usage: () => never): Promise<
   if (!ownerToken) {
     console.log(`==> Deployed: ${url}`);
     console.log('');
-    console.log('The vault it serves is the one that was already there, users and all.');
+    console.log('The vault it serves is whichever vault was already on the volume, users and all.');
+    // No token was minted because a machine had run before, which usually means
+    // a vault that has been in use and an operator who is already logged in.
+    // With nothing stored here, the other reading is possible: an earlier
+    // attempt staged a token and left a machine behind, and this deploy has
+    // just initialized the vault with it. Saying so costs a line only in the
+    // case where it might be the answer.
+    if (!(await readCredential(credentialTarget(url)))) {
+      console.log('');
+      console.log('No token for it is stored on this machine, so log in with one the vault knows:');
+      console.log('');
+      console.log(`  cofferdam login ${url}`);
+      console.log('');
+      console.log('If an earlier deploy of this app failed, the vault was initialized just now with');
+      console.log('the owner token that run printed, and that is the token to use.');
+      console.log('');
+    }
     console.log(`  fly logs -a ${app}`);
     return;
   }
@@ -521,16 +606,16 @@ export async function deployFlyCmd(args: string[], usage: () => never): Promise<
       console.error('already had, and a token minted now is not one of them. Log in with one of those:');
       console.error('');
       console.error(`  cofferdam login ${url}`);
-    } else {
-      console.error('');
-      console.error('The owner token that was set as a secret, shown here once:');
-      console.error('');
-      console.error(`  ${ownerToken}`);
     }
+    // The token this run minted is printed on the way out by the exit hook,
+    // since a vault that has not answered yet may still adopt it.
     process.exit(1);
   }
 
   const loggedIn = await storeOwnerToken(url, ready.username, ownerToken);
+  // storeOwnerToken either stored the token or printed it, so it has been
+  // handed over either way and the exit hook has nothing left to say.
+  tokenDelivered = true;
   console.log('');
   console.log(`==> Ready: ${url}`);
   if (loggedIn) {
@@ -552,6 +637,7 @@ export async function deployFlyCmd(args: string[], usage: () => never): Promise<
 export async function deployShowCmd(args: string[], usage: () => never): Promise<void> {
   const a = parseDeployArgs(args, usage);
   if (!a.app) die('Which app? Usage: cofferdam deploy show <app>');
+  rejectFlyFlags(a, 'cofferdam deploy show <app>', false);
   const app = a.app;
   await requireFly();
   if (!(await appExists(app))) {
@@ -629,6 +715,7 @@ function promptLine(prompt: string): Promise<string> {
 export async function deployDestroyCmd(args: string[], usage: () => never): Promise<void> {
   const a = parseDeployArgs(args, usage);
   if (!a.app) die('Which app? Usage: cofferdam deploy destroy <app> [--yes]');
+  rejectFlyFlags(a, 'cofferdam deploy destroy <app> [--yes]', true);
   const app = a.app;
   await requireFly();
   if (!(await appExists(app))) {
