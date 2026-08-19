@@ -132,7 +132,7 @@ function copyLines(btn) {
   var lines = document.querySelectorAll('.code-lines .ltext');
   var out = [];
   for (var i = 0; i < lines.length; i++) out.push(lines[i].textContent);
-  copyText(btn, out.join('\n'));
+  copyText(btn, out.join('\\n'));
 }
 // Menus are <details> elements. These two handlers give them the rest of what
 // a menu is expected to do: close when the reader clicks elsewhere or presses
