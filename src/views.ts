@@ -1,6 +1,6 @@
 import { BlameLine, CommitDetail, CommitSummary, RefInfo, TreeEntry } from './git';
 import { LanguageStat } from './languages';
-import { esc, formatSize, highlightedLines, timeTag } from './render';
+import { esc, formatDay, formatSize, highlightedLines, timeTag } from './render';
 import { Viewer, viewerIsAdmin } from './session';
 import { activeTheme } from './themes';
 import { WORDMARK } from './logo';
@@ -960,18 +960,34 @@ export function commitsPage(
   const query = author ? `?author=${encodeURIComponent(author)}` : '';
   // Each row carries what a reader might want next from that commit: to read
   // it, to take its id, or to browse the tree as it stood then.
-  const rows = commits
+  const row = (c: CommitSummary) =>
+    `<div class="commit-row"><span class="commit-main">${avatar(c.author, 20)}<span><a class="title" href="${base}/commit/${
+      c.sha
+    }">${esc(c.subject)}</a><div class="muted small">${esc(c.author)} committed ${timeTag(
+      c.date
+    )}</div></span></span><span class="commit-actions"><a class="sha" href="${base}/commit/${c.sha}">${c.sha.slice(
+      0,
+      7
+    )}</a>${copyButton('', c.sha, 'Copy the full commit id')}<a class="btn" href="${base}/tree/${
+      c.sha
+    }" title="Browse the repository at this commit" aria-label="Browse the repository at this commit">${icon(
+      'code'
+    )}</a></span></div>`;
+  // Commits are grouped under the day they landed, as on GitHub: a history
+  // reads as a sequence of days, and the dates stop repeating on every row.
+  const groups: { day: string; rows: string[] }[] = [];
+  for (const c of commits) {
+    const day = formatDay(c.date);
+    const last = groups[groups.length - 1];
+    if (last && last.day === day) last.rows.push(row(c));
+    else groups.push({ day, rows: [row(c)] });
+  }
+  const rows = groups
     .map(
-      (c) =>
-        `<div class="commit-row"><span class="commit-main"><a class="title" href="${base}/commit/${c.sha}">${esc(
-          c.subject
-        )}</a><div class="muted small">${esc(c.author)} committed ${timeTag(c.date)}</div></span><span class="commit-actions"><a class="sha" href="${base}/commit/${
-          c.sha
-        }">${c.sha.slice(0, 7)}</a>${copyButton('', c.sha, 'Copy the full commit id')}<a class="btn" href="${base}/tree/${
-          c.sha
-        }" title="Browse the repository at this commit" aria-label="Browse the repository at this commit">${icon(
-          'code'
-        )}</a></span></div>`
+      (g) =>
+        `<div class="commit-day">${icon('git-commit')}<span>Commits on ${esc(
+          g.day
+        )}</span></div><div class="commit-group">${g.rows.join('')}</div>`
     )
     .join('');
   const pager: string[] = [];

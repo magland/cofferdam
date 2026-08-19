@@ -168,6 +168,13 @@ const AGO_UNITS: { limit: number; secs: number; unit: string }[] = [
   { limit: Infinity, secs: 365 * 86400, unit: 'year' },
 ];
 
+/** "19 Aug 2026" - the day alone, for grouping a list by date. */
+export function formatDay(iso: string): string {
+  const d = new Date(iso);
+  if (!iso || isNaN(d.getTime())) return iso;
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+}
+
 /**
  * A relative time in words: "now", "3 minutes ago", "yesterday", "2 years
  * ago". Dates the clock puts in the future (skew, or a rewritten commit) read

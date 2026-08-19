@@ -256,8 +256,14 @@ table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
 .seg a.current { background: var(--chip-bg); color: var(--fg); font-weight: 600; }
 
 .commit-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; border: 1px solid var(--border); border-top: none; padding: 8px 12px; }
-.commit-row:first-of-type { border-top: 1px solid var(--border); border-radius: var(--radius) var(--radius) 0 0; }
-.commit-row:last-of-type { border-radius: 0 0 var(--radius) var(--radius); }
+/* A day's commits are one bordered group under the day's heading. */
+.commit-day { display: flex; align-items: center; gap: 8px; font-weight: 600; margin: 20px 0 8px; }
+.commit-day .octicon { color: var(--fg-muted); }
+.commit-group { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.commit-group .commit-row { border: none; border-top: 1px solid var(--border-soft); }
+.commit-group .commit-row:first-child { border-top: none; }
+.commit-main { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.commit-main > span { min-width: 0; }
 .commit-row .title { font-weight: 600; color: var(--fg); }
 .commit-row .title:hover { color: var(--accent); }
 .sha {
@@ -524,7 +530,6 @@ textarea {
 .artifacts p { margin: 4px 0 0; }
 
 /* --- history: a commit row carries actions on its right --- */
-.commit-main { min-width: 0; }
 .commit-main .title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .commit-actions { display: flex; align-items: center; gap: 6px; flex: none; }
 .commit-actions .btn { padding: 4px 8px; }
