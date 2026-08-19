@@ -1,8 +1,7 @@
-import express, { Express, Request, Response } from 'express';
+import { Express, Request, Response } from 'express';
 import { avatar } from './avatar';
 import { CiEngine } from './ci/engine';
 import { renderDiff } from './diff';
-import * as forms from './forms';
 import { CommitSummary, isValidRefName } from './git';
 import { icon } from './icons';
 import { renderMarkdown } from './markdown';
@@ -11,9 +10,19 @@ import * as pulls from './pulls';
 import { Pull, PullSummary } from './pulls';
 import { esc, timeTag } from './render';
 import { findRepo } from './scan';
-import { Viewer, checkCsrf, getViewer } from './session';
+import { Viewer, getViewer } from './session';
 import { RepoCtx, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from './views';
-import { ah, loadRepo, makeCtx, send404 } from './web';
+import {
+  ah,
+  fail,
+  field,
+  loadRepo,
+  makeCtx,
+  requireViewerPage,
+  requireViewerPost,
+  send404,
+  urlencodedForm,
+} from './web';
 
 // Pull requests: the pages over the store in pulls.ts, and the merge button
 // over ops.mergeBranch.
@@ -28,12 +37,8 @@ import { ah, loadRepo, makeCtx, send404 } from './web';
 // scope or authorship, and merging needs push scope over the repository,
 // because a merge is a write to a branch like any other.
 
-const form = express.urlencoded({ extended: false, limit: '3mb' });
-
-function field(req: Request, name: string): string {
-  const v = (req.body as Record<string, unknown> | undefined)?.[name];
-  return typeof v === 'string' ? v : '';
-}
+// Descriptions and comments are the long fields here, as they are on an issue.
+const form = urlencodedForm('3mb');
 
 function pullsUrl(ctx: RepoCtx): string {
   return `${repoUrl(ctx)}/pulls`;
@@ -335,32 +340,6 @@ export function registerPulls(app: Express, root: string, engine?: CiEngine): vo
       .catch((e) => console.error(`CI trigger failed: ${e instanceof Error ? e.message : e}`));
   }
 
-  function fail(res: Response, status: number, message: string, viewer: Viewer | null, backUrl?: string): void {
-    res.status(status).type('html').send(forms.opErrorPage(status, message, { viewer, backUrl }));
-  }
-
-  function requireViewerPage(req: Request, res: Response): Viewer | null {
-    const viewer = getViewer(req, root);
-    if (!viewer) {
-      res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
-      return null;
-    }
-    return viewer;
-  }
-
-  function requireViewerPost(req: Request, res: Response): Viewer | null {
-    const viewer = getViewer(req, root);
-    if (!viewer) {
-      fail(res, 403, 'You must be signed in to do that.', null, '/login');
-      return null;
-    }
-    if (!checkCsrf(req, viewer)) {
-      fail(res, 403, 'The form has expired; go back, reload the page, and try again.', viewer);
-      return null;
-    }
-    return viewer;
-  }
-
   /** The repository context plus the pull request named in the URL. */
   async function withPull(req: Request, res: Response, viewer: Viewer | null) {
     const loaded = await loadRepo(root, req, res, viewer);
@@ -401,7 +380,7 @@ export function registerPulls(app: Express, root: string, engine?: CiEngine): vo
   app.get(
     '/:collection/:repo/pulls/new',
     ah(async (req, res) => {
-      const viewer = requireViewerPage(req, res);
+      const viewer = requireViewerPage(root, req, res);
       if (!viewer) return;
       const loaded = await loadRepo(root, req, res, viewer);
       if (!loaded) return;
@@ -445,7 +424,7 @@ export function registerPulls(app: Express, root: string, engine?: CiEngine): vo
     '/:collection/:repo/pulls/new',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const loaded = await loadRepo(root, req, res, viewer);
       if (!loaded) return;
@@ -503,7 +482,7 @@ export function registerPulls(app: Express, root: string, engine?: CiEngine): vo
     '/:collection/:repo/pulls/:n/comment',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const found = await withPull(req, res, viewer);
       if (!found) return;
@@ -531,7 +510,7 @@ export function registerPulls(app: Express, root: string, engine?: CiEngine): vo
     '/:collection/:repo/pulls/:n/state',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const found = await withPull(req, res, viewer);
       if (!found) return;
@@ -578,7 +557,7 @@ export function registerPulls(app: Express, root: string, engine?: CiEngine): vo
     '/:collection/:repo/pulls/:n/delete-branch',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const found = await withPull(req, res, viewer);
       if (!found) return;
@@ -612,7 +591,7 @@ export function registerPulls(app: Express, root: string, engine?: CiEngine): vo
     '/:collection/:repo/pulls/:n/merge',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const found = await withPull(req, res, viewer);
       if (!found) return;

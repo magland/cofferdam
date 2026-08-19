@@ -1,4 +1,4 @@
-import express, { Express, Request, Response } from 'express';
+import { Express, Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
@@ -10,8 +10,7 @@ import { esc, timeTag } from './render';
 import { Viewer, checkCsrf, getViewer } from './session';
 import { isValidName } from './scan';
 import { RepoCtx, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from './views';
-import * as forms from './forms';
-import { ah, baseUrlOf, loadRepo, makeCtx, send404, wildcard } from './web';
+import { ah, baseUrlOf, fail, field, loadRepo, makeCtx, send404, urlencodedForm, wildcard } from './web';
 
 // Releases: notes attached to a tag.
 //
@@ -269,16 +268,9 @@ ${
 // ---- routes ----
 
 export function registerReleases(app: Express, root: string): void {
-  const form = express.urlencoded({ extended: false, limit: '256kb' });
-
-  function field(req: Request, name: string): string {
-    const v = (req.body as Record<string, unknown> | undefined)?.[name];
-    return typeof v === 'string' ? v : '';
-  }
-
-  function fail(res: Response, status: number, message: string, viewer: Viewer | null, backUrl?: string): void {
-    res.status(status).type('html').send(forms.opErrorPage(status, message, { viewer, backUrl }));
-  }
+  // Release notes are prose about a version, not a place to paste an artifact,
+  // so this form is held to a much smaller body than the file editor's.
+  const form = urlencodedForm('256kb');
 
   // Writing a release is a write to the vault, so it needs the same session,
   // CSRF check, and push scope over the repository that editing a file does.

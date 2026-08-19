@@ -20,7 +20,19 @@ import {
 } from './session';
 import { authenticate, canAdmin, canCreateCollection, canPush, loadVault, addUserToken, grantScope } from './vault';
 import { encPath, repoUrl } from './views';
-import { LoadedRepo, ah, loadRepo, makeCtx, send404, wildcard } from './web';
+import {
+  LoadedRepo,
+  ah,
+  fail,
+  field,
+  loadRepo,
+  makeCtx,
+  requireViewerPage,
+  requireViewerPost,
+  send404,
+  urlencodedForm,
+  wildcard,
+} from './web';
 import { isBinary } from './render';
 import { boundaryOf, parseMultipart, partField, partFiles } from './multipart';
 
@@ -38,12 +50,10 @@ function urlOf(repo: { collection: string; name: string }): string {
 // live vault.json (via the session cookie) and checks the CSRF field before
 // calling into the ops layer. All POSTs follow POST-redirect-GET.
 
-const form = express.urlencoded({ extended: false, limit: '3mb' });
-
-function field(req: Request, name: string): string {
-  const v = (req.body as Record<string, unknown> | undefined)?.[name];
-  return typeof v === 'string' ? v : '';
-}
+// The largest body here is a file being edited in the browser, and the editor
+// accepts files up to MAX_EDIT_SIZE, so the limit has to leave room for a
+// megabyte of text after percent-encoding.
+const form = urlencodedForm('3mb');
 
 /**
  * The commit box posts a summary and an optional extended description; git's
@@ -94,40 +104,6 @@ export function registerWebOps(
         actor,
       })
       .catch((e) => console.error(`CI trigger failed: ${e instanceof Error ? e.message : e}`));
-  }
-
-  function fail(
-    res: Response,
-    status: number,
-    message: string,
-    viewer: Viewer | null,
-    backUrl?: string
-  ): void {
-    res.status(status).type('html').send(forms.opErrorPage(status, message, { viewer, backUrl }));
-  }
-
-  // For GET form pages: an anonymous visitor is sent to sign in and come back.
-  function requireViewerPage(req: Request, res: Response): Viewer | null {
-    const viewer = getViewer(req, root);
-    if (!viewer) {
-      res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
-      return null;
-    }
-    return viewer;
-  }
-
-  // For POSTs: a missing session or a bad CSRF value is a hard 403.
-  function requireViewerPost(req: Request, res: Response): Viewer | null {
-    const viewer = getViewer(req, root);
-    if (!viewer) {
-      fail(res, 403, 'You must be signed in to do that.', null, '/login');
-      return null;
-    }
-    if (!checkCsrf(req, viewer)) {
-      fail(res, 403, 'The form has expired; go back, reload the page, and try again.', viewer);
-      return null;
-    }
-    return viewer;
   }
 
   /**
@@ -214,7 +190,7 @@ export function registerWebOps(
   // performs it is `cofferdam import` on the operator's machine, and this page
   // only says what to run: no form, since there is nothing here to submit to.
   app.get('/import', (req, res) => {
-    const viewer = requireViewerPage(req, res);
+    const viewer = requireViewerPage(root, req, res);
     if (!viewer) return;
     const asked = typeof req.query.collection === 'string' ? req.query.collection.trim() : '';
     const collection = isValidName(asked) ? asked : null;
@@ -265,13 +241,13 @@ export function registerWebOps(
   // new path creates its collection on the way, so this is the other order:
   // the collection first, filled by an import or a push afterwards.
   app.get('/new/collection', (req, res) => {
-    const viewer = requireViewerPage(req, res);
+    const viewer = requireViewerPage(root, req, res);
     if (!viewer) return;
     res.type('html').send(forms.newCollectionPage(viewer, {}));
   });
 
   app.post('/new/collection', form, (req, res) => {
-    const viewer = requireViewerPost(req, res);
+    const viewer = requireViewerPost(root, req, res);
     if (!viewer) return;
     const name = field(req, 'name').trim();
     const rerender = (status: number, error: string) => {
@@ -298,7 +274,7 @@ export function registerWebOps(
   });
 
   app.get('/new', (req, res) => {
-    const viewer = requireViewerPage(req, res);
+    const viewer = requireViewerPage(root, req, res);
     if (!viewer) return;
     const collections = listCollections(root).map((o) => o.name);
     const collection = typeof req.query.collection === 'string' ? req.query.collection : '';
@@ -309,7 +285,7 @@ export function registerWebOps(
     '/new',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const collection = field(req, 'collection').trim();
       const name = field(req, 'name').trim();
@@ -420,7 +396,7 @@ export function registerWebOps(
   app.get(
     '/:collection/:repo/edit/*',
     ah(async (req, res) => {
-      const viewer = requireViewerPage(req, res);
+      const viewer = requireViewerPage(root, req, res);
       if (!viewer) return;
       const target = await loadFileTarget(req, res, viewer, { allowEmptyRepo: false });
       if (!target) return;
@@ -456,7 +432,7 @@ export function registerWebOps(
     '/:collection/:repo/edit/*',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const target = await loadFileTarget(req, res, viewer, { allowEmptyRepo: false });
       if (!target) return;
@@ -535,7 +511,7 @@ export function registerWebOps(
   app.get(
     '/:collection/:repo/upload/*',
     ah(async (req, res) => {
-      const viewer = requireViewerPage(req, res);
+      const viewer = requireViewerPage(root, req, res);
       if (!viewer) return;
       const target = await loadFileTarget(req, res, viewer, { allowEmptyRepo: true });
       if (!target) return;
@@ -642,7 +618,7 @@ export function registerWebOps(
   app.get(
     '/:collection/:repo/new/*',
     ah(async (req, res) => {
-      const viewer = requireViewerPage(req, res);
+      const viewer = requireViewerPage(root, req, res);
       if (!viewer) return;
       const target = await loadFileTarget(req, res, viewer, { allowEmptyRepo: true });
       if (!target) return;
@@ -656,7 +632,7 @@ export function registerWebOps(
     '/:collection/:repo/new/*',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const target = await loadFileTarget(req, res, viewer, { allowEmptyRepo: true });
       if (!target) return;
@@ -709,7 +685,7 @@ export function registerWebOps(
   app.get(
     '/:collection/:repo/delete/*',
     ah(async (req, res) => {
-      const viewer = requireViewerPage(req, res);
+      const viewer = requireViewerPage(root, req, res);
       if (!viewer) return;
       const target = await loadFileTarget(req, res, viewer, { allowEmptyRepo: false });
       if (!target) return;
@@ -728,7 +704,7 @@ export function registerWebOps(
     '/:collection/:repo/delete/*',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const target = await loadFileTarget(req, res, viewer, { allowEmptyRepo: false });
       if (!target) return;
@@ -775,7 +751,7 @@ export function registerWebOps(
     '/:collection/:repo/branches/create',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const loaded = await loadForRefOp(req, res, viewer);
       if (!loaded) return;
@@ -802,7 +778,7 @@ export function registerWebOps(
     '/:collection/:repo/branches/delete',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const loaded = await loadForRefOp(req, res, viewer);
       if (!loaded) return;
@@ -825,7 +801,7 @@ export function registerWebOps(
     '/:collection/:repo/tags/create',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const loaded = await loadForRefOp(req, res, viewer);
       if (!loaded) return;
@@ -849,7 +825,7 @@ export function registerWebOps(
     '/:collection/:repo/tags/delete',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const loaded = await loadForRefOp(req, res, viewer);
       if (!loaded) return;
@@ -869,7 +845,7 @@ export function registerWebOps(
   app.get(
     '/:collection/:repo/settings',
     ah(async (req, res) => {
-      const viewer = requireViewerPage(req, res);
+      const viewer = requireViewerPage(root, req, res);
       if (!viewer) return;
       const loaded = await loadRepo(root, req, res, viewer);
       if (!loaded) return;
@@ -887,7 +863,7 @@ export function registerWebOps(
     '/:collection/:repo/settings',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const loaded = await loadRepo(root, req, res, viewer);
       if (!loaded) return;
@@ -914,7 +890,7 @@ export function registerWebOps(
   app.get(
     '/:collection/:repo/fork',
     ah(async (req, res) => {
-      const viewer = requireViewerPage(req, res);
+      const viewer = requireViewerPage(root, req, res);
       if (!viewer) return;
       const loaded = await loadRepo(root, req, res, viewer);
       if (!loaded) return;
@@ -936,7 +912,7 @@ export function registerWebOps(
     '/:collection/:repo/fork',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const loaded = await loadRepo(root, req, res, viewer);
       if (!loaded) return;
@@ -977,7 +953,7 @@ export function registerWebOps(
     '/:collection/:repo/settings/rename',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const loaded = await loadRepo(root, req, res, viewer);
       if (!loaded) return;
@@ -1014,7 +990,7 @@ export function registerWebOps(
     '/:collection/:repo/settings/delete',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const loaded = await loadRepo(root, req, res, viewer);
       if (!loaded) return;
@@ -1042,7 +1018,7 @@ export function registerWebOps(
   // glob; minting for an existing user requires covering that user's scopes.
 
   function requireAdminPage(req: Request, res: Response): Viewer | null {
-    const viewer = requireViewerPage(req, res);
+    const viewer = requireViewerPage(root, req, res);
     if (!viewer) return null;
     if (!viewerIsAdmin(viewer)) {
       fail(res, 403, 'Admin access required (sessions from restricted tokens carry no admin rights).', viewer, '/');
@@ -1052,7 +1028,7 @@ export function registerWebOps(
   }
 
   function requireAdminPost(req: Request, res: Response): Viewer | null {
-    const viewer = requireViewerPost(req, res);
+    const viewer = requireViewerPost(root, req, res);
     if (!viewer) return null;
     if (!viewerIsAdmin(viewer)) {
       fail(res, 403, 'Admin access required (sessions from restricted tokens carry no admin rights).', viewer, '/');

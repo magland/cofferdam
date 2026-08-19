@@ -1,12 +1,11 @@
-import express, { Express, Request, Response } from 'express';
+import { Express, Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { isValidRefName } from '../git';
 import { findRepo, isValidName } from '../scan';
-import { Viewer, checkCsrf, getViewer, viewerIsAdmin } from '../session';
+import { Viewer, getViewer, viewerIsAdmin } from '../session';
 import { canAdmin } from '../vault';
-import * as forms from '../forms';
-import { ah, loadRepo, makeCtx, send404 } from '../web';
+import { ah, fail, field, loadRepo, makeCtx, requireViewerPost, send404, urlencodedForm } from '../web';
 import { artifactPath, isValidArtifactName, listArtifacts } from './artifacts';
 import { CiEngine, listWorkflowsAt } from './engine';
 import { JobRecord, RunRecord, jobLogPath, listRuns } from './runs';
@@ -21,12 +20,9 @@ import { WorkflowError } from './workflow';
 const RUNS_PER_PAGE = 50;
 const MAX_LOG_RENDER_BYTES = 4 * 1024 * 1024;
 
-const form = express.urlencoded({ extended: false, limit: '1mb' });
-
-function field(req: Request, name: string): string {
-  const v = (req.body as Record<string, unknown> | undefined)?.[name];
-  return typeof v === 'string' ? v : '';
-}
+// Nothing posted here is long: a workflow dispatch names a ref and its inputs,
+// and a runner registration names a runner.
+const form = urlencodedForm('1mb');
 
 // Read a job log as ndjson from a byte offset. Returning the new offset lets
 // the tailer poll without re-reading, and lets a huge log render its tail
@@ -86,23 +82,6 @@ export function readLog(
 }
 
 export function registerCiWeb(app: Express, root: string, engine: CiEngine): void {
-  function fail(res: Response, status: number, message: string, viewer: Viewer | null, backUrl?: string): void {
-    res.status(status).type('html').send(forms.opErrorPage(status, message, { viewer, backUrl }));
-  }
-
-  function requireViewerPost(req: Request, res: Response): Viewer | null {
-    const viewer = getViewer(req, root);
-    if (!viewer) {
-      fail(res, 403, 'You must be signed in to do that.', null, '/login');
-      return null;
-    }
-    if (!checkCsrf(req, viewer)) {
-      fail(res, 403, 'The form has expired; go back, reload the page, and try again.', viewer);
-      return null;
-    }
-    return viewer;
-  }
-
   // ---- the runs list ----
 
   app.get(
@@ -253,7 +232,7 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
   // ---- operations ----
 
   function repoActor(req: Request, res: Response): { viewer: Viewer; collection: string; repo: string } | null {
-    const viewer = requireViewerPost(req, res);
+    const viewer = requireViewerPost(root, req, res);
     if (!viewer) return null;
     const collection = req.params.collection;
     const repoName = req.params.repo;
@@ -383,7 +362,7 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
   });
 
   app.post('/admin/runners', form, (req, res) => {
-    const viewer = requireViewerPost(req, res);
+    const viewer = requireViewerPost(root, req, res);
     if (!viewer) return;
     if (!viewerIsAdmin(viewer)) {
       fail(res, 403, 'Admin access is required to register runners.', viewer);
@@ -433,7 +412,7 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
   });
 
   app.post('/admin/runners/:name/remove', form, (req, res) => {
-    const viewer = requireViewerPost(req, res);
+    const viewer = requireViewerPost(root, req, res);
     if (!viewer) return;
     if (!viewerIsAdmin(viewer)) {
       fail(res, 403, 'Admin access is required to manage runners.', viewer);

@@ -1,11 +1,12 @@
-import { NextFunction, Request, Response } from 'express';
+import express, { NextFunction, Request, RequestHandler, Response } from 'express';
 import { hasCiState } from './ci/present';
+import * as forms from './forms';
 import { GitRepo, RefInfo } from './git';
 import { issueCounts } from './issues';
 import { pullCounts } from './pulls';
 import { listReleases } from './releases';
 import { findRepo, forkParent, siteDir } from './scan';
-import { Viewer } from './session';
+import { Viewer, checkCsrf, getViewer } from './session';
 import { canAdmin, canPush } from './vault';
 import { RepoCtx } from './views';
 import * as views from './views';
@@ -24,6 +25,58 @@ export function wildcard(req: Request): string {
 
 export function send404(res: Response, message = 'Not found', viewer: Viewer | null = null) {
   res.status(404).type('html').send(views.errorPage(404, message, { viewer }));
+}
+
+// Form posts are read as urlencoded bodies with express's simple parser: the
+// forms here are flat, so the extended syntax would only widen what a body may
+// say. The limit is left to the caller, because what one page may reasonably
+// carry (a file being edited) is not what another should (a release note).
+export function urlencodedForm(limit: string): RequestHandler {
+  return express.urlencoded({ extended: false, limit });
+}
+
+// A form field as a string. Anything the parser did not give us as a string
+// (a missing field, or a repeated one arriving as an array) reads as empty
+// rather than being passed on as something a handler did not expect.
+export function field(req: Request, name: string): string {
+  const v = (req.body as Record<string, unknown> | undefined)?.[name];
+  return typeof v === 'string' ? v : '';
+}
+
+// How an operation refuses. backUrl, when given, is where the page offers to
+// send the reader back to, which is usually the form they came from.
+export function fail(
+  res: Response,
+  status: number,
+  message: string,
+  viewer: Viewer | null,
+  backUrl?: string
+): void {
+  res.status(status).type('html').send(forms.opErrorPage(status, message, { viewer, backUrl }));
+}
+
+// For GET form pages: an anonymous visitor is sent to sign in and come back.
+export function requireViewerPage(root: string, req: Request, res: Response): Viewer | null {
+  const viewer = getViewer(req, root);
+  if (!viewer) {
+    res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
+    return null;
+  }
+  return viewer;
+}
+
+// For POSTs: a missing session or a bad CSRF value is a hard 403.
+export function requireViewerPost(root: string, req: Request, res: Response): Viewer | null {
+  const viewer = getViewer(req, root);
+  if (!viewer) {
+    fail(res, 403, 'You must be signed in to do that.', null, '/login');
+    return null;
+  }
+  if (!checkCsrf(req, viewer)) {
+    fail(res, 403, 'The form has expired; go back, reload the page, and try again.', viewer);
+    return null;
+  }
+  return viewer;
 }
 
 export interface LoadedRepo {

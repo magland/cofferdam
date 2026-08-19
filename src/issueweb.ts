@@ -1,16 +1,25 @@
 import * as crypto from 'crypto';
-import express, { Express, Request, Response } from 'express';
+import { Express, Request, Response } from 'express';
 import { avatar } from './avatar';
-import * as forms from './forms';
 import { IconName, icon } from './icons';
 import * as issues from './issues';
 import { Issue, IssueSummary } from './issues';
 import { renderMarkdown } from './markdown';
 import { OpError } from './ops';
 import { esc, timeTag } from './render';
-import { Viewer, checkCsrf, getViewer } from './session';
+import { Viewer, getViewer } from './session';
 import { RepoCtx, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from './views';
-import { ah, loadRepo, makeCtx, send404 } from './web';
+import {
+  ah,
+  fail,
+  field,
+  loadRepo,
+  makeCtx,
+  requireViewerPage,
+  requireViewerPost,
+  send404,
+  urlencodedForm,
+} from './web';
 
 // The issue pages, over the store in issues.ts.
 //
@@ -20,12 +29,9 @@ import { ah, loadRepo, makeCtx, send404 } from './web';
 // abuse), and closing, reopening, or editing needs push scope over the
 // repository or being the person who wrote the thing.
 
-const form = express.urlencoded({ extended: false, limit: '3mb' });
-
-function field(req: Request, name: string): string {
-  const v = (req.body as Record<string, unknown> | undefined)?.[name];
-  return typeof v === 'string' ? v : '';
-}
+// Issue bodies and comments are the long fields here, and people paste logs
+// into them.
+const form = urlencodedForm('3mb');
 
 function issuesUrl(ctx: RepoCtx): string {
   return `${repoUrl(ctx)}/issues`;
@@ -322,32 +328,6 @@ ${
 }
 
 export function registerIssues(app: Express, root: string): void {
-  function fail(res: Response, status: number, message: string, viewer: Viewer | null, backUrl?: string): void {
-    res.status(status).type('html').send(forms.opErrorPage(status, message, { viewer, backUrl }));
-  }
-
-  function requireViewerPage(req: Request, res: Response): Viewer | null {
-    const viewer = getViewer(req, root);
-    if (!viewer) {
-      res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
-      return null;
-    }
-    return viewer;
-  }
-
-  function requireViewerPost(req: Request, res: Response): Viewer | null {
-    const viewer = getViewer(req, root);
-    if (!viewer) {
-      fail(res, 403, 'You must be signed in to do that.', null, '/login');
-      return null;
-    }
-    if (!checkCsrf(req, viewer)) {
-      fail(res, 403, 'The form has expired; go back, reload the page, and try again.', viewer);
-      return null;
-    }
-    return viewer;
-  }
-
   /** The repository context plus the issue named in the URL. */
   async function withIssue(req: Request, res: Response, viewer: Viewer | null) {
     const loaded = await loadRepo(root, req, res, viewer);
@@ -402,7 +382,7 @@ export function registerIssues(app: Express, root: string): void {
   app.get(
     '/:collection/:repo/issues/new',
     ah(async (req, res) => {
-      const viewer = requireViewerPage(req, res);
+      const viewer = requireViewerPage(root, req, res);
       if (!viewer) return;
       const loaded = await loadRepo(root, req, res, viewer);
       if (!loaded) return;
@@ -415,7 +395,7 @@ export function registerIssues(app: Express, root: string): void {
     '/:collection/:repo/issues/new',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const loaded = await loadRepo(root, req, res, viewer);
       if (!loaded) return;
@@ -456,7 +436,7 @@ export function registerIssues(app: Express, root: string): void {
   app.get(
     '/:collection/:repo/issues/:n/edit',
     ah(async (req, res) => {
-      const viewer = requireViewerPage(req, res);
+      const viewer = requireViewerPage(root, req, res);
       if (!viewer) return;
       const found = await withIssue(req, res, viewer);
       if (!found) return;
@@ -475,7 +455,7 @@ export function registerIssues(app: Express, root: string): void {
     '/:collection/:repo/issues/:n/edit',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const found = await withIssue(req, res, viewer);
       if (!found) return;
@@ -507,7 +487,7 @@ export function registerIssues(app: Express, root: string): void {
     '/:collection/:repo/issues/:n/comment',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const found = await withIssue(req, res, viewer);
       if (!found) return;
@@ -530,7 +510,7 @@ export function registerIssues(app: Express, root: string): void {
     '/:collection/:repo/issues/:n/state',
     form,
     ah(async (req, res) => {
-      const viewer = requireViewerPost(req, res);
+      const viewer = requireViewerPost(root, req, res);
       if (!viewer) return;
       const found = await withIssue(req, res, viewer);
       if (!found) return;
