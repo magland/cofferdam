@@ -92,8 +92,19 @@ export async function runJob(spec: JobSpec, ctx: RunnerContext, hooks: JobHooks)
   for (const d of [hostRepo, hostTemp, hostFiles, hostActions]) fs.mkdirSync(d, { recursive: true });
 
   let containerId: string | null = null;
+  // `timeout-minutes` is enforced here rather than by the server: the lease
+  // sweep only notices a runner that has stopped heartbeating, and a job stuck
+  // inside a step heartbeats perfectly well. Cancellation is cooperative and
+  // checked between steps, so a deadline that only set the flag would never
+  // interrupt the step that is actually hanging; removing the container is what
+  // makes the in-flight exec fail and the loop unwind.
+  let timedOut = false;
+  let deadline: NodeJS.Timeout | null = null;
+  const cancelled = () => hooks.cancelled() || timedOut;
+
   const finish = async (conclusion: Conclusion): Promise<JobResult> => {
     currentStep = RUNNER_STEP;
+    if (deadline) clearTimeout(deadline);
     if (containerId) {
       log('Cleaning up the job container');
       await removeContainer(containerId);
@@ -106,7 +117,7 @@ export async function runJob(spec: JobSpec, ctx: RunnerContext, hooks: JobHooks)
     return {
       conclusion,
       steps: stepStates,
-      outputs: resolveJobOutputs(spec, scope),
+      outputs: resolveJobOutputs(spec, scope, conclusion === 'failure', conclusion === 'cancelled'),
       summaries: rt.summaries,
     };
   };
@@ -151,6 +162,23 @@ export async function runJob(spec: JobSpec, ctx: RunnerContext, hooks: JobHooks)
     await execInContainer(containerId, ['mkdir', '-p', RUNNER_TOOL_CACHE], () => {}).done;
     log(`Container started from ${image}`);
 
+    const id = containerId;
+    // A runner and its server are separate long-running processes and need not
+    // be the same version, so a spec that carries no usable timeout falls back
+    // to GitHub's six hours rather than to NaN, which setTimeout would treat as
+    // zero and fire against every job immediately.
+    const minutes = Number(spec.timeoutMinutes);
+    const limit = Number.isFinite(minutes) && minutes > 0 ? minutes : 360;
+    // setTimeout counts in a signed 32-bit millisecond field and fires at once
+    // on anything larger, so an absurd timeout-minutes has to be capped rather
+    // than passed through: uncapped, it would do the opposite of what it asks.
+    const delay = Math.min(limit * 60_000, 2 ** 31 - 1);
+    deadline = setTimeout(() => {
+      timedOut = true;
+      log(`Job exceeded its timeout of ${limit} minute${limit === 1 ? '' : 's'}`);
+      void removeContainer(id);
+    }, delay);
+
     const exec: StepExecContext = {
       containerId,
       spec,
@@ -177,7 +205,7 @@ export async function runJob(spec: JobSpec, ctx: RunnerContext, hooks: JobHooks)
         return null;
       },
       log: (line) => log(line),
-      status: () => ({ failed, cancelled: hooks.cancelled() }),
+      status: () => ({ failed, cancelled: cancelled() }),
     };
 
     const result = await runSteps(spec.steps, scope, exec, {
@@ -198,23 +226,28 @@ export async function runJob(spec: JobSpec, ctx: RunnerContext, hooks: JobHooks)
         currentStep = RUNNER_STEP;
         hooks.progress(stepStates);
       },
-      checkCancelled: () => hooks.cancelled(),
+      checkCancelled: () => cancelled(),
     });
     failed = failed || result.failed;
 
     // Post steps run even when the job failed or was cancelled, which is what
-    // makes them useful for cleanup.
-    if (rt.postHooks.length) {
+    // makes them useful for cleanup. A timeout is the exception: the container
+    // they would run in is the thing that was torn down to stop the job, so
+    // attempting them would only add a failure for each one to the log.
+    if (rt.postHooks.length && !timedOut) {
       currentStep = RUNNER_STEP;
       await runPostHooks(exec, failed);
     }
 
+    // A job that ran out of time is a failure, as it is on GitHub; only the
+    // server asking for the job back is a cancellation.
+    if (timedOut) return await finish('failure');
     if (result.cancelled || hooks.cancelled()) return await finish('cancelled');
     return await finish(failed ? 'failure' : 'success');
   } catch (e) {
     currentStep = RUNNER_STEP;
     log(`Job failed to run: ${e instanceof Error ? e.message : String(e)}`);
-    return await finish(hooks.cancelled() ? 'cancelled' : 'failure');
+    return await finish(!timedOut && hooks.cancelled() ? 'cancelled' : 'failure');
   }
 }
 
@@ -225,12 +258,21 @@ function containerName(spec: JobSpec): string {
   return raw.toLowerCase().replace(/[^a-z0-9_.-]/g, '-');
 }
 
-function resolveJobOutputs(spec: JobSpec, scope: Scope): Record<string, string> {
+function resolveJobOutputs(
+  spec: JobSpec,
+  scope: Scope,
+  jobFailed: boolean,
+  jobCancelled: boolean
+): Record<string, string> {
   const out: Record<string, string> = {};
   if (Object.keys(spec.outputsTemplate).length === 0) return out;
+  // The job's own outcome, not a placeholder: an output written as
+  // `${{ success() && ... }}` is a common way to hand a downstream job
+  // something only when this one worked, and a hardcoded success() would
+  // hand it over after a failure too.
   const env: ExprEnv = {
-    contexts: contextsFor({ spec, scope, stepEnv: {}, jobFailed: false, jobCancelled: false }),
-    functions: statusFunctions(false, false),
+    contexts: contextsFor({ spec, scope, stepEnv: {}, jobFailed, jobCancelled }),
+    functions: statusFunctions(jobFailed, jobCancelled),
   };
   for (const [k, template] of Object.entries(spec.outputsTemplate)) {
     try {

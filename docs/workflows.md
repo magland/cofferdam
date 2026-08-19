@@ -24,7 +24,9 @@ Both are collected. A file in `.cofferdam/workflows` shadows one of the same nam
 
 Triggers are `push` (with `branches`, `tags`, and `paths` filters, plus their `-ignore` forms) and `workflow_dispatch` with typed inputs, which the Actions tab renders as a form. A commit made in the web interface is a push like any other and fires the same workflows.
 
-Within a run: the `${{ }}` expression language, `needs` between jobs, `strategy.matrix` with `include`, `exclude`, and `fail-fast`, `if` on jobs and steps (including `always()`, `failure()`, and `cancelled()`), `env` at workflow, job, and step level, `concurrency` groups with `cancel-in-progress`, `continue-on-error`, `timeout-minutes`, job `outputs`, and `defaults.run`.
+Within a run: the `${{ }}` expression language, `needs` between jobs, `strategy.matrix` with `include`, `exclude`, and `fail-fast`, `if` on jobs and steps (including `always()`, `failure()`, and `cancelled()`), `env` at workflow, job, and step level, `concurrency` groups with `cancel-in-progress`, `continue-on-error`, `timeout-minutes` on a job, job `outputs`, and `defaults.run`.
+
+A job's `timeout-minutes` is enforced by the runner rather than by the vault, which is what makes it useful: the vault's lease sweep notices a runner that has stopped reporting, and a job wedged inside a step keeps reporting perfectly well. When the deadline passes the runner removes the job's container, which fails the step that was running, and the job concludes as a failure. Note that `timeout-minutes` on an individual step is accepted and then ignored, since stopping one step means stopping a process inside a container that the rest of the job still needs.
 
 Within a step: `run` with `shell` and `working-directory`, the file commands (`GITHUB_OUTPUT`, `GITHUB_ENV`, `GITHUB_PATH`, `GITHUB_STEP_SUMMARY`), and the stdout commands (`::group::`, `::error::`, `::add-mask::` and friends). Values passed to `::add-mask::` are redacted from every later log line, on the runner, before the line is sent to the vault.
 

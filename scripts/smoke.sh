@@ -2013,6 +2013,31 @@ jobs:
       - run: echo "continued past a missing action"
 YML
 
+  # A job that hangs inside a step, to check that timeout-minutes is enforced.
+  # Fractional minutes are what keeps this check cheap: the runner multiplies
+  # by 60000 and does not round, so 0.1 is six seconds rather than the minute
+  # the smallest whole value would cost.
+  cat > "$CI_REPO/.github/workflows/timeout.yml" <<'YML'
+name: Timeout
+on: workflow_dispatch
+jobs:
+  hang:
+    runs-on: ubuntu-latest
+    timeout-minutes: 0.1
+    steps:
+      # Named, so that the log line announcing each step is the name rather
+      # than the script. An unnamed run: step is labelled with its own command
+      # text, which would put the strings below in the log whether they were
+      # ever printed or not, and the checks after this are that they were not.
+      - name: Hang
+        run: |
+          echo "the step started"
+          sleep 300
+          echo "the step finished"
+      - name: After
+        run: echo "a later step ran"
+YML
+
   # ---- artifacts and the site ----
   cat > "$CI_REPO/.github/workflows/site.yml" <<'YML'
 name: Site
@@ -2108,6 +2133,30 @@ YML
   [ "$(job_field "$RUNS/$ACT_RUN/jobs/act.json" conclusion)" = "success" ] || {
     echo "FAIL: the actions job did not succeed"; cat "$ACT_LOG"; exit 1; }
   PASS=$((PASS+1)); echo "ok: the whole actions job succeeds"
+
+  # The lease sweep only notices a runner that stopped heartbeating, and a job
+  # stuck inside a step heartbeats perfectly well, so nothing but the runner's
+  # own deadline ends this run. Removing the container is what makes the
+  # in-flight exec fail; without it the job would sleep for five minutes.
+  run_workflow timeout.yml Timeout
+  TO_RUN="$RUN_N"
+  TO_LOG="$RUNS/$TO_RUN/jobs/hang.log"
+  grep -q "the step started" "$TO_LOG" || {
+    echo "FAIL: the job that should time out never started"; cat "$TO_LOG"; exit 1; }
+  grep -q "exceeded its timeout" "$TO_LOG" || {
+    echo "FAIL: timeout-minutes did not stop a job hanging inside a step"; cat "$TO_LOG"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: timeout-minutes stops a job hanging inside a step"
+  grep -q "the step finished" "$TO_LOG" && {
+    echo "FAIL: the hanging step ran to completion anyway"; exit 1; }
+  grep -q "a later step ran" "$TO_LOG" && {
+    echo "FAIL: a step ran after the job timed out"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: a timed-out job runs nothing further"
+  [ "$(job_field "$RUNS/$TO_RUN/jobs/hang.json" conclusion)" = "failure" ] || {
+    echo "FAIL: a timed-out job did not conclude as a failure"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: a timed-out job is a failure, not a cancellation"
+  [ "$(run_field "$RUNS/$TO_RUN/run.json" conclusion)" = "failure" ] || {
+    echo "FAIL: the run holding a timed-out job did not fail"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: the run holding a timed-out job fails with it"
 
   # upload-artifact reads what the job's container wrote, as the runner's own
   # user. A container runs as root, and on a filesystem that forces a mode on
