@@ -30,7 +30,7 @@ import { Cli, Command, Invocation, OptionSpec, dispatch, registryJson } from './
 import { TARGET_OPTIONS, targetFrom } from './cli/target';
 import { collectionAddCmd, collectionListCmd, importCmd } from './import-cli';
 import { deployDestroyCmd, deployFlyCmd, deployShowCmd } from './deploy-cli';
-import { runnerAddCmd, runnerListCmd, runnerRemoveCmd, runnerRunCmd } from './runner-cli';
+import { runnerAddCmd, runnerListCommand, runnerRemoveCmd, runnerRunCmd } from './runner-cli';
 import { seedTrustProxy } from './config';
 import { createApp } from './server';
 import { isValidName } from './scan';
@@ -595,7 +595,7 @@ job workspaces are made, --network which Docker network the container joins,
 and COFFERDAM_RUNNER_TOKEN supplies the token instead of --runner-token.`,
     runnerRunCmd
   ),
-  raw(['runner', 'list'], 'Show registered runners (admin token, as with users)', '', runnerListCmd),
+  runnerListCommand,
   raw(['runner', 'remove'], 'Remove a registered runner', '', runnerRemoveCmd),
   ...repoCommands,
   ...issueCommands,

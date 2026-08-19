@@ -1,5 +1,5 @@
 import { vaultTarget } from './credentials';
-import { CliError, EXIT_AUTH, EXIT_FAIL, exitCodeForStatus } from './cli/exit';
+import { CliError, EXIT_AUTH, UnreachableError, exitCodeForStatus } from './cli/exit';
 
 // The client side of the JSON API, shared by every CLI command that talks to a
 // running vault. Failures are reported as CliError rather than by exiting here,
@@ -49,7 +49,7 @@ export async function request(
       body: opts.body,
     });
   } catch (e) {
-    throw new CliError(`Could not reach ${target.host}: ${e instanceof Error ? e.message : e}`, EXIT_FAIL);
+    throw new UnreachableError(`Could not reach ${target.host}: ${e instanceof Error ? e.message : e}`);
   }
   return {
     ok: resp.ok,
@@ -72,7 +72,7 @@ export async function requestBytes(
   try {
     resp = await fetch(`${target.host}${pathname}`, { method, headers: { authorization: `Bearer ${target.token}` } });
   } catch (e) {
-    throw new CliError(`Could not reach ${target.host}: ${e instanceof Error ? e.message : e}`, EXIT_FAIL);
+    throw new UnreachableError(`Could not reach ${target.host}: ${e instanceof Error ? e.message : e}`);
   }
   return { ok: resp.ok, status: resp.status, body: Buffer.from(await resp.arrayBuffer()) };
 }

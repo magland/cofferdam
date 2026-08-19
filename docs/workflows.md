@@ -58,7 +58,14 @@ Substituting by name rather than implementing GitHub's artifact and Pages wire p
 
 Artifacts are addressed by the job's lease, so only a job that is actually running can write one, and only into its own run.
 
-### Two divergences worth knowing
+### Three divergences worth knowing
+
+`repository:` on `actions/checkout` names a repository *in this vault*, since `github.server_url` is the vault rather than github.com. A workflow copied from GitHub that pulls in a second repository this way fails with "repository not found", and the log says what has happened and what to do instead: check the other repository out with git, which reaches wherever it is pointed.
+
+```yaml
+      - name: Clone the library it builds against
+        run: git clone --depth 1 --branch main https://github.com/someone/library.git library
+```
 
 cofferdam checks the repository out into the workspace before the job starts. On GitHub the workspace begins empty and `actions/checkout` fills it, and cofferdam's `checkout` is a re-sync of what is already there. A workflow that deliberately wants an empty workspace will be surprised.
 
@@ -95,7 +102,25 @@ Actions named by `uses:` are downloaded from `https://github.com` and cached und
 
 `runs-on` labels map to images. The defaults cover `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, and `self-hosted` with the [`catthehacker`](https://github.com/catthehacker/docker_images) images that `act` also uses; `--image <label>=<image>` overrides any of them, and an unmapped label that looks like an image name (`runs-on: node:24`) is used as one. Note that the images decide what your workflows can assume: a bare `ubuntu:24.04` has no node, no python, and no compilers.
 
-If the runner dies mid-job, the server notices the lease expire and requeues the job; after three attempts it fails it with a message naming the runner, rather than retrying forever.
+If the runner dies mid-job, the server notices the lease expire and requeues the job; after three attempts it fails it with a message naming the runner, rather than retrying forever. A failure in the runner itself rather than in the workflow, such as a work directory that has been removed underneath it, is logged against the run naming the runner, the machine it is on, and the directory it was working in, since none of that is visible to whoever is reading the run.
+
+### Is a runner actually there?
+
+A run that sits at `queued` has two usual causes, and `cofferdam runner list` reports both:
+
+```
+$ cofferdam runner list
+laptop  labels: ubuntu-latest  serving: demo/*  running demo/ci #12 build
+shed    labels: macos-14       serving: *       idle, seen 4m ago
+
+1 job waiting for a runner:
+  other/app #3 build  (runs-on: windows-latest)
+
+No registered runner can take them: check the runs-on labels against each
+runner's labels, and the repository against its serving globs.
+```
+
+"Seen" is when that runner last spoke to the vault, which a runner does every few seconds whether it has work or not; a runner that has not been seen is not running, or cannot reach the vault. The vault keeps this in memory rather than in `runners.json`, so a restart forgets it and every live runner re-announces itself within one poll. `--json` gives the same thing as data, with `lastSeen`, `running`, and the `queued` list.
 
 ### Runs in the vault
 

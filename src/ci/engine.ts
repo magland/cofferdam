@@ -1108,6 +1108,30 @@ export class CiEngine {
 
   // ---- read access for the UI ----
 
+  /**
+   * What each runner is holding, and what is waiting for one.
+   *
+   * This is what `cofferdam runner list` reports beside the registry, because
+   * "the run is stuck" nearly always has one of two answers that the registry
+   * alone cannot give: no runner is connected, or one is connected but nothing
+   * it serves matches the labels the queued jobs asked for.
+   */
+  runnerLoad(): RunnerLoad {
+    const running: RunnerLoad['running'] = {};
+    const queued: RunnerLoad['queued'] = [];
+    for (const ar of this.active.values()) {
+      for (const job of ar.jobs.values()) {
+        const at = { collection: ar.collection, repo: ar.repo, run: ar.run.number, job: job.id };
+        if (job.status === 'running' && job.lease) {
+          running[job.lease.runner] = { ...at, since: job.startedAt ?? null };
+        } else if (job.status === 'queued' && this.needsDone(ar, job)) {
+          queued.push({ ...at, runsOn: job.runsOn });
+        }
+      }
+    }
+    return { running, queued };
+  }
+
   activeRun(collection: string, repo: string, n: number): RunRecord | null {
     return this.active.get(runKey(collection, repo, n))?.run ?? null;
   }
@@ -1121,6 +1145,14 @@ export class CiEngine {
   runOf(collection: string, repo: string, n: number): RunRecord | null {
     return this.activeRun(collection, repo, n) ?? readRun(this.root, collection, repo, n);
   }
+}
+
+/** What the runners are doing, and what is waiting for one. */
+export interface RunnerLoad {
+  /** The job each runner holds, by runner name. */
+  running: Record<string, { collection: string; repo: string; run: number; job: string; since: string | null }>;
+  /** Jobs ready to run that nothing has taken, with the labels each asks for. */
+  queued: { collection: string; repo: string; run: number; job: string; runsOn: string[] }[];
 }
 
 export interface DispatchableWorkflow {

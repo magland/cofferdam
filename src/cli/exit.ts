@@ -26,6 +26,19 @@ export class CliError extends Error {
 }
 
 /**
+ * The vault could not be reached at all: DNS, the connection, or the TLS
+ * handshake, rather than anything the vault said. It is an ordinary failure to
+ * anything that just reports it, but a polling command wants to tell it apart,
+ * because one dropped request in the middle of a watch is not a reason to
+ * abandon a run that is still going.
+ */
+export class UnreachableError extends CliError {
+  constructor(message: string) {
+    super(message, EXIT_FAIL);
+  }
+}
+
+/**
  * The exit code an HTTP status from the vault maps to. 403 is deliberately a
  * generic failure rather than 3: the token was accepted and is simply not
  * allowed to do this, which is not something a caller fixes by logging in

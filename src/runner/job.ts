@@ -84,6 +84,12 @@ export async function runJob(spec: JobSpec, ctx: RunnerContext, hooks: JobHooks)
   let failed = false;
   const log = (line: string) => hooks.log(currentStep, masker.apply(line));
 
+  // The work directory is made per job rather than once at startup. A runner
+  // is a long-lived process and its default work directory is under /tmp,
+  // where a tmp cleaner or an operator can remove it between jobs; recreating
+  // it here costs nothing and turns a run that failed before its first step
+  // with a bare ENOENT into one that simply runs.
+  fs.mkdirSync(ctx.workDir, { recursive: true });
   const hostWork = fs.mkdtempSync(path.join(ctx.workDir, 'job-'));
   const hostRepo = path.join(hostWork, 'workspace');
   const hostTemp = path.join(hostWork, 'temp');

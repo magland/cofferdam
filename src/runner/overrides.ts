@@ -137,7 +137,23 @@ const checkout: Override = {
       const sha = (await git(['rev-parse', 'HEAD'], dest)).trim();
       return { ok: true, outputs: { ref: ref || ctx.spec.ref, commit: sha } };
     } catch (e) {
-      ctx.log(`checkout failed: ${e instanceof Error ? e.message : e}`);
+      const msg = e instanceof Error ? e.message : String(e);
+      ctx.log(`checkout failed: ${msg}`);
+      // A workflow copied from GitHub is the common way to arrive here, and
+      // its author read `repository:` as naming something on github.com. The
+      // vault cannot know which they meant, but "not found" plus a repository
+      // this vault does not have is worth explaining rather than leaving as a
+      // bare git error.
+      if (/not found|does not exist|could not read/i.test(msg) && !sameRepo) {
+        ctx.log(
+          `Note: on cofferdam, repository: ${repoSpec} names a repository in this vault, not on github.com.`
+        );
+        ctx.log(
+          `If you meant github.com, check it out with git instead:  run: git clone --depth 1${
+            ref ? ` --branch ${ref}` : ''
+          } https://github.com/${repoSpec}.git ${target || '.'}`
+        );
+      }
       return { ok: false };
     }
   },

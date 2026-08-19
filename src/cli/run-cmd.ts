@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { api, requestBytes } from '../cli-api';
-import { CliError, EXIT_FAIL, EXIT_USAGE, exitCodeForStatus } from './exit';
+import { CliError, EXIT_FAIL, EXIT_USAGE, UnreachableError, exitCodeForStatus } from './exit';
 import { JSON_OPTION, jsonMode, pickFields, pickObject, printJson, printTable, shortDate } from './output';
 import { Command, Invocation, OptionSpec } from './parse';
 import { REPO_OPTION, RepoRef, repoPath, resolveRepo } from './repo';
@@ -232,22 +232,47 @@ nothing and needs no protocol.`,
       const timeout = Math.max(1, inv.int('timeout') ?? 1800) * 1000;
       const json = jsonMode(inv);
       const started = Date.now();
-      let data = await api(target, 'GET', `${repoPath(repo)}/runs/${n}`);
+      // A watch outlives any single request, so one that cannot reach the
+      // vault is not an answer about the run: a restart, a redeploy, or a
+      // dropped connection would otherwise abandon a run that is still going
+      // and report it as a failure. Keep polling and let the timeout, which is
+      // the caller's actual patience, decide when to stop; a vault that is
+      // still unreachable when it expires is reported then.
+      let unreachable: string | null = null;
+      // Null means the vault could not be reached this time, and the caller
+      // keeps whatever it last knew rather than treating silence as a change
+      // of state.
+      const poll = async (): Promise<Record<string, unknown> | null> => {
+        try {
+          const answer = await api(target, 'GET', `${repoPath(repo)}/runs/${n}`);
+          if (unreachable !== null && !json.enabled) console.error(`${target.host} is answering again`);
+          unreachable = null;
+          return answer;
+        } catch (e) {
+          if (!(e instanceof UnreachableError)) throw e;
+          if (unreachable === null && !json.enabled) console.error(`${e.message}; still watching run #${n}`);
+          unreachable = e.message;
+          return null;
+        }
+      };
+      let data = (await poll()) ?? { status: 'unknown' };
       let last = '';
       while (data.status !== 'completed') {
         if (Date.now() - started > timeout) {
-          if (json.enabled) process.stderr.write(JSON.stringify({ error: 'timed out waiting for the run' }) + '\n');
-          else console.error(`Gave up after ${Math.round(timeout / 1000)}s; run #${n} is still ${data.status}.`);
+          const why = unreachable ?? `run #${n} is still ${data.status}`;
+          const failure = JSON.stringify({ error: `timed out waiting for the run: ${why}` });
+          if (json.enabled) process.stderr.write(failure + '\n');
+          else console.error(`Gave up after ${Math.round(timeout / 1000)}s; ${why}.`);
           process.exit(EXIT_FAIL);
         }
         // Progress on stderr, so that --json still puts one value on stdout.
         const now = `${data.status}`;
-        if (!json.enabled && now !== last) {
+        if (!json.enabled && unreachable === null && now !== last) {
           console.error(`run #${n} is ${now}...`);
           last = now;
         }
         await new Promise((r) => setTimeout(r, interval));
-        data = await api(target, 'GET', `${repoPath(repo)}/runs/${n}`);
+        data = (await poll()) ?? data;
       }
       if (json.enabled) {
         printJson(pickObject(data, json.fields));

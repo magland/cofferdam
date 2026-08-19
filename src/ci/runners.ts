@@ -142,6 +142,24 @@ export function removeRunner(root: string, name: string): boolean {
   });
 }
 
+// When each runner last authenticated, kept in memory rather than in
+// runners.json. A runner long-polls continuously, so recording this on disk
+// would mean a write every few seconds per runner, for a fact that is only
+// interesting while the server is up: after a restart every live runner
+// re-announces itself within one poll, and one that does not is exactly the
+// one worth reporting as absent.
+const lastSeen = new Map<string, number>();
+
+export function noteRunnerSeen(name: string): void {
+  lastSeen.set(name, Date.now());
+}
+
+/** When this runner last spoke to the vault, or null if it has not since the server started. */
+export function runnerLastSeen(name: string): string | null {
+  const at = lastSeen.get(name);
+  return at === undefined ? null : new Date(at).toISOString();
+}
+
 export interface RunnerAuth {
   name: string;
   runner: RunnerRecord;

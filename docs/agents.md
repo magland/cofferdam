@@ -57,6 +57,7 @@ release   list view create edit delete
 workflow  list run
 run       list view watch cancel rerun download
 user      add grant list view delete token list token revoke
+runner    add run list remove
 config    view set
 collection add list delete
 backup    <dir>             pull a whole vault onto this machine; list verify prune
@@ -107,7 +108,9 @@ cofferdam run view 42 --log          # the failed job's log, last 200 lines
 cofferdam run view 42 --log --tail 0 # all of it
 ```
 
-A vault with no runner registered queues its runs and never finishes them, so a watch there reaches its timeout. `run view --log` picks the failed job, or the only job, and asks when neither applies.
+A vault with no runner registered queues its runs and never finishes them, so a watch there reaches its timeout; `cofferdam runner list --json` says whether a runner is connected, what it is holding, and which jobs are waiting for one, which is the answer when a run has not started rather than not finished. `run view --log` picks the failed job, or the only job, and asks when neither applies.
+
+Note that `actions/checkout` with a `repository:` names a repository in this vault, not on github.com. A workflow copied from GitHub that checks out a second repository has to clone it with git instead.
 
 ## The API directly
 

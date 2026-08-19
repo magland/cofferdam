@@ -177,6 +177,10 @@ export class Runner {
   private workDir: string;
   private network?: string;
   private stopping = false;
+  // The registered name, learned from whoami at startup. Only used in
+  // messages, but a message from a runner that does not say which runner
+  // sent it is of little use on a vault serving more than one.
+  private name = '';
   private actions: ActionStore;
   private externals: Externals;
 
@@ -252,9 +256,11 @@ export class Runner {
         )})`
       );
     }
+    this.name = identity.name;
     console.log(`cofferdam runner ${identity.name} ready`);
     console.log(`  server:  ${this.host}`);
     console.log(`  docker:  ${docker}`);
+    console.log(`  workdir: ${this.workDir}`);
     console.log(`  labels:  ${labels.join(', ')}`);
     console.log(`  serving: ${identity.allow.join(', ')}`);
     console.log('Waiting for jobs.');
@@ -304,7 +310,12 @@ export class Runner {
         }
       );
     } catch (e) {
-      client.log(-1, `runner error: ${e instanceof Error ? e.message : String(e)}`);
+      // A failure here is the runner's own, not the workflow's, and the log
+      // is read on the vault by someone who cannot see this machine: say
+      // which runner it was and where it was working, so that the reader
+      // knows whose filesystem the message is about.
+      const where = `${this.name || 'this runner'} on ${os.hostname()}, work dir ${this.workDir}`;
+      client.log(-1, `runner error (${where}): ${e instanceof Error ? e.message : String(e)}`);
       result = { conclusion: 'failure', steps: [], outputs: {}, summaries: [] };
     }
     await client.complete(result);

@@ -291,7 +291,7 @@ A length-prefixed stream needs no tar on either side, has no symlink, ownership,
 Registering the runners a vault will hand jobs to. Note the plural: these are `/api/runners`, an ordinary admin surface authenticated by a user's token, and are not the runner protocol below.
 
 ```
-GET    /api/runners                    registered runners, their labels and allow globs   (admin)
+GET    /api/runners                    registered runners, their liveness, and the queue  (admin)
 POST   /api/runners                    register one   {name, labels?, allow}              (admin over allow)
 DELETE /api/runners/:name              remove one                                         (admin over its allow)
 ```
@@ -301,6 +301,8 @@ DELETE /api/runners/:name              remove one                               
 Registration takes admin scope over exactly the repositories in `allow`, rather than admin scope in general, because a runner executes repository-controlled code on its own machine: granting one a repository is granting that repository's authors the runner. Removing a runner takes admin scope over the allow list it was registered with. A name that is already registered is 409.
 
 ## The runner protocol
+
+Each runner in that listing carries `lastSeen` (when it last spoke to the vault, or `null` if not since the vault started: it is kept in memory, so a restart forgets it and a live runner re-announces within one poll) and `running` (the job it holds, or `null`). Beside them, `queued` lists the jobs waiting for a runner with the `runs-on` labels each is asking for, which is what answers "why has this run not started".
 
 `/api/runner/*`, singular, is a private protocol between a vault and the runners it hands jobs to, authenticated by a runner token rather than a user's. It is not an interface to program against and is not documented here. [Workflows](workflows.md) describes what a runner is and does.
 

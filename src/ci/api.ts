@@ -9,7 +9,15 @@ import { ArtifactError, artifactPath, artifactsDir, deploySite, isValidArtifactN
 import { CiEngine } from './engine';
 import { LogLine } from './protocol';
 import { Conclusion, StepState } from './runs';
-import { RunnerAuth, authenticateRunner, loadRunners, registerRunner, removeRunner } from './runners';
+import {
+  RunnerAuth,
+  authenticateRunner,
+  loadRunners,
+  noteRunnerSeen,
+  registerRunner,
+  removeRunner,
+  runnerLastSeen,
+} from './runners';
 
 // The runner-facing API and the admin API for runner registration.
 //
@@ -78,6 +86,10 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
       apiError(res, 401, 'invalid runner token');
       return null;
     }
+    // Every runner endpoint passes through here, so this is the one place that
+    // sees a runner alive, whether it is polling for work or reporting on a
+    // job it already has.
+    noteRunnerSeen(auth.name);
     return auth;
   }
 
@@ -91,6 +103,7 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
       return;
     }
     const registry = loadRunners(root);
+    const load = engine.runnerLoad();
     res.json({
       runners: Object.entries(registry.runners).map(([name, r]) => ({
         name,
@@ -98,7 +111,13 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
         allow: r.allow,
         createdBy: r.createdBy,
         createdAt: r.createdAt,
+        // Registration says what a runner may do; these two say whether it is
+        // there at all and what it is doing, which is what a caller looking at
+        // a run that has not started actually wants to know.
+        lastSeen: runnerLastSeen(name),
+        running: load.running[name] ?? null,
       })),
+      queued: load.queued,
     });
   });
 

@@ -2742,6 +2742,20 @@ check "a runner token cannot register runners" 401 -X POST -H "Authorization: Be
 check "runner list over the API" 200 -H "Authorization: Bearer $OWNER_TOKEN" "$BASE/api/runners"
 body_has "the registered runner is listed" '"smoke"'
 
+# Liveness, which the registry alone cannot answer: the runner has just called
+# whoami, so the vault has seen it, and the runs dispatched above are still
+# queued because nothing is executing them.
+rcli() { node dist/index.js runner list --host "$BASE" --token "$OWNER_TOKEN"; }
+run_ok "runner list reports liveness" rcli
+body_has "saying when the runner was last seen" 'seen'
+body_has "and what is waiting for one" 'waiting for a runner'
+run_ok "runner list --json" node dist/index.js runner list --json --host "$BASE" --token "$OWNER_TOKEN"
+stdout_is_json "as one JSON value"
+body_has "carrying the liveness field" '"lastSeen"'
+body_has "and the queue" '"queued"'
+run_code "an unknown field names the ones there are" 2 \
+  node dist/index.js runner list --json=nosuchfield --host "$BASE" --token "$OWNER_TOKEN"
+
 # A job acquired with a bogus lease may not be reported on.
 check "acquire with an unmatched label yields nothing" 204 -X POST \
   -H "Authorization: Bearer $RUNNER_TOKEN" -H 'Content-Type: application/json' \
