@@ -198,6 +198,7 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
       // the job does not wait out a lease expiry with nobody running it.
       engine.reportStatus(spec.address.collection, spec.address.repo, spec.address.run, spec.address.job, {
         lease: spec.lease,
+        runner: auth.name,
         status: 'completed',
         conclusion: 'cancelled',
       });
@@ -232,7 +233,7 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
       apiError(res, 400, 'invalid job address');
       return;
     }
-    const result = engine.heartbeat(a.collection, a.repo, a.run, a.job, leaseOf(req));
+    const result = engine.heartbeat(a.collection, a.repo, a.run, a.job, leaseOf(req), auth.name);
     if (!result) {
       apiError(res, 409, 'the lease on this job is no longer valid');
       return;
@@ -271,7 +272,15 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
         res.json({ ok: true });
         return;
       }
-      const ok = engine.appendLogs(a.collection, a.repo, a.run, a.job, leaseOf(req), lines.join('\n') + '\n');
+      const ok = engine.appendLogs(
+        a.collection,
+        a.repo,
+        a.run,
+        a.job,
+        leaseOf(req),
+        auth.name,
+        lines.join('\n') + '\n'
+      );
       if (!ok) {
         apiError(res, 409, 'the lease on this job is no longer valid');
         return;
@@ -309,6 +318,7 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
       : undefined;
     const ok = engine.reportStatus(a.collection, a.repo, a.run, a.job, {
       lease: leaseOf(req),
+      runner: auth.name,
       status,
       conclusion,
       stepStates,
@@ -341,7 +351,7 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
       apiError(res, 400, 'invalid artifact name');
       return;
     }
-    if (!engine.heartbeat(a.collection, a.repo, a.run, a.job, leaseOf(req))) {
+    if (!engine.heartbeat(a.collection, a.repo, a.run, a.job, leaseOf(req), auth.name)) {
       apiError(res, 409, 'the lease on this job is no longer valid');
       return;
     }
@@ -395,7 +405,7 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
       apiError(res, 400, 'invalid job address');
       return;
     }
-    if (!engine.heartbeat(a.collection, a.repo, a.run, a.job, leaseOf(req))) {
+    if (!engine.heartbeat(a.collection, a.repo, a.run, a.job, leaseOf(req), auth.name)) {
       apiError(res, 409, 'the lease on this job is no longer valid');
       return;
     }
@@ -415,7 +425,7 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
       apiError(res, 400, 'invalid job address');
       return;
     }
-    if (!engine.heartbeat(a.collection, a.repo, a.run, a.job, leaseOf(req))) {
+    if (!engine.heartbeat(a.collection, a.repo, a.run, a.job, leaseOf(req), auth.name)) {
       apiError(res, 409, 'the lease on this job is no longer valid');
       return;
     }
@@ -433,7 +443,7 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
       apiError(res, 400, 'invalid job address');
       return;
     }
-    if (!engine.heartbeat(a.collection, a.repo, a.run, a.job, leaseOf(req))) {
+    if (!engine.heartbeat(a.collection, a.repo, a.run, a.job, leaseOf(req), auth.name)) {
       apiError(res, 409, 'the lease on this job is no longer valid');
       return;
     }

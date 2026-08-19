@@ -912,31 +912,56 @@ export class CiEngine {
     });
   }
 
+  /**
+   * The job a runner is entitled to act on, or null. Both halves matter: the
+   * lease token proves the caller holds this job's grant, and the runner name
+   * proves it is the runner the grant was issued to. Checking only the token
+   * would mean that a token leaking to another registered runner - through a
+   * log, a shared image, or an operator's paste - handed that runner the job's
+   * output, and a runner is exactly the party in a position to see one.
+   */
   private findLeased(
     collection: string,
     repo: string,
     n: number,
     jobId: string,
-    lease: string
+    lease: string,
+    runner: string
   ): { ar: ActiveRun; job: JobRecord } | null {
     const ar = this.active.get(runKey(collection, repo, n));
     if (!ar) return null;
     const job = ar.jobs.get(jobId);
     if (!job || job.status !== 'running' || !job.lease) return null;
+    if (job.lease.runner !== runner) return null;
     if (!sameToken(job.lease.token, lease)) return null;
     return { ar, job };
   }
 
-  heartbeat(collection: string, repo: string, n: number, jobId: string, lease: string): { cancel: boolean } | null {
-    const found = this.findLeased(collection, repo, n, jobId, lease);
+  heartbeat(
+    collection: string,
+    repo: string,
+    n: number,
+    jobId: string,
+    lease: string,
+    runner: string
+  ): { cancel: boolean } | null {
+    const found = this.findLeased(collection, repo, n, jobId, lease, runner);
     if (!found) return null;
     found.job.lease!.expiresAt = new Date(Date.now() + LEASE_MS).toISOString();
     this.saveJob(found.ar, found.job);
     return { cancel: found.ar.run.cancelRequested === true };
   }
 
-  appendLogs(collection: string, repo: string, n: number, jobId: string, lease: string, ndjson: string): boolean {
-    const found = this.findLeased(collection, repo, n, jobId, lease);
+  appendLogs(
+    collection: string,
+    repo: string,
+    n: number,
+    jobId: string,
+    lease: string,
+    runner: string,
+    ndjson: string
+  ): boolean {
+    const found = this.findLeased(collection, repo, n, jobId, lease, runner);
     if (!found) return false;
     try {
       const logPath = jobLogPath(this.root, collection, repo, n, jobId);
@@ -977,6 +1002,7 @@ export class CiEngine {
     jobId: string,
     report: {
       lease: string;
+      runner: string;
       status: 'running' | 'completed';
       conclusion?: Conclusion;
       stepStates?: StepState[];
@@ -984,7 +1010,7 @@ export class CiEngine {
       summaries?: string[];
     }
   ): boolean {
-    const found = this.findLeased(collection, repo, n, jobId, report.lease);
+    const found = this.findLeased(collection, repo, n, jobId, report.lease, report.runner);
     if (!found) return false;
     const { ar, job } = found;
     if (report.stepStates) job.stepStates = report.stepStates;
