@@ -230,7 +230,7 @@ ${rows ? `<table class="listing issues"><tbody>${rows}</tbody></table>` : `<div 
   return layout(`Issues - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, filterUrl(base, filter, {})));
 }
 
-function commentCard(ctx: RepoCtx, author: string, when: string, html: string, note = ''): string {
+function commentCard(author: string, when: string, html: string, note = ''): string {
   return `<article class="issue-comment">
 <div class="issue-comment-head">${avatar(author, 24)}<b>${esc(author)}</b><span class="muted small">${note ||
     'commented'} ${timeTag(when)}</span></div>
@@ -244,7 +244,7 @@ function issuePage(ctx: RepoCtx, issue: Issue, canWrite: boolean): string {
   const mine = viewer !== null && viewer.auth.username === issue.author;
   const canClose = canWrite || mine;
   const comments = issue.commentList
-    .map((c) => commentCard(ctx, c.author, c.created, body(ctx, c.body)))
+    .map((c) => commentCard(c.author, c.created, body(ctx, c.body)))
     .join('');
   const closedNote =
     issue.state === 'closed' && issue.closedAt
@@ -284,7 +284,7 @@ function issuePage(ctx: RepoCtx, issue: Issue, canWrite: boolean): string {
     issue.commentList.length === 1 ? '' : 's'
   }</span>${labelChips(issue.labels)}</div>
 <div class="issue-thread">
-${commentCard(ctx, issue.author, issue.created, body(ctx, issue.body) || '<p class="muted">No description.</p>', 'opened this')}
+${commentCard(issue.author, issue.created, body(ctx, issue.body) || '<p class="muted">No description.</p>', 'opened this')}
 ${comments}
 ${closedNote}
 ${replyBox}

@@ -58,7 +58,6 @@ export class LfsConfigError extends Error {}
 // Content-Disposition filenames must stay inside printable ASCII with no
 // quote or backslash, or the header becomes malformed.
 function sanitizeFilename(name: string): string {
-  // eslint-disable-next-line no-control-regex
   return name.replace(/[^\x20-\x7e]|["\\]/g, '_');
 }
 

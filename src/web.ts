@@ -52,7 +52,7 @@ export function fail(
   viewer: Viewer | null,
   backUrl?: string
 ): void {
-  res.status(status).type('html').send(forms.opErrorPage(status, message, { viewer, backUrl }));
+  res.status(status).type('html').send(forms.opErrorPage(message, { viewer, backUrl }));
 }
 
 // For GET form pages: an anonymous visitor is sent to sign in and come back.

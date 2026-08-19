@@ -118,7 +118,8 @@ export function isValidRefName(ref: string): boolean {
 
 export function isValidRepoPath(p: string): boolean {
   if (p === '') return true;
-  // eslint-disable-next-line no-control-regex
+  // A control character in a path is never meant, and a newline in one would
+  // let a later line of a git plumbing command be forged.
   if (p.startsWith('/') || p.endsWith('/') || /[\x00-\x1f]/.test(p)) return false;
   return p.split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..');
 }

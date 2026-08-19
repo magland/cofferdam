@@ -544,11 +544,7 @@ export function tokenPage(viewer: Viewer, username: string, token: string, creat
   return layout(heading, content, { viewer, path: '/admin/users' });
 }
 
-export function opErrorPage(
-  status: number,
-  message: string,
-  opts: PageOpts & { backUrl?: string } = {}
-): string {
+export function opErrorPage(message: string, opts: PageOpts & { backUrl?: string } = {}): string {
   const back = opts.backUrl ? `<p><a class="btn" href="${esc(opts.backUrl)}">Go back</a></p>` : '';
   return layout(
     'Error',
