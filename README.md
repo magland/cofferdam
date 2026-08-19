@@ -14,6 +14,7 @@ Hosting git repositories usually means running a service with a database (GitHub
     webapp.site/          (static site for webapp)
     webapp.issues/        (its issues, one directory each)
     webapp.releases/      (its release notes, one file per tag)
+    webapp.releases/      (its release notes, one file per tag)
     webapp.lfs/           (its Git LFS objects, when no bucket is configured)
   bob/
     notes.git/
