@@ -27,7 +27,21 @@ code, pre, .mono { font-family: var(--font-mono); }
 .brand:hover { text-decoration: none; }
 .topbar .crumbs { color: var(--fg-muted); }
 .userbox { margin-left: auto; display: flex; align-items: center; gap: 12px; }
-.userbox .user-name { font-weight: 600; }
+.user-menu > summary { display: flex; align-items: center; gap: 2px; }
+.user-menu .dropdown-menu { width: 220px; }
+.user-menu form { margin: 0; }
+
+/* An identicon in its frame (see avatar.ts): a circle for a person, a rounded
+   square for a collection, as GitHub distinguishes people from organizations. */
+.avatar { display: inline-flex; flex: none; border-radius: 50%; overflow: hidden; background: var(--surface); }
+.avatar.square { border-radius: var(--radius); }
+.avatar svg { display: block; width: 100%; height: 100%; }
+.with-avatar { display: flex; align-items: center; gap: 8px; }
+
+.list-filter {
+  width: 320px; max-width: 100%; padding: 5px 12px; font-size: 14px; font-family: inherit;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--input-bg); color: var(--fg);
+}
 .btn-link { border: none; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
 .btn-link:hover { text-decoration: underline; }
 main { padding: 24px 16px 64px; }
@@ -95,6 +109,7 @@ h2 { font-family: var(--font-head); font-size: 18px; }
 }
 .dd-item:first-child { border-top: none; }
 .dd-item:hover { background: var(--surface); text-decoration: none; }
+button.dd-item { width: 100%; background: none; font: inherit; font-size: 13px; cursor: pointer; }
 .dd-item.current { font-weight: 600; }
 .dd-item .dd-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dd-check { width: 16px; flex: none; color: var(--accent); }

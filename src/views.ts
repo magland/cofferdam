@@ -4,6 +4,7 @@ import { Viewer, viewerIsAdmin } from './session';
 import { activeTheme } from './themes';
 import { WORDMARK } from './logo';
 import { IconName, icon } from './icons';
+import { avatar } from './avatar';
 
 export interface RepoCtx {
   collection: string;
@@ -53,10 +54,23 @@ function userBox(opts: PageOpts): string {
     const next = opts.path && opts.path.startsWith('/') ? opts.path : '/';
     return `<a class="btn" href="/login?next=${encodeURIComponent(next)}">Sign in</a>`;
   }
-  const admin = viewerIsAdmin(viewer) ? `<a href="/admin">Admin</a>` : '';
-  return `${admin}<span class="user-name">${esc(viewer.auth.username)}</span><form method="post" action="/logout">${csrfField(
-    viewer
-  )}<button type="submit" class="btn-link">Sign out</button></form>`;
+  // The signed-in header is an avatar that opens a menu, as GitHub's is: the
+  // name and what you can do with the account are one click away rather than
+  // spread across the bar.
+  const name = viewer.auth.username;
+  const admin = viewerIsAdmin(viewer)
+    ? `<a class="dd-item" href="/admin">${icon('gear')}<span>Admin</span></a>`
+    : '';
+  return `<details class="dropdown user-menu">
+<summary aria-label="Account menu">${avatar(name, 24)}${icon('chevron-down', 'caret')}</summary>
+<div class="dropdown-menu dd-right">
+  <div class="dd-section">Signed in as <b>${esc(name)}</b></div>
+  ${admin}
+  <form method="post" action="/logout">${csrfField(viewer)}<button type="submit" class="dd-item">${icon(
+    'sign-out'
+  )}<span>Sign out</span></button></form>
+</div>
+</details>`;
 }
 
 export function layout(title: string, content: string, opts: PageOpts = {}): string {
@@ -122,6 +136,22 @@ function closeMenus(except) {
 }
 document.addEventListener('click', function (e) { closeMenus(e.target); });
 document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMenus(null); });
+// The filter box above a listing: hide the rows that do not match, and say so
+// when none do.
+function filterRows(input) {
+  var id = input.getAttribute('data-target');
+  var table = document.getElementById(id);
+  var empty = document.getElementById(id + '-empty');
+  var q = input.value.trim().toLowerCase();
+  var rows = table.tBodies[0].rows;
+  var shown = 0;
+  for (var i = 0; i < rows.length; i++) {
+    var hit = q === '' || rows[i].textContent.toLowerCase().indexOf(q) !== -1;
+    rows[i].hidden = !hit;
+    if (hit) shown++;
+  }
+  if (empty) empty.hidden = shown !== 0;
+}
 // The filter box in a menu of many items (branches and tags).
 function filterMenu(input) {
   var menu = input.parentElement;
@@ -265,6 +295,23 @@ function breadcrumb(ctx: RepoCtx, path: string): string {
   return `<span class="crumb">${pieces.join(' / ')}</span>`;
 }
 
+/**
+ * The "find a repository" box GitHub puts above a long listing. It filters
+ * rows in the page rather than asking the server, which is honest about what
+ * it is: a way to find a name you already know in a list you can already see.
+ * Short lists do not get one, since scanning five names is faster than typing.
+ */
+function listFilter(target: string, placeholder: string, rowCount: number): string {
+  if (rowCount <= 5) return '';
+  return `<div class="toolbar"><div class="left"><input class="list-filter" type="text" placeholder="${esc(
+    placeholder
+  )}" data-target="${esc(target)}" oninput="filterRows(this)" aria-label="${esc(placeholder)}"></div></div>`;
+}
+
+function noMatches(target: string): string {
+  return `<div class="empty-state" id="${esc(target)}-empty" hidden>No match.</div>`;
+}
+
 export function homePage(
   rootLabel: string,
   collections: { name: string; repoCount: number }[],
@@ -273,9 +320,11 @@ export function homePage(
   const rows = collections
     .map(
       (o) =>
-        `<tr><td>${FOLDER_ICON}<a href="/${encodeURIComponent(o.name)}">${esc(o.name)}</a></td><td class="right muted">${
-          o.repoCount
-        } ${o.repoCount === 1 ? 'repository' : 'repositories'}</td></tr>`
+        `<tr><td class="with-avatar">${avatar(o.name, 24, 'square')}<a href="/${encodeURIComponent(o.name)}">${esc(
+          o.name
+        )}</a></td><td class="right muted">${o.repoCount} ${
+          o.repoCount === 1 ? 'repository' : 'repositories'
+        }</td></tr>`
     )
     .join('');
   const body =
@@ -283,8 +332,10 @@ export function homePage(
       ? `<div class="empty-state">No repositories yet.${
           viewer ? ' Create one with the button above, or push to a new path.' : ''
         }</div>`
-      : `<table class="listing"><tbody>${rows}</tbody></table>`;
-  const newBtn = viewer ? `<a class="btn btn-primary" href="/new">New repository</a>` : '';
+      : `${listFilter('collection-list', 'Find a collection', collections.length)}<table class="listing" id="collection-list"><tbody>${rows}</tbody></table>${noMatches(
+          'collection-list'
+        )}`;
+  const newBtn = viewer ? `<a class="btn btn-primary" href="/new">${icon('plus')}<span>New repository</span></a>` : '';
   const content = `<div class="page-head"><h1>Collections</h1>${newBtn}</div>${body}<p class="muted small" style="margin-top:16px">Serving ${esc(
     rootLabel
   )}</p>`;
@@ -309,13 +360,19 @@ export function collectionPage(
   const body =
     repoList.length === 0
       ? `<div class="empty-state">No repositories in this collection yet.</div>`
-      : `<table class="listing"><tbody>${rows}</tbody></table>`;
+      : `${listFilter('repo-list', 'Find a repository', repoList.length)}<table class="listing" id="repo-list"><tbody>${rows}</tbody></table>${noMatches(
+          'repo-list'
+        )}`;
   const newBtn = viewer
-    ? `<a class="btn" href="/import?collection=${encodeURIComponent(collection)}">Import</a><a class="btn btn-primary" href="/new?collection=${encodeURIComponent(
+    ? `<a class="btn" href="/import?collection=${encodeURIComponent(collection)}">${icon(
+        'download'
+      )}<span>Import</span></a><a class="btn btn-primary" href="/new?collection=${encodeURIComponent(
         collection
-      )}">New repository</a>`
+      )}">${icon('plus')}<span>New repository</span></a>`
     : '';
-  const content = `<div class="page-head"><h1>${esc(collection)}</h1><span class="right-group">${newBtn}</span></div>${body}`;
+  const content = `<div class="page-head"><h1 class="with-avatar">${avatar(collection, 28, 'square')}${esc(
+    collection
+  )}</h1><span class="right-group">${newBtn}</span></div>${body}`;
   return layout(collection, content, {
     crumbs: ` / <a href="/${encodeURIComponent(collection)}">${esc(collection)}</a>`,
     viewer,
