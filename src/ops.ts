@@ -50,6 +50,54 @@ export async function createRepo(root: string, collection: string, name: string)
   return new GitRepo(dir, collection, name);
 }
 
+/**
+ * Fork a repository inside the vault: a bare clone of one repository into
+ * another collection, with the parent recorded so both ends can say where the
+ * fork came from.
+ *
+ * A local clone hardlinks its objects, so a fork of a large repository costs
+ * almost nothing on disk until one side or the other gains new objects. The
+ * `origin` remote git writes points at a filesystem path, which means nothing
+ * to anyone reading the fork, so it is removed and replaced by a `hubbit
+ * .forkedFrom` entry naming `<collection>/<repo>`. Nothing else comes across:
+ * issues, releases, runs, and the site belong to the repository that has
+ * them, and a fork starts with none.
+ */
+export async function forkRepo(
+  root: string,
+  collection: string,
+  name: string,
+  toCollection: string,
+  toName: string
+): Promise<GitRepo> {
+  const source = findRepo(root, collection, name);
+  if (!source) throw new OpError(`repository ${collection}/${name} not found`, 'notfound');
+  if (!isValidName(toCollection) || !isValidName(toName)) {
+    throw new OpError('invalid collection or repository name');
+  }
+  if (toCollection === collection && toName === name) {
+    throw new OpError('a repository cannot be forked onto itself');
+  }
+  if (findRepo(root, toCollection, toName)) {
+    throw new OpError(`${toCollection}/${toName} already exists`, 'exists');
+  }
+  fs.mkdirSync(path.join(root, toCollection), { recursive: true });
+  const dir = path.join(root, toCollection, `${toName}.git`);
+  await execGit(root, ['clone', '--bare', source.dir, dir]);
+  await execGit(dir, ['remote', 'remove', 'origin']).catch(() => undefined);
+  await execGit(dir, ['config', 'hubbit.forkedFrom', `${collection}/${name}`]);
+  await execGit(dir, ['config', 'receive.denyNonFastForwards', 'true']);
+  await execGit(dir, ['config', 'receive.denyDeletes', 'true']);
+  await execGit(dir, ['config', 'receive.maxInputSize', String(2 * 1024 * 1024 * 1024)]);
+  const description = fs.existsSync(path.join(source.dir, 'description'))
+    ? fs.readFileSync(path.join(source.dir, 'description'), 'utf8')
+    : '';
+  if (description.trim() !== '' && !description.startsWith('Unnamed repository')) {
+    fs.writeFileSync(path.join(dir, 'description'), description);
+  }
+  return new GitRepo(dir, toCollection, toName);
+}
+
 async function refTip(repoDir: string, ref: string): Promise<string | null> {
   try {
     return (await execGit(repoDir, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]))

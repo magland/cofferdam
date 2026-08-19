@@ -75,6 +75,44 @@ ${csrfField(viewer)}
   return layout('New repository', content, { viewer, path: '/new' });
 }
 
+/**
+ * The fork form. GitHub asks where the copy should go and lets the name be
+ * changed on the way; so does this, with the collection defaulting to one
+ * named after the signed-in user, which is the shape most vaults have.
+ */
+export function forkPage(
+  ctx: RepoCtx,
+  viewer: Viewer,
+  collectionNames: string[],
+  preset: { collection?: string; name?: string },
+  error?: string
+): string {
+  const base = repoUrl(ctx);
+  const datalist = collectionNames.map((o) => `<option value="${esc(o)}">`).join('');
+  const content = `${repoHeader(ctx, 'code')}
+<div class="form-box wide">
+<h1>Fork ${esc(ctx.collection)}/${esc(ctx.repo)}</h1>
+<p class="muted">A fork is a copy of the repository somewhere else in this vault. Its objects are shared with the original on disk until one of them gains new ones, so a fork costs almost nothing.</p>
+<hr class="rule">
+${errorBanner(error)}
+<form method="post" action="${base}/fork">
+${csrfField(viewer)}
+<div class="name-row">
+  <div class="field"><label for="collection">Collection</label><input type="text" id="collection" name="collection" list="collections" value="${esc(
+    preset.collection ?? ''
+  )}" required><datalist id="collections">${datalist}</datalist></div>
+  <div class="name-slash">/</div>
+  <div class="field"><label for="name">Repository name</label><input type="text" id="name" name="name" value="${esc(
+    preset.name ?? ctx.repo
+  )}" required></div>
+</div>
+<p class="muted small">You need push scope over the destination. Branches and tags come across; issues, releases, and workflow runs stay with the original.</p>
+<button type="submit" class="btn btn-primary">${icon('repo-forked')}<span>Create fork</span></button>
+</form>
+</div>`;
+  return layout(`Fork ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, `${base}/fork`));
+}
+
 export function importPage(
   viewer: Viewer,
   collectionNames: string[],

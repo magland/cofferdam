@@ -3,7 +3,7 @@ import { hasCiState } from './ci/present';
 import { GitRepo, RefInfo } from './git';
 import { issueCounts } from './issues';
 import { listReleases } from './releases';
-import { findRepo, siteDir } from './scan';
+import { findRepo, forkParent, siteDir } from './scan';
 import { Viewer } from './session';
 import { canAdmin, canPush } from './vault';
 import { RepoCtx } from './views';
@@ -78,6 +78,7 @@ export async function makeCtx(
     releases: listReleases(root, loaded.repo.collection, loaded.repo.name).map((r) => r.tag),
     hasCi: await hasCiState(root, loaded.repo, loaded.defaultBranch, loaded.branches),
     openIssues: issueCounts(root, loaded.repo.collection, loaded.repo.name).open,
+    forkedFrom: forkParent(loaded.repo.dir),
     viewer,
     canPush: viewer !== null && canPush(viewer.auth, loaded.repo.collection, loaded.repo.name),
     canAdmin: viewer !== null && canAdmin(viewer.auth, [`${loaded.repo.collection}/${loaded.repo.name}`]),

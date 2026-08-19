@@ -482,6 +482,24 @@ check "move it back" 302 -b "$JAR" "$BASE/moved/proj/settings/rename" \
   --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=proj
 check "back at its old address" 200 "$BASE/demo/proj"
 
+# ---- forking inside the vault ----
+
+check "anonymous fork form redirects to login" 302 "$BASE/demo/proj/fork"
+check "fork form" 200 -b "$JAR" "$BASE/demo/proj/fork"
+body_has "fork form names the source" 'Fork demo/proj'
+check "fork the repository" 302 -b "$JAR" "$BASE/demo/proj/fork" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=forks --data-urlencode name=proj
+check "the fork serves" 200 "$BASE/forks/proj"
+body_has "the fork says where it came from" 'forked from'
+body_has "the fork links its parent" 'href="/demo/proj"'
+check "the fork carries the history" 200 "$BASE/forks/proj/commits/main"
+body_has "history came across" 'Edit README from the web'
+check "forking onto an existing repository is refused" 409 -b "$JAR" "$BASE/demo/proj/fork" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=forks --data-urlencode name=proj
+grep -q 'forkedFrom = demo/proj' "$VAULT/forks/proj.git/config" || { echo "FAIL: the fork does not record its parent"; exit 1; }
+grep -q 'url = ' "$VAULT/forks/proj.git/config" && { echo "FAIL: the fork kept an origin remote pointing at a path"; exit 1; }
+PASS=$((PASS+2)); echo "ok: the fork records its parent and keeps no origin"
+
 # ---- empty repository README flow ----
 
 check "new repo form again" 200 -b "$JAR" "$BASE/new"
@@ -558,6 +576,8 @@ check "alice can open edit in scope" 200 -b "$ALICE_JAR" "$BASE/demo/proj/edit/m
 ALICE_CSRF="$(csrf_of)"
 check "alice cannot create out of scope" 403 -b "$ALICE_JAR" "$BASE/new" \
   --data-urlencode "csrf=$ALICE_CSRF" --data-urlencode collection=other --data-urlencode name=x
+check "alice cannot fork out of scope" 403 -b "$ALICE_JAR" "$BASE/demo/proj/fork" \
+  --data-urlencode "csrf=$ALICE_CSRF" --data-urlencode collection=other --data-urlencode name=proj
 check "alice cannot rename repo" 403 -b "$ALICE_JAR" "$BASE/demo/proj/settings/rename" \
   --data-urlencode "csrf=$ALICE_CSRF" --data-urlencode collection=demo --data-urlencode name=nope
 check "alice cannot delete repo" 403 -b "$ALICE_JAR" "$BASE/demo/proj/settings/delete" \

@@ -725,4 +725,8 @@ table.listing.issues td.issue-cell > span { min-width: 0; }
   .release { flex-direction: column; gap: 8px; }
   .release-side { flex: 1 1 auto; flex-direction: row; align-items: center; }
 }
+
+/* --- forks --- */
+.fork-note { display: flex; align-items: center; gap: 6px; margin: -4px 0 8px 24px; }
+.fork-note .octicon { color: var(--fg-subtle); }
 `;

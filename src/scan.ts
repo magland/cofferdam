@@ -90,6 +90,25 @@ export function siteDir(root: string, collection: string, repoName: string): str
   return null;
 }
 
+/**
+ * The repository this one was forked from, as `<collection>/<repo>`, or null
+ * if it was not. Read out of the bare repository's own config file rather
+ * than through git, since this is asked on page renders.
+ */
+export function forkParent(dir: string): { collection: string; repo: string } | null {
+  let text: string;
+  try {
+    text = fs.readFileSync(path.join(dir, 'config'), 'utf8');
+  } catch {
+    return null;
+  }
+  const m = text.match(/^\s*forkedFrom\s*=\s*(\S+)\s*$/m);
+  if (!m) return null;
+  const [collection, repo] = m[1].split('/');
+  if (!collection || !repo || !isValidName(collection) || !isValidName(repo)) return null;
+  return { collection, repo };
+}
+
 export function repoDescription(dir: string): string | null {
   try {
     const t = fs.readFileSync(path.join(dir, 'description'), 'utf8').trim();

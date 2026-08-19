@@ -723,6 +723,70 @@ export function registerWebOps(
     })
   );
 
+  // ---- forking ----
+
+  app.get(
+    '/:collection/:repo/fork',
+    ah(async (req, res) => {
+      const viewer = requireViewerPage(req, res);
+      if (!viewer) return;
+      const loaded = await loadRepo(root, req, res, viewer);
+      if (!loaded) return;
+      const ctx = await makeCtx(root, req, loaded, loaded.defaultBranch ?? '', viewer);
+      // A vault usually has a collection named after each user, so that is the
+      // suggestion; anything the actor may push to is accepted.
+      res
+        .type('html')
+        .send(
+          forms.forkPage(ctx, viewer, listCollections(root).map((c) => c.name), {
+            collection: viewer.auth.username,
+            name: loaded.repo.name,
+          })
+        );
+    })
+  );
+
+  app.post(
+    '/:collection/:repo/fork',
+    form,
+    ah(async (req, res) => {
+      const viewer = requireViewerPost(req, res);
+      if (!viewer) return;
+      const loaded = await loadRepo(root, req, res, viewer);
+      if (!loaded) return;
+      const ctx = await makeCtx(root, req, loaded, loaded.defaultBranch ?? '', viewer);
+      const toCollection = field(req, 'collection').trim();
+      const toName = field(req, 'name').trim() || loaded.repo.name;
+      const names = listCollections(root).map((c) => c.name);
+      if (!canPush(viewer.auth, toCollection, toName)) {
+        res
+          .status(403)
+          .type('html')
+          .send(
+            forms.forkPage(
+              ctx,
+              viewer,
+              names,
+              { collection: toCollection, name: toName },
+              `You have no push scope over ${toCollection}/${toName}.`
+            )
+          );
+        return;
+      }
+      try {
+        await ops.forkRepo(root, loaded.repo.collection, loaded.repo.name, toCollection, toName);
+      } catch (e) {
+        const message = e instanceof OpError ? e.message : 'Could not fork the repository.';
+        res
+          .status(e instanceof OpError && e.kind === 'exists' ? 409 : 400)
+          .type('html')
+          .send(forms.forkPage(ctx, viewer, names, { collection: toCollection, name: toName }, message));
+        return;
+      }
+      res.redirect(repoUrl({ collection: toCollection, repo: toName }));
+    })
+  );
+
   app.post(
     '/:collection/:repo/settings/rename',
     form,

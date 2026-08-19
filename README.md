@@ -38,6 +38,7 @@ The `.git` suffix on repository directory names is optional; it is stripped for 
 - Comparing two revisions: what one branch has that another does not, and the diff between them, from the Compare button on any branch or tag
 - Issues: open, comment, label, close, and reopen, stored as markdown files in the vault
 - Cross-references in any rendered markdown: `#12` links to that issue and a commit id links to that commit, as on GitHub
+- Forking inside a vault: a bare clone whose objects are shared on disk with the original, with the parent recorded and shown
 - Source downloads: `.tar.gz` or `.zip` of any branch, tag, or commit, from the Code button or straight from `/<collection>/<repo>/archive/<ref>.zip`
 - A language breakdown in the About panel: the share of the source each language holds, drawn as GitHub's bar in Linguist's colours
 - Sign-in with username and token; operations happen directly in the web interface:

@@ -22,6 +22,8 @@ export interface RepoCtx {
   releases: string[];
   /** Open issues, for the Issues tab's count. */
   openIssues: number;
+  /** The repository this one was forked from, if it was. */
+  forkedFrom: { collection: string; repo: string } | null;
   viewer: Viewer | null;
   canPush: boolean;
   canAdmin: boolean;
@@ -331,9 +333,17 @@ export function repoHeader(
     'search',
     'search-glyph'
   )}</form>`;
+  const parent = ctx.forkedFrom
+    ? `<div class="fork-note muted small">${icon('repo-forked')}<span>forked from <a href="/${encodeURIComponent(
+        ctx.forkedFrom.collection
+      )}/${encodeURIComponent(ctx.forkedFrom.repo)}">${esc(ctx.forkedFrom.collection)}/${esc(
+        ctx.forkedFrom.repo
+      )}</a></span></div>`
+    : '';
   return `<div class="repo-title">${REPO_ICON}<a href="/${encodeURIComponent(ctx.collection)}">${esc(
     ctx.collection
   )}</a> <span class="muted">/</span> <a href="${base}"><b>${esc(ctx.repo)}</b></a>${search}</div>
+${parent}
 <nav class="tabs">
 ${tab('code', 'Code', base, 'code')}
 ${tab('commits', 'Commits', `${base}/commits/${encPath(ctx.ref)}`, 'history')}
@@ -640,6 +650,13 @@ export function treePage(ctx: RepoCtx, view: TreeView): string {
   const historyBtn = `<a class="btn" href="${base}/commits/${encPath(ctx.ref)}${
     atRoot ? '' : `/${encPath(path)}`
   }" title="Commits touching this directory">${icon('history')}<span>History</span></a>`;
+  // Forking is offered to anyone who can sign in; where the copy may go is
+  // settled on the form, where the answer can be explained.
+  const forkBtn = atRoot
+    ? `<a class="btn" href="${
+        ctx.viewer ? `${base}/fork` : `/login?next=${encodeURIComponent(`${base}/fork`)}`
+      }" title="Copy this repository elsewhere in the vault">${icon('repo-forked')}<span>Fork</span></a>`
+    : '';
   const addFileBtn =
     ctx.canPush && ctx.refIsBranch ? `<a class="btn" href="${addFileUrl}">${icon('plus')}<span>Add file</span></a>` : '';
   const readmePath = atRoot ? view.readmeName : `${path}/${view.readmeName}`;
@@ -653,7 +670,7 @@ export function treePage(ctx: RepoCtx, view: TreeView): string {
   const content = `${repoHeader(ctx, 'code')}
 <div class="toolbar">
   <div class="left">${refPicker(ctx, (ref) => `${base}/tree/${encPath(ref)}`)}${breadcrumb(ctx, path)}</div>
-  <div class="right-group">${findButton(ctx)}${historyBtn}${addFileBtn}${cloneMenu(ctx)}</div>
+  <div class="right-group">${findButton(ctx)}${historyBtn}${forkBtn}${addFileBtn}${cloneMenu(ctx)}</div>
 </div>
 <div class="repo-layout">
 <div class="repo-main">
