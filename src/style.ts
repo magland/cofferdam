@@ -394,23 +394,39 @@ textarea.code-editor {
 
 /* --- Actions: runs, jobs, logs --- */
 .chip { display: inline-block; background: var(--chip-bg); border-radius: 2em; padding: 1px 8px; font-size: 12px; color: var(--fg-muted); }
-.run-status { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; min-width: 18px; border-radius: 50%; font-size: 12px; line-height: 1; border: 1px solid currentColor; }
+.run-status { display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .run-status.success { color: var(--alert-tip); }
 .run-status.failure { color: var(--danger); }
+/* A run in progress turns, as it does on GitHub; a reader who has motion
+   turned off gets the same amber ring, still. */
 .run-status.running { color: var(--alert-warning); }
+.run-status.running .octicon { animation: spin 1.4s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .run-status.running .octicon { animation: none; } }
 .run-status.queued { color: var(--fg-subtle); }
 .run-status.cancelled, .run-status.skipped { color: var(--fg-subtle); }
 .listing.runs td.run-cell { display: flex; align-items: flex-start; gap: 10px; }
 .listing.runs td.run-cell > span { min-width: 0; }
-.wf-filter { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 12px; }
-.wf-filter a { padding: 4px 10px; border: 1px solid var(--border); border-radius: 2em; color: var(--fg-muted); font-size: 13px; }
-.wf-filter a:hover { background: var(--surface); text-decoration: none; }
-.wf-filter a.current { color: var(--fg); border-color: var(--accent); font-weight: 600; }
+/* The runs, with the repository's workflows listed down the side. */
+.actions-layout { display: flex; align-items: flex-start; gap: 24px; }
+.actions-main { flex: 1 1 auto; min-width: 0; }
+.wf-side { flex: 0 0 240px; }
+.wf-side .side-links a { padding: 5px 8px; border-radius: var(--radius); }
+.wf-side .side-links a:hover { background: var(--surface); }
+.wf-side .side-links a.current { background: var(--surface); font-weight: 600; }
+.wf-side .side-links a span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 900px) {
+  .actions-layout { flex-direction: column; }
+  .wf-side { flex: 1 1 auto; width: 100%; }
+}
+.run-sub { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.chip .octicon { vertical-align: text-bottom; margin-right: 2px; }
 .dispatch-body { padding: 16px; }
 .run-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .run-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .run-title h2 { margin: 0; }
 .run-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0 16px; }
+.run-actor { display: inline-flex; align-items: center; gap: 4px; }
 .run-body { display: flex; gap: 20px; align-items: flex-start; }
 .job-list { flex: 0 0 240px; display: flex; flex-direction: column; gap: 2px; }
 .job-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: var(--radius); color: var(--fg); }
@@ -441,4 +457,35 @@ textarea.code-editor {
 .commit-main .title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .commit-actions { display: flex; align-items: center; gap: 6px; flex: none; }
 .commit-actions .btn { padding: 4px 8px; }
+
+/* --- blame: the file view with a commit column down its left --- */
+.blame {
+  border: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--code-bg); overflow-x: auto;
+  font-family: var(--font-mono); font-size: 12px; line-height: 20px;
+}
+.blame-row { display: flex; width: max-content; min-width: 100%; }
+.blame-row:target { background: var(--line-mark); }
+/* A run of lines from one commit reads as a block, so only its first row
+   names the commit and only its first row carries the rule above it. */
+.blame-row.blame-start { border-top: 1px solid var(--border-soft); }
+.blame-row:first-child { border-top: none; }
+.blame-commit {
+  position: sticky; left: 0; z-index: 1; flex: none; display: flex; align-items: center; gap: 6px;
+  width: 320px; padding: 0 10px; overflow: hidden; background: var(--surface);
+  border-right: 1px solid var(--border); font-family: var(--font-ui);
+}
+.blame-subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); font-size: 12px; }
+.blame-when { flex: none; white-space: nowrap; }
+.blame-when time { color: inherit; }
+.blame-prior { flex: none; display: flex; color: var(--fg-subtle); }
+.blame-prior:hover { color: var(--accent); }
+/* The commit column and the numbers both stay put while the code scrolls
+   under them, so the number sits at exactly the column's width. */
+.blame .lnum { left: 320px; }
+@media (max-width: 700px) {
+  .blame-commit { width: 180px; }
+  .blame .lnum { left: 180px; }
+  .blame-when { display: none; }
+}
 `;

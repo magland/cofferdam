@@ -1,4 +1,5 @@
-import { icon } from '../icons';
+import { avatar } from '../avatar';
+import { IconName, icon } from '../icons';
 import { esc, formatSize, timeTag } from '../render';
 import { Viewer } from '../session';
 import { RepoCtx, copyButton, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from '../views';
@@ -29,10 +30,22 @@ const STATUS_LABEL: Record<Status, string> = {
   skipped: 'Skipped',
 };
 
+// The status glyphs are GitHub's: a filled tick for success, a filled cross
+// for failure, an amber ring while a job runs, and grey for the states where
+// nothing happened.
+const STATUS_ICON: Record<Status, IconName> = {
+  queued: 'clock',
+  running: 'sync',
+  success: 'check-circle-fill',
+  failure: 'x-circle-fill',
+  cancelled: 'stop',
+  skipped: 'skip',
+};
+
 function statusIcon(s: Status): string {
-  const glyph =
-    s === 'success' ? '&check;' : s === 'failure' ? '&times;' : s === 'running' ? '&bull;' : s === 'queued' ? '&#9679;' : '&ndash;';
-  return `<span class="run-status ${s}" title="${STATUS_LABEL[s]}" aria-label="${STATUS_LABEL[s]}">${glyph}</span>`;
+  return `<span class="run-status ${s}" title="${STATUS_LABEL[s]}" aria-label="${STATUS_LABEL[s]}" role="img">${icon(
+    STATUS_ICON[s]
+  )}</span>`;
 }
 
 function duration(from?: string, to?: string): string {
@@ -70,25 +83,35 @@ export function runsPage(
       const s = statusOf(r);
       const when = r.createdAt ? timeTag(r.createdAt) : '';
       const dur = duration(r.startedAt, r.completedAt);
+      const sha = r.sha
+        ? ` <a class="sha" href="${base}/commit/${esc(r.sha)}">${esc(r.sha.slice(0, 7))}</a>`
+        : '';
       return `<tr>
 <td class="run-cell">${statusIcon(s)}<span><a href="${actionsBase}/runs/${r.number}"><b>${esc(runTitle(r))}</b></a>
-<div class="muted small">${esc(r.workflowName)} #${r.number}: ${esc(r.event)} by ${esc(r.actor)}</div></span></td>
-<td class="right muted small"><span class="chip">${esc(r.refName)}</span></td>
+<div class="muted small run-sub">${esc(r.workflowName)} #${r.number}: ${esc(r.event)} by ${avatar(
+        r.actor,
+        16
+      )}${esc(r.actor)}${sha}</div></span></td>
+<td class="right muted small"><span class="chip">${icon('git-branch')}${esc(r.refName)}</span></td>
 <td class="right muted small">${when}${dur ? ` &middot; ${esc(dur)}` : ''}</td>
 </tr>`;
     })
     .join('');
 
-  const filterBar = workflows.length
-    ? `<div class="wf-filter">${[
-        `<a class="${selectedWorkflow === null ? 'current' : ''}" href="${actionsBase}">All workflows</a>`,
+  // GitHub lists the workflows down the side of the runs, which is both the
+  // filter and the answer to "what can this repository do".
+  const sidebar = workflows.length
+    ? `<aside class="wf-side"><div class="side-block"><h3>${icon('workflow')}Workflows</h3><div class="side-links">${[
+        `<a class="${selectedWorkflow === null ? 'current' : ''}" href="${actionsBase}">${icon(
+          'history'
+        )}<span>All workflows</span></a>`,
         ...workflows.map(
           (w) =>
             `<a class="${selectedWorkflow === w.path ? 'current' : ''}" href="${actionsBase}?workflow=${encodeURIComponent(
               w.path
-            )}">${esc(w.name)}</a>`
+            )}" title="${esc(w.path)}">${icon('play')}<span>${esc(w.name)}</span></a>`
         ),
-      ].join('')}</div>`
+      ].join('')}</div></div></aside>`
     : '';
 
   const brokenList = workflows.filter((w) => w.error);
@@ -112,8 +135,7 @@ export function runsPage(
 ${flash ? `<div class="flash">${esc(flash)}</div>` : ''}
 ${broken}
 <div class="page-head"><h2>Workflow runs</h2>${dispatchForm}</div>
-${filterBar}
-${body}`;
+<div class="actions-layout">${sidebar}<div class="actions-main">${body}</div></div>`;
   return layout(`Actions - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, actionsBase));
 }
 
@@ -335,7 +357,7 @@ ${summaryBox}`;
 <div class="run-meta muted small">
   <a href="${actionsBase}?workflow=${encodeURIComponent(run.workflowPath)}">${esc(run.workflowName)}</a>
   &middot; #${run.number}
-  &middot; ${esc(run.event)} by ${esc(run.actor)}
+  &middot; ${esc(run.event)} by <span class="run-actor">${avatar(run.actor, 16)}${esc(run.actor)}</span>
   &middot; <span class="chip">${esc(run.refName)}</span>
   ${run.sha ? `&middot; <a class="sha" href="${base}/commit/${esc(run.sha)}">${esc(run.sha.slice(0, 7))}</a>` : ''}
   &middot; <a href="${base}/blob/${encPath(run.refName)}/${encPath(run.workflowPath)}">${esc(run.workflowPath)}</a>
