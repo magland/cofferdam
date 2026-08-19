@@ -156,6 +156,7 @@ UI operation routes (session + CSRF; all POSTs follow POST-redirect-GET):
 | `GET/POST /:collection/:repo/releases/new` (optional `?tag=`) | Draft or edit the notes on a tag | push scope |
 | `POST /:collection/:repo/releases/delete` | Remove a release's notes; the tag is untouched | push scope |
 | `GET/POST /:collection/:repo/settings` | Description and default branch | push scope (page also visible with admin) |
+| `POST /:collection/:repo/settings/rename` | Rename the repository or move it to another collection, carrying its site, runs, issues, releases, and LFS objects | admin scope over the repo, and push scope over the destination |
 | `POST /:collection/:repo/settings/delete` | Repository deletion after retyping `collection/repo` | admin scope over the repo |
 | `GET /admin` | Administration index | admin scope |
 | `GET /admin/users`, `POST /admin/users`, `POST /admin/users/:name/grant`, `POST /admin/users/:name/token` | User administration; authorization mirrors the API exactly | admin scope |

@@ -42,6 +42,8 @@ export interface LfsStore {
   ): Promise<SignedAction>;
   signUpload(collection: string, repo: string, oid: string, size: number): Promise<SignedAction>;
   deleteRepo(collection: string, repo: string): Promise<void>;
+  /** Move a repository's objects when the repository itself is renamed or moved. */
+  renameRepo(collection: string, repo: string, toCollection: string, toRepo: string): Promise<void>;
 }
 
 export interface LfsContext {
@@ -183,6 +185,23 @@ class LocalLfsStore implements LfsStore {
     if (!containedIn(rootReal, dir)) return;
     fs.rmSync(dir, { recursive: true, force: true });
   }
+
+  // The objects are a directory beside the repository, so moving them is
+  // moving that directory. A repository with no LFS objects has none.
+  async renameRepo(collection: string, repo: string, toCollection: string, toRepo: string): Promise<void> {
+    const from = localLfsDir(this.root, collection, repo);
+    const to = localLfsDir(this.root, toCollection, toRepo);
+    let rootReal: string;
+    try {
+      rootReal = fs.realpathSync(this.root);
+    } catch {
+      return;
+    }
+    if (!containedIn(rootReal, from)) return;
+    if (fs.existsSync(to)) throw new Error(`LFS objects already exist at ${toCollection}/${toRepo}`);
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.renameSync(from, to);
+  }
 }
 
 // ---- the s3 backend ----
@@ -315,7 +334,38 @@ class S3LfsStore implements LfsStore {
     // Validated before it becomes a delete prefix: an unchecked name here
     // would widen the prefix and delete other repositories' objects.
     checkRepoTarget(collection, repo);
-    const prefix = `${this.prefix}${collection}/${repo}.lfs/`;
+    for (const keys of await this.listKeys(`${this.prefix}${collection}/${repo}.lfs/`)) {
+      await this.deleteKeys(keys);
+    }
+  }
+
+  /**
+   * Objects carry the repository in their key, so moving a repository means
+   * copying every object to the new prefix and deleting the old ones. There
+   * is no rename in S3; a server-side copy is the closest thing, and it never
+   * moves bytes through this process.
+   */
+  async renameRepo(collection: string, repo: string, toCollection: string, toRepo: string): Promise<void> {
+    checkRepoTarget(collection, repo);
+    checkRepoTarget(toCollection, toRepo);
+    const fromPrefix = `${this.prefix}${collection}/${repo}.lfs/`;
+    const toPrefix = `${this.prefix}${toCollection}/${toRepo}.lfs/`;
+    for (const keys of await this.listKeys(fromPrefix)) {
+      for (const key of keys) {
+        const target = toPrefix + key.slice(fromPrefix.length);
+        const res = await this.aws.fetch(`${this.baseUrl}/${target}`, {
+          method: 'PUT',
+          headers: { 'x-amz-copy-source': `/${this.bucket}/${key}` },
+        });
+        if (!res.ok) throw new Error(`LFS bucket COPY returned ${res.status}`);
+      }
+      await this.deleteKeys(keys);
+    }
+  }
+
+  /** Every key under a prefix, in the batches the listing returns them in. */
+  private async listKeys(prefix: string): Promise<string[][]> {
+    const batches: string[][] = [];
     let continuation: string | undefined;
     do {
       const listUrl = new URL(`${this.baseUrl}/`);
@@ -326,17 +376,17 @@ class S3LfsStore implements LfsStore {
       if (!res.ok) throw new Error(`LFS bucket LIST returned ${res.status}`);
       const xml = await res.text();
       const keys = [...xml.matchAll(/<Key>([^<]*)<\/Key>/g)].map((m) => decodeXml(m[1]));
-      if (keys.length > 0) await this.deleteKeys(keys);
+      if (keys.length > 0) batches.push(keys);
       continuation = undefined;
       if (/<IsTruncated>true<\/IsTruncated>/.test(xml)) {
         const m = xml.match(/<NextContinuationToken>([^<]*)<\/NextContinuationToken>/);
         // Stopping quietly here would leave the rest of the repository's
-        // objects in the bucket with nothing left to point at them. The
-        // caller treats deletion as best-effort and logs, so raise it.
+        // objects behind with nothing left to point at them, so raise it.
         if (!m) throw new Error('LFS bucket listing was truncated without a continuation token');
         continuation = decodeXml(m[1]);
       }
     } while (continuation);
+    return batches;
   }
 
   private async deleteKeys(keys: string[]): Promise<void> {

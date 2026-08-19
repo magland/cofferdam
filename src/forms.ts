@@ -236,6 +236,23 @@ ${defaultBranchField}
 </form>
 </div></div>`
     : '';
+  // Renaming and moving are one operation, since both are a directory rename.
+  // It sits in the danger zone because every URL to this repository, and every
+  // remote pointing at it, changes with it.
+  const renameForm = ctx.canAdmin
+    ? `<div class="danger-zone">
+<h3>Rename or move</h3>
+<p>Everything moves with the repository: its site, its workflow runs, its issues, its releases, and its LFS objects. Clones pointing at the old address stop working until their remote is changed.</p>
+<form method="post" action="${base}/settings/rename" class="inline-form">
+${csrfField(ctx.viewer!)}
+<label for="toCollection">Collection</label><input type="text" id="toCollection" name="collection" value="${esc(
+        ctx.collection
+      )}" required>
+<label for="toName">Name</label><input type="text" id="toName" name="name" value="${esc(ctx.repo)}" required>
+<button type="submit" class="btn">${icon('pencil')}<span>Rename</span></button>
+</form>
+</div>`
+    : '';
   const dangerZone = ctx.canAdmin
     ? `<div class="danger-zone">
 <h3>Danger zone</h3>
@@ -252,6 +269,7 @@ ${csrfField(ctx.viewer!)}
 ${flashBanner(msg)}
 ${errorBanner(error)}
 ${settingsForm}
+${renameForm}
 ${dangerZone}`;
   return layout(`Settings - ${ctx.collection}/${ctx.repo}`, body, repoOpts(ctx, `${base}/settings`));
 }

@@ -724,6 +724,43 @@ export function registerWebOps(
   );
 
   app.post(
+    '/:collection/:repo/settings/rename',
+    form,
+    ah(async (req, res) => {
+      const viewer = requireViewerPost(req, res);
+      if (!viewer) return;
+      const loaded = await loadRepo(root, req, res, viewer);
+      if (!loaded) return;
+      const from = `${loaded.repo.collection}/${loaded.repo.name}`;
+      const backUrl = `${urlOf(loaded.repo)}/settings`;
+      const toCollection = field(req, 'collection').trim() || loaded.repo.collection;
+      const toName = field(req, 'name').trim();
+      // Two abilities, because a move is a deletion here and a creation there:
+      // admin over what is being moved, push over where it is going.
+      if (!canAdmin(viewer.auth, [from])) {
+        fail(res, 403, `Renaming or moving a repository requires admin scope over ${from}.`, viewer, backUrl);
+        return;
+      }
+      if (!canPush(viewer.auth, toCollection, toName)) {
+        fail(res, 403, `You have no push scope over ${toCollection}/${toName}.`, viewer, backUrl);
+        return;
+      }
+      try {
+        // The engine indexes runs under the old identity; drop it before the
+        // directories move out from under it.
+        engine?.forgetRepo(loaded.repo.collection, loaded.repo.name);
+        await ops.renameRepo(root, loaded.repo.collection, loaded.repo.name, toCollection, toName, lfs?.store);
+      } catch (e) {
+        const message = e instanceof OpError ? e.message : 'Could not move the repository.';
+        fail(res, e instanceof OpError && e.kind === 'exists' ? 409 : 400, message, viewer, backUrl);
+        return;
+      }
+      const to = repoUrl({ collection: toCollection, repo: toName });
+      res.redirect(`${to}/settings?msg=${encodeURIComponent(`Moved from ${from}.`)}`);
+    })
+  );
+
+  app.post(
     '/:collection/:repo/settings/delete',
     form,
     ah(async (req, res) => {

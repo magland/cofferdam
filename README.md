@@ -44,7 +44,7 @@ The `.git` suffix on repository directory names is optional; it is stripped for 
   - creating repositories (with an optional initial README)
   - editing, creating, and deleting files, committed straight to a branch
   - creating and deleting branches and tags
-  - repository settings: description, default branch, and deletion
+  - repository settings: description, default branch, renaming or moving to another collection, and deletion
   - user administration: creating users, granting scopes, minting tokens
   - a choice of themes for the vault (see below)
 - Anonymous `git clone http://host:port/collection/repo` over smart HTTP

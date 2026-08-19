@@ -8,7 +8,26 @@ cd "$(dirname "$0")/.."
 
 PORT="${SMOKE_PORT:-$((RANDOM % 2000 + 42000))}"
 BASE="http://127.0.0.1:$PORT"
-TMP="$(mktemp -d)"
+# The credential checks below assert that git's store wrote 0600, so the
+# scratch tree has to sit on a filesystem that can actually keep a file
+# private. In some containers /tmp cannot: a file created under umask 077
+# comes back 646, and the assertion fails for a reason that has nothing to do
+# with hubbit. Probe, and fall back rather than making the check weaker.
+smoke_tmp() {
+  local base d mode
+  for base in "${TMPDIR:-/tmp}" /dev/shm; do
+    [ -d "$base" ] && [ -w "$base" ] || continue
+    d="$(mktemp -d "$base/hubbit-smoke.XXXXXX" 2>/dev/null)" || continue
+    ( umask 077; : > "$d/probe" )
+    mode="$(stat -c '%a' "$d/probe" 2>/dev/null || stat -f '%Lp' "$d/probe")"
+    rm -f "$d/probe"
+    if [ "$mode" = 600 ]; then printf '%s\n' "$d"; return 0; fi
+    rm -rf "$d"
+  done
+  echo "no writable directory that can hold a 0600 file (tried \$TMPDIR and /dev/shm); set TMPDIR to one" >&2
+  return 1
+}
+TMP="$(smoke_tmp)"
 VAULT="$TMP/vault"
 LOG="$TMP/server.log"
 JAR="$TMP/owner.jar"
@@ -17,6 +36,21 @@ BODY="$TMP/body"
 mkdir -p "$VAULT"
 
 export GIT_TERMINAL_PROMPT=0
+
+# The suite tests hubbit, not the machine's git configuration, and two of the
+# checks below are only meaningful against a known one: "login refuses when no
+# credential helper is configured" is false the moment a system config sets a
+# helper, as a hosted development container does. An identity has to come from
+# somewhere too, since several commits here do not pass one.
+export GIT_CONFIG_SYSTEM=/dev/null
+export GIT_CONFIG_GLOBAL="$TMP/gitconfig"
+cat > "$GIT_CONFIG_GLOBAL" <<'GITCONFIG'
+[user]
+	name = hubbit smoke
+	email = smoke@example.invalid
+[init]
+	defaultBranch = main
+GITCONFIG
 
 npm run build > /dev/null
 
@@ -414,6 +448,32 @@ check "save settings" 302 -b "$JAR" "$BASE/demo/proj/settings" \
 check "collection page shows description" 200 "$BASE/demo"
 body_has "description updated" 'A refreshed description'
 
+# ---- renaming and moving a repository ----
+
+check "settings page again" 200 -b "$JAR" "$BASE/demo/proj/settings"
+body_has "settings offers a rename" 'settings/rename'
+check "rename the repository" 302 -b "$JAR" "$BASE/demo/proj/settings/rename" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=renamed
+check "the new name serves the repository" 200 "$BASE/demo/renamed"
+check "the old name is gone" 404 "$BASE/demo/proj"
+check "issues moved with it" 200 "$BASE/demo/renamed/issues?state=all"
+body_has "the moved issue is there" 'Something is still wrong'
+check "a repository to collide with" 302 -b "$JAR" "$BASE/new" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=taken --data-urlencode init=1
+check "moving onto an existing repository is refused" 409 -b "$JAR" "$BASE/demo/renamed/settings/rename" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=taken
+check "renaming to its own name is refused" 400 -b "$JAR" "$BASE/demo/renamed/settings/rename" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=renamed
+check "move to another collection" 302 -b "$JAR" "$BASE/demo/renamed/settings/rename" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=moved --data-urlencode name=proj
+check "the repository is in the new collection" 200 "$BASE/moved/proj"
+[ -d "$VAULT/moved/proj.issues" ] || { echo "FAIL: issues did not move to the new collection"; exit 1; }
+[ -d "$VAULT/demo/proj.issues" ] && { echo "FAIL: issues left behind in the old collection"; exit 1; }
+PASS=$((PASS+2)); echo "ok: the issue directory moved with the repository"
+check "move it back" 302 -b "$JAR" "$BASE/moved/proj/settings/rename" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=proj
+check "back at its old address" 200 "$BASE/demo/proj"
+
 # ---- empty repository README flow ----
 
 check "new repo form again" 200 -b "$JAR" "$BASE/new"
@@ -490,6 +550,8 @@ check "alice can open edit in scope" 200 -b "$ALICE_JAR" "$BASE/demo/proj/edit/m
 ALICE_CSRF="$(csrf_of)"
 check "alice cannot create out of scope" 403 -b "$ALICE_JAR" "$BASE/new" \
   --data-urlencode "csrf=$ALICE_CSRF" --data-urlencode collection=other --data-urlencode name=x
+check "alice cannot rename repo" 403 -b "$ALICE_JAR" "$BASE/demo/proj/settings/rename" \
+  --data-urlencode "csrf=$ALICE_CSRF" --data-urlencode collection=demo --data-urlencode name=nope
 check "alice cannot delete repo" 403 -b "$ALICE_JAR" "$BASE/demo/proj/settings/delete" \
   --data-urlencode "csrf=$ALICE_CSRF" --data-urlencode confirm=demo/proj
 check "alice cannot import out of scope" 403 -b "$ALICE_JAR" \
@@ -653,7 +715,10 @@ touch "$TRIPPED"
 exit 1
 ASKPASS
 chmod +x "$TMP/askpass"
-cred_env() { env HOME="$CRED_HOME" GIT_ASKPASS="$TMP/askpass" SSH_ASKPASS="$TMP/askpass" "$@"; }
+# The global config goes with the isolated HOME, so that what `hubbit login`
+# writes lands there and starts out empty: the first check needs no helper to
+# be configured anywhere git will look.
+cred_env() { env HOME="$CRED_HOME" GIT_CONFIG_GLOBAL="$CRED_HOME/.gitconfig" GIT_ASKPASS="$TMP/askpass" SSH_ASKPASS="$TMP/askpass" "$@"; }
 cli() { cred_env node dist/index.js "$@"; }
 
 run_ok() {
@@ -690,7 +755,7 @@ CRED_MODE="$(stat -c '%a' "$CRED_HOME/.git-credentials" 2>/dev/null || stat -f '
 [ "$CRED_MODE" = 600 ] || { echo "FAIL: credential file is mode $CRED_MODE, not 0600"; exit 1; }
 PASS=$((PASS+1)); echo "ok: credential file is mode 0600"
 # Recorded for this host alone, so other remotes keep whatever they use now.
-HOME="$CRED_HOME" git config --global --get-regexp '^credential\.' | grep -q "credential.$BASE.helper store" \
+cred_env git config --global --get-regexp '^credential\.' | grep -q "credential.$BASE.helper store" \
   || { echo "FAIL: helper not recorded for this host alone"; exit 1; }
 PASS=$((PASS+1)); echo "ok: helper recorded for this host alone"
 
