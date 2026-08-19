@@ -1,63 +1,60 @@
 # cofferdam
 
-Hosting git repositories usually means running a service with a database (GitHub, GitLab, Gitea). A limitation of that approach is that the state of the system lives somewhere you cannot see directly. Here we take a simpler route: the filesystem is the database. You have a directory we call a vault, each subdirectory of the vault is a collection, and each subdirectory of a collection is a bare git repository. Point the server at the vault and you get a GitHub-style web interface for browsing and operating on the repositories, anonymous clone access over HTTP, and token-authenticated push.
+cofferdam is a self-hosted git forge with the shape of GitHub: repository browsing, in-browser editing, issues, pull requests, releases, GitHub Actions workflows, static sites, and Git LFS, over anonymous `git clone` and token-authenticated `git push`. It is one Node process that needs nothing installed beside it but git, and it runs the same on a laptop, a home server, a VPS, or a container platform. Reading is anonymous; every write is authorized by a token you minted, and the users who hold those tokens are created by an administrator of the vault rather than registering themselves.
 
-```
-<vault>/
-  vault.json              (users and hashed tokens; created on first start)
-  .secret                 (session-cookie signing key; created on first need)
-  runners.json            (registered workflow runners; created when you add one)
-  alice/
-    hello-numerics.git/   (bare repository)
-    hello-numerics.runs/  (its workflow runs and logs)
-    webapp.git/
-    webapp.site/          (static site for webapp)
-    webapp.issues/        (its issues, one directory each)
-    webapp.releases/      (its release notes, one file per tag)
-    webapp.releases/      (its release notes, one file per tag)
-    webapp.lfs/           (its Git LFS objects, when no bucket is configured)
-  bob/
-    notes.git/
-```
-
-The `.git` suffix on repository directory names is optional; it is stripped for display either way.
+Repositories are grouped into *collections*, and one installation, holding any number of collections, is a *vault*. A vault is a single directory that you point the server at, so an installation is created by choosing a directory and backed up by copying it. A vault is self-contained: users, permissions, and issue and pull request numbers are local to it, and it knows nothing of any other vault.
 
 ## Features
 
-- Collection and repository listings
+### Browsing
+
+- Collection and repository listings, with the first line of a bare repository's `description` file shown as its summary
 - A GitHub-shaped interface: a branch and tag picker, a Code menu with the clone URL, directory listings that show each entry's last commit and how long ago it landed, an About panel, and times written as ages
 - File browsing at any branch or tag, with syntax highlighting and linkable line numbers
 - Markdown files rendered as documents, with a Preview/Code toggle (`?plain=1` for the source, as on GitHub); READMEs shown on directory pages
 - The GitHub markdown feature set: highlighted code with a copy button, LaTeX math through KaTeX (`$…$`, `$$…$$`, and ```` ```math ```` blocks), tables, task lists, footnotes, alert callouts (`> [!NOTE]`), emoji shortcodes, heading anchors, and a sanitized subset of inline HTML
 - Commit history with pagination, and diff views that number both sides of every hunk, count what each file gained and lost, and fold away a file you have read; the History button on any file or directory narrows it to that path
-- Search the files at any ref for a literal string, with the matches grouped by file, and a file finder (`Go to file`, or the `t` key) that filters every path in the tree as you type
-- Blame: every line beside the commit that last touched it, and a step back to the blame before that change
-- Contributors in the About panel, each leading to their commits; any history can be narrowed to one author
-- Releases: notes attached to a tag, stored in the vault beside the repository, with the source archives as their downloads
-- Atom feeds for a repository's releases and for any history (`/commits/<ref>.atom`, narrowed by path like the page it follows)
 - Comparing two revisions: what one branch has that another does not, and the diff between them, from the Compare button on any branch or tag
+- Blame: every line beside the commit that last touched it, and a step back to the blame before that change
+- Search the files at any ref for a literal string, with the matches grouped by file, and a file finder (`Go to file`, or the `t` key) that filters every path in the tree as you type
+- Contributors in the About panel, each leading to their commits; any history can be narrowed to one author
+- A language breakdown in the About panel: the share of the source each language holds, drawn as GitHub's bar in Linguist's colours
+- Source downloads: `.tar.gz` or `.zip` of any branch, tag, or commit, from the Code button or straight from `/<collection>/<repo>/archive/<ref>.zip`
+
+### Working in the browser
+
+Sign in with a username and token; the operations available mirror what that token may do, and controls a user cannot use are simply not shown.
+
+- Creating repositories (with an optional initial README)
+- Editing, creating, renaming, and deleting files, committed straight to a branch or to a new one made from it
+- Uploading files, several in one commit, including binaries
+- Creating and deleting branches and tags
+- Repository settings: description, default branch, renaming or moving to another collection, and deletion
+- Forking inside a vault: a bare clone whose objects are shared on disk with the original, with the parent recorded and shown
+- User administration: creating users, granting scopes, minting tokens
+- A choice of themes for the vault (see [Themes](#themes))
+
+### Issues, pull requests, and releases
+
 - Issues: open, comment, label, close, and reopen, stored as markdown files in the vault, with the list narrowed by label, author, state, or a text search over titles and bodies
 - Pull requests: propose one branch into another, discuss it, see its commits and diff, and merge it from the browser as a merge commit or a squash, then sweep the branch away (all computed in the bare repository, and refused on conflicts)
 - Cross-references in any rendered markdown: `#12` links to that issue and a commit id links to that commit, as on GitHub
-- Forking inside a vault: a bare clone whose objects are shared on disk with the original, with the parent recorded and shown
-- Source downloads: `.tar.gz` or `.zip` of any branch, tag, or commit, from the Code button or straight from `/<collection>/<repo>/archive/<ref>.zip`
-- A language breakdown in the About panel: the share of the source each language holds, drawn as GitHub's bar in Linguist's colours
-- Sign-in with username and token; operations happen directly in the web interface:
-  - creating repositories (with an optional initial README)
-  - editing, creating, renaming, and deleting files, committed straight to a branch or to a new one made from it
-  - uploading files, several in one commit, including binaries
-  - creating and deleting branches and tags
-  - repository settings: description, default branch, renaming or moving to another collection, and deletion
-  - user administration: creating users, granting scopes, minting tokens
-  - a choice of themes for the vault (see below)
+- Releases: notes attached to a tag, stored in the vault beside the repository, with the source archives as their downloads
+- Atom feeds for a repository's releases and for any history (`/commits/<ref>.atom`, narrowed by path like the page it follows)
+
+### Workflows and sites
+
+- GitHub Actions workflows from `.cofferdam/workflows` or `.github/workflows`, planned by the server and executed by a runner you start elsewhere with Docker (see [Workflows](#workflows)), with live logs in the interface, JavaScript and composite actions, artifacts, and deployment to a repository's site
+- Per-repository static sites served from a sibling `<repo>.site` directory, publishable by a workflow or by copying files in
+
+### Git and the command line
+
 - Anonymous `git clone http://host:port/collection/repo` over smart HTTP
 - Authenticated `git push`, including push-to-create for new repositories
-- Git LFS, with objects in an S3-compatible bucket or inside the vault (see below)
-- GitHub Actions workflows from `.cofferdam/workflows` or `.github/workflows`, planned by the server and executed by a runner you start elsewhere with Docker (see below), with live logs in the interface, JavaScript and composite actions, artifacts, and deployment to a repository's site
+- Git LFS, with objects in an S3-compatible bucket or inside the vault (see [Git LFS](#git-lfs))
 - A JSON API and a `cofferdam` CLI for user management, including `cofferdam login` to hand the token to git so pushing stops asking for it
-- Per-repository static sites served from a sibling `<repo>.site` directory
 
-There is no database and no build step for the frontend: all state lives in the vault directory, and the server renders plain HTML.
+The frontend has no build step and no client framework: the server renders plain HTML, with small amounts of vanilla JavaScript where a control needs it.
 
 ## Quick start
 
@@ -84,6 +81,32 @@ To check the whole system end to end (browsing, sessions, UI operations, the API
 npm run smoke
 ```
 
+## The vault
+
+A vault is a plain directory. Each subdirectory of it is a collection, and each subdirectory of a collection is a bare git repository; everything else a repository accumulates sits beside it under a suffixed name:
+
+```
+<vault>/
+  vault.json              (users and hashed tokens; created on first start)
+  .secret                 (session-cookie signing key; created on first need)
+  runners.json            (registered workflow runners; created when you add one)
+  alice/
+    hello-numerics.git/   (bare repository)
+    hello-numerics.runs/  (its workflow runs and logs)
+    webapp.git/
+    webapp.site/          (static site for webapp)
+    webapp.issues/        (its issues, one directory each)
+    webapp.pulls/         (its pull requests, one directory each)
+    webapp.releases/      (its release notes, one file per tag)
+    webapp.lfs/           (its Git LFS objects, when no bucket is configured)
+  bob/
+    notes.git/
+```
+
+The `.git` suffix on repository directory names is optional; it is stripped for display either way.
+
+There is nothing else: no database, and no state outside this directory. That is what makes backing up a vault `cp -a` and moving one to another machine `rsync`, and it means each part of a vault can be read, written, and grepped with ordinary tools while the server is running, since the server reads what is on disk on every request. Each of these directories is described below alongside the feature that writes it.
+
 ## Signing in on the web
 
 Users sign in with their username and an existing token, the same credential git uses for pushing; there are no passwords and no separate web credential. The server sets a signed, stateless session cookie (30 days, `HttpOnly`, `SameSite=Lax`, `Secure` over HTTPS). The signing key lives in `<vault>/.secret`; rotating that file invalidates every session at once, and permissions are re-derived from `vault.json` on every request, so removing a user's tokens cuts off their sessions immediately.
@@ -93,28 +116,6 @@ Abilities in the interface mirror the token model exactly. Push scope over a rep
 File edits use optimistic concurrency: the edit form records the commit it was loaded against, and if the branch moves before you commit, the edit is refused with a conflict page rather than clobbering the other change. Web commits are authored as `<username> <username@noreply.<host>>`.
 
 One deliberate asymmetry: repositories created by push set `receive.denyDeletes`, so `git push --delete` is refused, while the web interface allows branch deletion after confirmation. The receive hook guards against accidents; a confirmed click is explicit intent.
-
-## Themes
-
-The interface ships with a small set of themes, chosen under **Admin > Appearance**:
-
-| Theme | Look |
-|---|---|
-| `paper` | Warm off-white with teal links and serif headings. The default. |
-| `github` | The familiar light gray and blue, for people who want no surprises. |
-| `slate` | Cool gray surfaces with an indigo accent. |
-| `midnight` | A dark theme with azure links, for low light. |
-| `terminal` | Near-black, phosphor green, monospace throughout. |
-
-A theme is a property of the vault rather than of the visitor: one vault is one interface, and the operator picks how it looks. The choice lives in `<vault>/config.json`, so it can equally be set by hand before the first start, and the server picks up an edit without a restart:
-
-```json
-{ "theme": "midnight" }
-```
-
-Changing it in the UI requires admin scope over the whole vault (`*`); an administrator delegated to one collection can manage users there but cannot restyle the site. An unknown theme name falls back to the default rather than failing requests, so a typo in `config.json` cannot take the vault down.
-
-Each theme is a set of semantic CSS custom properties (background, surface, border, accent, diff colors, fonts, corner radius) plus the highlight.js palette that suits it. The structural stylesheet in `src/style.ts` names no colors of its own, so adding a theme means adding one entry to `src/themes.ts`.
 
 ## The cofferdam command
 
@@ -261,7 +262,7 @@ POST /api/users/:name/grant     extend a user's scopes         {scope?, admin?}
 
 The API accepts only bearer tokens and git accepts only Basic auth; session cookies never authorize either. The two credential presentations stay deliberately distinct.
 
-## Issues
+## Issues and pull requests
 
 Every repository has an issue tracker at `/<collection>/<repo>/issues`. Reading issues is anonymous, like everything else here; opening one and commenting need a signed-in user, and closing, reopening, or editing needs push access or being the person who wrote it. Bodies are markdown, rendered by the same pipeline as a README.
 
@@ -280,6 +281,19 @@ alice/
 ```
 
 So an issue can be read, written, grepped, and backed up without the server. Editing one by hand is fine: the server reads what is on disk on every request. A comment is its own file, so two people commenting at the same moment cannot overwrite each other, and issue numbers are handed out by `mkdir`, which the filesystem makes atomic.
+
+Pull requests live beside them in `<repo>.pulls/`, in deliberately the same shape, down to the frontmatter and the numbering. A pull request is a discussion with a branch pair attached: what it adds to an issue is the base and head refs, and what became of it (merged, with the merge commit and who made it, or closed, with who closed it).
+
+```
+alice/
+  webapp.pulls/
+    1/
+      pull.md           (frontmatter: title, state, author, created, updated, base, head)
+      comments/
+        1.md
+```
+
+Note that no diff and no commit list is ever stored. Those are questions for git, answered from base and head at the moment the page is drawn, so a pull request cannot go stale against the branches it describes. Open one from the Compare button on any branch, or at `/<collection>/<repo>/pulls/new`. Merging happens in the bare repository, as a merge commit or a squash, and is refused rather than attempted when the two sides conflict; afterwards the head branch can be deleted from the same page. Merging needs push access over the repository.
 
 ## Sites
 
@@ -474,6 +488,28 @@ A file stored with LFS shows a download card giving its true size and object id,
 - **Object size is capped** by `COFFERDAM_LFS_MAX_SIZE`, because the `basic` transfer adapter uploads with a single PUT. Note what the cap is worth in each backend. Locally it is enforced on the bytes as they arrive. Against a bucket it can only be enforced on the size the client declares in the batch request, since the upload goes straight to the bucket: someone with push access who declares a small size and then sends a large body will succeed, and the bytes become orphans that `verify` reports but nothing removes. Treat it as a guard against honest mistakes rather than a quota, and use bucket-side limits or billing alerts if you need a real one.
 - **File locking is not implemented.** The `/locks` endpoints return 404, which git-lfs reads as locking being unsupported.
 
+## Themes
+
+The interface ships with a small set of themes, chosen under **Admin > Appearance**:
+
+| Theme | Look |
+|---|---|
+| `paper` | Warm off-white with teal links and serif headings. The default. |
+| `github` | The familiar light gray and blue, for people who want no surprises. |
+| `slate` | Cool gray surfaces with an indigo accent. |
+| `midnight` | A dark theme with azure links, for low light. |
+| `terminal` | Near-black, phosphor green, monospace throughout. |
+
+A theme is a property of the vault rather than of the visitor: one vault is one interface, and the operator picks how it looks. The choice lives in `<vault>/config.json`, so it can equally be set by hand before the first start, and the server picks up an edit without a restart:
+
+```json
+{ "theme": "midnight" }
+```
+
+Changing it in the UI requires admin scope over the whole vault (`*`); an administrator delegated to one collection can manage users there but cannot restyle the site. An unknown theme name falls back to the default rather than failing requests, so a typo in `config.json` cannot take the vault down.
+
+Each theme is a set of semantic CSS custom properties (background, surface, border, accent, diff colors, fonts, corner radius) plus the highlight.js palette that suits it. The structural stylesheet in `src/style.ts` names no colors of its own, so adding a theme means adding one entry to `src/themes.ts`.
+
 ## Making a remote vault
 
 A remote vault is the same server with a persistent disk and TLS in front; there is nothing else to it, since the vault directory is the entire state. The repository ships a container recipe with git included. On first start the server initializes the vault and prints the owner token to the logs; from then on all administration happens from your own machine, on the web or through `COFFERDAM_HOST` and `COFFERDAM_TOKEN`.
@@ -529,6 +565,4 @@ The project direction is specified in [SPEC.md](SPEC.md). The phase described th
 - Secrets, and a scoped token for the run, so a workflow can push back to its own repository and call the vault's API
 - `actions/cache`, so dependency installs stop being repeated on every run
 - Docker actions, `container:` jobs, and service containers
-- Issues and pull requests, stored in the vault (design in SPEC.md, undecided between sibling directories and in-repo refs)
 - JSON responses on the read routes via content negotiation, and UI operations mirrored into the API
-- Federation between vaults: forking and cross-vault pull requests

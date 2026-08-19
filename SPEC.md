@@ -4,11 +4,13 @@ This document is the working specification for the cofferdam project, written as
 
 ## 1. What cofferdam is
 
-Hosting git repositories usually means one big centralized service (GitHub, GitLab) or a heavyweight self-hosted clone of one. cofferdam takes a different shape: a *vault* is a plain directory where each subdirectory is a collection and each subdirectory of a collection is a bare git repository. One small server pointed at a vault provides a web interface, git smart HTTP for clone and push, and a token-based user model, with no database anywhere. Anyone can run a vault: on a laptop, a home server, a VPS, or a cloud platform. The long-term ambition is the full GitHub experience (repository browsing, in-browser editing, issues, pull requests, CI, static sites), but delivered as many small federated vaults rather than one central service. We build toward that incrementally, keeping each step small and working.
+cofferdam is a self-hosted git forge with the shape of GitHub, meant to be run by the people whose repositories it holds. It serves a *vault*: a plain directory in which each subdirectory is a collection and each subdirectory of a collection is a bare git repository. One small server pointed at a vault provides the web interface (browsing, in-browser editing, issues, pull requests, releases, Actions-compatible workflows, static sites), git smart HTTP for clone and push, Git LFS, and a token-based user model. Anyone can run a vault: on a laptop, a home server, a VPS, or a cloud platform, and moving one between those is copying a directory.
+
+The comparison that matters is with the self-hosted forges (GitLab, Gitea, Forgejo) rather than with GitHub itself. Against those, the claim is not more features but a smaller thing to operate: one process, no database, no queue, no separate CI service, and state you can read with `ls` and back up with `cp`. Against GitHub, the trade is the network: a vault is self-contained, with no shared identity between vaults, no notifications across them, and no pull request that crosses from one to another. We build toward the GitHub feature set incrementally, keeping each step small and working.
 
 ## 2. Principles (do not break these)
 
-- **The filesystem is the database.** All state lives in the vault directory: repositories are bare git repositories, users and token hashes live in `vault.json`, vault settings in `config.json`, the session signing key is `.secret`, static sites are sibling directories, and workflow runs and their logs live in `<repo>.runs/`. Backing up a vault is copying a directory; moving it between machines is the same. No SQLite, no Postgres, no hidden state elsewhere. Future features (issues, pull requests) must also store their state in the vault, either as files or inside git itself.
+- **The filesystem is the database.** All state lives in the vault directory: repositories are bare git repositories, users and token hashes live in `vault.json`, vault settings in `config.json`, the session signing key is `.secret`, static sites are sibling directories, and workflow runs and their logs live in `<repo>.runs/`. Backing up a vault is copying a directory; moving it between machines is the same. No SQLite, no Postgres, no hidden state elsewhere. Issues and pull requests follow the same rule, as markdown files in `<repo>.issues/` and `<repo>.pulls/`, and any future feature must too, either as files or inside git itself.
 - **One vault, one machine, one process.** Concurrent writes are mediated by the filesystem and by git's own locking. This is a deliberate trade-off: scaling a vault means a bigger machine, never more of them (the Fly config enforces `--ha=false` for this reason).
 - **Anonymous read, token write.** Browsing and cloning require nothing. Every write (git push, API call, UI operation) is authorized by a token whose SHA-256 hash is stored in `vault.json`. Tokens are shown once at minting and never stored in the clear. Web sessions are a convenience layer on top of tokens, not a second credential system.
 - **Scopes are globs over `collection/repo`.** A user has push scope (where they may write) and admin scope (where they may manage users and perform destructive administration such as repository deletion). `*` matches everything including `/`. Per-token scopes further restrict a token, and restricted tokens carry no admin rights.
@@ -85,7 +87,7 @@ First start against a directory with no `vault.json` initializes one and prints 
 | `src/logo.ts` | The mark and the logotype, drawn as SVG paths so the name needs no font and no static file |
 | `src/diff.ts` | Unified-diff to HTML (line classification, per-file boxes) |
 | `src/style.ts` | The single structural CSS string; every color and font is a `var(--…)` from the active theme |
-| `src/icons.ts` | The icon set: 16-pixel Octicons inlined as SVG, and the `icon()` wrapper |
+| `src/icons.ts` | The icon set: monoline glyphs drawn as SVG on a 24-unit grid, and the `icon()` wrapper |
 | `src/find.ts` | Finding things in a repository: the file finder (every path at a ref, filtered in the browser) and the text search route |
 | `src/pulls.ts` | The pull request store under `<repo>.pulls/` |
 | `src/pullweb.ts` | The pull request pages, and the merge button over `ops.mergeBranch` |
@@ -331,13 +333,13 @@ Merging happens in the bare repository, with no work tree and no clone. `git mer
 
 Authorization: reading is anonymous, opening one and commenting need a session, closing and reopening need push scope or authorship, and merging needs push scope over the repository, because it writes to a branch like any other write. Bodies and comments go through the same sanitizing markdown pipeline as a README (3.9).
 
-Across repositories is the open question. Nothing in the stored shape forbids it — a head could name another repository — but a vault has no way to name one yet, and federation (section 4) is the larger form of that question.
+Across repositories is the open question. Nothing in the stored shape forbids it — a head could name another repository — but a vault has no way to name one yet.
 
 ### 3.15 The shape of the interface
 
-The interface deliberately reads as GitHub's, because that is the interface its readers already know; the themes (3.8) are where a vault gets to look like itself. Five conventions carry most of that and should be kept when new pages are added.
+The interface deliberately follows GitHub's layout, because that is the arrangement its readers already know; the themes (3.8) and the icons are where a vault gets to look like itself. Five conventions carry most of that and should be kept when new pages are added.
 
-- **Icons are Octicons**, inlined in `src/icons.ts` and drawn through `icon(name)`. They are decorative beside a label and so are `aria-hidden`; an icon-only control labels itself. Adding one means copying the 16-pixel path data from `@primer/octicons` (MIT) into that file, not adding a dependency: cofferdam ships no static files.
+- **Icons are drawn here**, in `src/icons.ts`, and reached through `icon(name)`. They are monoline: a 2-unit stroke on a 24-unit grid with round caps and joins, no fills except where a shape has to read as solid at 16 pixels. That is the construction the logo uses, so the interface and the mark are one drawing rather than two, and it is what keeps the set from being a copy of somebody else's. They are decorative beside a label and so are `aria-hidden`; an icon-only control labels itself. Adding one means drawing it in that file, not adding a dependency: cofferdam ships no static files.
 - **Times are ages.** `timeTag()` from `src/render.ts` renders "3 minutes ago" with the exact time in `title` and the ISO timestamp in `datetime`. Rendering is server-side, so the age is computed at render time and does not tick; that is the trade for having no client framework. Prefer it to `formatDate()` anywhere a reader is asking "when did this happen" rather than reading a log.
 - **Menus are `<details>` elements** with the `dropdown` class: the summary is a button, the body is `.dropdown-menu`. The page script closes them on an outside click or Escape and filters long ones (`filterMenu`). The branch picker, the Code button, and the workflow dispatch form are all the same control.
 - **A file view is one element per line**, each with an `id` of `L<n>` and an anchor to it, so a reader can link to a line and the linked line is highlighted. Splitting highlighted code into lines is `highlightedLines()` in `src/render.ts`, which closes and reopens the spans highlight.js runs across line boundaries; it takes highlight.js output specifically and is not a general HTML splitter.
@@ -349,11 +351,10 @@ The interface deliberately reads as GitHub's, because that is the interface its 
 
 ## 4. Later phases, sketched
 
-- **Pull requests across repositories.** Branch-to-branch within one repository is implemented (3.14). A pull request from a fork, and one across vaults, both wait on a way to name a head that lives somewhere else; the second is the federation question below.
+- **Pull requests across repositories.** Branch-to-branch within one repository is implemented (3.14). A pull request from a fork waits on a way to name a head that lives in another repository of the same vault, which is a question of stored shape rather than of the merge itself.
 - **Secrets and a run token.** Neither exists yet. A run token minted per job from the workflow's `permissions:` block, revoked when the job ends, is what would let a workflow push back to its own repository and call the vault's API; it is also what would stop actions that expect `github.token` from reporting "Bad credentials" and taking a fallback path. Secrets storage was deliberately deferred rather than designed badly: whether a vault backup should carry live secrets is unresolved (7.11).
 - **A cache service**, so `actions/cache` and the caching built into `setup-node` and its relatives stop being no-ops. A runner-local directory is the obvious first implementation, with the trade-off that a second runner starts cold.
 - **JSON everywhere.** Content negotiation on the read routes, the ops layer exposed through the API for CLI parity, `--json` on the CLI, and a raw `cofferdam api` passthrough command.
-- **Federation.** The distinctive long-term idea: vault-to-vault interaction (forking a repo from another vault, cross-vault pull requests, identity assertions between vaults). Nothing is designed yet; do not let near-term features paint this into a corner (for example, keep repository identity as `host/collection/repo`-shaped in any stored references).
 - **Published container images and CI for cofferdam itself**, once the project is hosted somewhere with CI.
 
 ## 5. Security notes for the next implementer
