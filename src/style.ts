@@ -747,6 +747,8 @@ table.listing.issues td.issue-cell > span { min-width: 0; }
 }
 .merge-box > .octicon { margin-top: 2px; }
 .merge-box form { margin-left: auto; }
+.merge-do { display: flex; align-items: center; gap: 8px; }
+.merge-method select { width: auto; padding: 4px 8px; font-size: 13px; }
 .merge-box.clean > .octicon { color: var(--alert-tip); }
 .merge-box.conflict > .octicon { color: var(--danger); }
 .merge-box.merged > .octicon { color: var(--alert-important); }

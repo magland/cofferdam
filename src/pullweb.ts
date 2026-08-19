@@ -6,7 +6,7 @@ import * as forms from './forms';
 import { CommitSummary, isValidRefName } from './git';
 import { icon } from './icons';
 import { renderMarkdown } from './markdown';
-import { OpError, mergeBranch, previewMerge, MergePreview } from './ops';
+import { OpError, deleteBranch, mergeBranch, previewMerge, MergePreview } from './ops';
 import * as pulls from './pulls';
 import { Pull, PullSummary } from './pulls';
 import { esc, timeTag } from './render';
@@ -141,13 +141,25 @@ function commentCard(author: string, when: string, html: string, note = ''): str
 function mergeBox(ctx: RepoCtx, pull: Pull, preview: MergePreview | null, canMerge: boolean): string {
   const viewer = ctx.viewer;
   if (pull.state === 'merged') {
+    // A merged branch has done its work; GitHub offers to sweep it away here
+    // and so does this, for anyone who may push and for any branch but the
+    // one it was merged into.
+    const stale = ctx.branches.some((b) => b.name === pull.head) && pull.head !== ctx.defaultBranch;
+    const sweep =
+      stale && ctx.canPush && viewer
+        ? `<form method="post" action="${pullsUrl(ctx)}/${pull.number}/delete-branch" onsubmit="return confirm('Delete the branch ${esc(
+            pull.head
+          )}?')">${csrfField(viewer)}<button class="btn" type="submit">${icon('trash')}<span>Delete branch ${esc(
+            pull.head
+          )}</span></button></form>`
+        : '';
     return `<div class="merge-box merged">${icon('git-merge')}<div><b>Merged</b><div class="muted small">${esc(
       pull.mergedBy ?? 'someone'
     )} merged this ${pull.mergedAt ? timeTag(pull.mergedAt) : ''}${
       pull.mergeSha
         ? ` as <a class="sha" href="${repoUrl(ctx)}/commit/${esc(pull.mergeSha)}">${esc(pull.mergeSha.slice(0, 7))}</a>`
         : ''
-    }</div></div></div>`;
+    }</div></div>${sweep}</div>`;
   }
   if (pull.state === 'closed') {
     return `<div class="merge-box closed">${icon('git-pull-request-closed')}<div><b>Closed without merging</b><div class="muted small">${esc(
@@ -170,11 +182,13 @@ function mergeBox(ctx: RepoCtx, pull: Pull, preview: MergePreview | null, canMer
 <div class="muted small">Merge ${esc(pull.base)} into ${esc(pull.head)} where you work, resolve them, and push.</div>
 <ul class="merge-conflicts">${paths}</ul></div></div>`;
   }
+  // How to merge is a choice, as it is on GitHub: keep both parents and the
+  // shape of the branch, or land it as one commit.
   const button =
     canMerge && viewer
-      ? `<form method="post" action="${pullsUrl(ctx)}/${pull.number}/merge">${csrfField(
-          viewer
-        )}<button class="btn btn-primary" type="submit">${icon('git-merge')}<span>Merge pull request</span></button></form>`
+      ? `<form class="merge-do" method="post" action="${pullsUrl(ctx)}/${pull.number}/merge">${csrfField(viewer)}
+<label class="merge-method"><select name="method"><option value="merge">Merge commit</option><option value="squash">Squash and merge</option></select></label>
+<button class="btn btn-primary" type="submit">${icon('git-merge')}<span>Merge pull request</span></button></form>`
       : `<span class="muted small">${
           viewer ? 'Merging needs push access to this repository.' : 'Sign in with push access to merge.'
         }</span>`;
@@ -561,6 +575,40 @@ export function registerPulls(app: Express, root: string, engine?: CiEngine): vo
   );
 
   app.post(
+    '/:collection/:repo/pulls/:n/delete-branch',
+    form,
+    ah(async (req, res) => {
+      const viewer = requireViewerPost(req, res);
+      if (!viewer) return;
+      const found = await withPull(req, res, viewer);
+      if (!found) return;
+      const { ctx, pull, loaded } = found;
+      const back = `${pullsUrl(ctx)}/${pull.number}`;
+      if (!ctx.canPush) {
+        fail(res, 403, `You do not have push access to ${ctx.collection}/${ctx.repo}.`, viewer, back);
+        return;
+      }
+      // Only the branch this pull request proposed, only once it is over, and
+      // never the branch it was merged into.
+      if (pull.state !== 'merged') {
+        fail(res, 400, 'The branch can be deleted once this pull request is merged.', viewer, back);
+        return;
+      }
+      if (pull.head === ctx.defaultBranch) {
+        fail(res, 400, 'The default branch cannot be deleted.', viewer, back);
+        return;
+      }
+      try {
+        await deleteBranch(loaded.repo.dir, pull.head);
+      } catch (e) {
+        fail(res, 400, e instanceof OpError ? e.message : 'Could not delete the branch.', viewer, back);
+        return;
+      }
+      res.redirect(back);
+    })
+  );
+
+  app.post(
     '/:collection/:repo/pulls/:n/merge',
     form,
     ah(async (req, res) => {
@@ -580,14 +628,22 @@ export function registerPulls(app: Express, root: string, engine?: CiEngine): vo
         fail(res, 400, 'This pull request is not open.', viewer, back);
         return;
       }
-      const message = `Merge pull request #${pull.number} from ${pull.head}\n\n${pull.title}`;
+      const method = field(req, 'method') === 'squash' ? 'squash' : 'merge';
+      const message =
+        method === 'squash'
+          ? `${pull.title} (#${pull.number})\n\n${pull.body.trim()}`.trimEnd()
+          : `Merge pull request #${pull.number} from ${pull.head}\n\n${pull.title}`;
       const host = (req.get('host') ?? 'localhost').replace(/:\d+$/, '');
       let outcome;
       try {
-        outcome = await mergeBranch(loaded.repo.dir, pull.base, pull.head, message, {
-          name: viewer.auth.username,
-          email: `${viewer.auth.username}@noreply.${host}`,
-        });
+        outcome = await mergeBranch(
+          loaded.repo.dir,
+          pull.base,
+          pull.head,
+          message,
+          { name: viewer.auth.username, email: `${viewer.auth.username}@noreply.${host}` },
+          method
+        );
       } catch (e) {
         fail(res, 400, e instanceof OpError ? e.message : 'The merge failed.', viewer, back);
         return;

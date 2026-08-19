@@ -312,6 +312,9 @@ export type MergeOutcome =
   | { status: 'up-to-date' }
   | { status: 'conflict'; paths: string[] };
 
+/** How a merge is recorded: both parents, or one commit on the base. */
+export type MergeMethod = 'merge' | 'squash';
+
 /** What a merge would do, without doing it. */
 export type MergePreview =
   | { status: 'clean'; fastForward: boolean; base: string; head: string }
@@ -399,12 +402,19 @@ export async function mergeBranch(
   base: string,
   head: string,
   message: string,
-  author: CommitAuthor
+  author: CommitAuthor,
+  method: MergeMethod = 'merge'
 ): Promise<MergeOutcome> {
   const plan = await planMerge(repoDir, base, head);
   if (plan.status !== 'clean') return plan;
+  // A squash keeps the merged tree and drops the branch's shape: one commit
+  // on the base, with the base as its only parent, which is what makes the
+  // head's history disappear from the base and the head branch look unmerged
+  // afterwards. A merge keeps both parents, and with them the record of where
+  // the work came from.
+  const parents = method === 'squash' ? ['-p', plan.baseSha] : ['-p', plan.baseSha, '-p', plan.headSha];
   const sha = (
-    await execGit(repoDir, ['commit-tree', plan.tree!, '-p', plan.baseSha, '-p', plan.headSha, '-m', message], {
+    await execGit(repoDir, ['commit-tree', plan.tree!, ...parents, '-m', message], {
       env: authorEnv(author),
     })
   )

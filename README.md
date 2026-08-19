@@ -37,7 +37,7 @@ The `.git` suffix on repository directory names is optional; it is stripped for 
 - Atom feeds for a repository's releases and for any history (`/commits/<ref>.atom`, narrowed by path like the page it follows)
 - Comparing two revisions: what one branch has that another does not, and the diff between them, from the Compare button on any branch or tag
 - Issues: open, comment, label, close, and reopen, stored as markdown files in the vault
-- Pull requests: propose one branch into another, discuss it, see its commits and diff, and merge it from the browser (a real merge commit, computed in the bare repository and refused on conflicts)
+- Pull requests: propose one branch into another, discuss it, see its commits and diff, and merge it from the browser as a merge commit or a squash, then sweep the branch away (all computed in the bare repository, and refused on conflicts)
 - Cross-references in any rendered markdown: `#12` links to that issue and a commit id links to that commit, as on GitHub
 - Forking inside a vault: a bare clone whose objects are shared on disk with the original, with the parent recorded and shown
 - Source downloads: `.tar.gz` or `.zip` of any branch, tag, or commit, from the Code button or straight from `/<collection>/<repo>/archive/<ref>.zip`

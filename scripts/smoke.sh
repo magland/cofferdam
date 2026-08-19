@@ -822,6 +822,37 @@ check "a merged pull request cannot be reopened" 400 -b "$JAR" "$BASE/demo/proj/
   --data-urlencode "csrf=$CSRF" --data-urlencode state=open
 check "pull request for a missing number 404s" 404 "$BASE/demo/proj/pulls/99"
 
+# A second proposal, landed as one commit rather than as a merge, and its
+# branch swept away afterwards.
+check "branches page for a second proposal" 200 -b "$JAR" "$BASE/demo/proj/branches"
+CSRF="$(csrf_of)"
+check "create the squash branch" 302 -b "$JAR" "$BASE/demo/proj/branches/create" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode name=squashed --data-urlencode from=main
+check "new file form on the squash branch" 200 -b "$JAR" "$BASE/demo/proj/new/squashed"
+CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
+check "commit to the squash branch" 302 -b "$JAR" "$BASE/demo/proj/new/squashed" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
+  --data-urlencode filename=SQUASHED.md --data-urlencode "content=Landed as one commit." \
+  --data-urlencode "message=Work in progress"
+check "open the second pull request" 302 -b "$JAR" "$BASE/demo/proj/pulls/new" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode base=main --data-urlencode head=squashed \
+  --data-urlencode "title=Land this as one commit" --data-urlencode "body=Tidy history, please."
+check "the merge box offers both methods" 200 -b "$JAR" "$BASE/demo/proj/pulls/2"
+body_has "squash is offered" 'value="squash"'
+check "deleting the branch before merging is refused" 400 -b "$JAR" "$BASE/demo/proj/pulls/2/delete-branch" \
+  --data-urlencode "csrf=$CSRF"
+check "squash and merge" 302 -b "$JAR" "$BASE/demo/proj/pulls/2/merge" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode method=squash
+check "the squashed commit is on main" 200 "$BASE/demo/proj/commits/main"
+body_has "squashed commit names the pull request" 'Land this as one commit (#2)'
+check "the squashed branch is still there" 200 "$BASE/demo/proj/branches"
+body_has "squash branch present" '>squashed<'
+check "delete the merged branch" 302 -b "$JAR" "$BASE/demo/proj/pulls/2/delete-branch" \
+  --data-urlencode "csrf=$CSRF"
+check "the branch is gone" 200 "$BASE/demo/proj/branches"
+body_lacks "squash branch swept away" '>squashed<'
+
+
 # ---- releases, and feeds ----
 
 check "tags page before a release" 200 -b "$JAR" "$BASE/demo/proj/tags"
