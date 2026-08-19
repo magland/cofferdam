@@ -285,6 +285,12 @@ primary_region = "${s.region}"
   source = "${VOLUME_NAME}"
   destination = "/vault"
 
+# Fly always terminates TLS in front, so the forwarded headers are the only place
+# the real scheme and address appear. The server records this in the vault's
+# config.json on the next start, where it can be changed by hand afterwards.
+[env]
+  COFFERDAM_TRUST_PROXY = "1"
+
 [http_service]
   internal_port = ${INTERNAL_PORT}
   force_https = true

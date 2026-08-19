@@ -94,13 +94,34 @@ fi
 SERVER_PID=""
 FORGE_PID=""
 PRESET_PID=""
+LIMIT_PID=""
 cleanup() {
   [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true
   [ -n "$FORGE_PID" ] && kill "$FORGE_PID" 2>/dev/null || true
   [ -n "$PRESET_PID" ] && kill "$PRESET_PID" 2>/dev/null || true
+  [ -n "${LIMIT_PID:-}" ] && kill "$LIMIT_PID" 2>/dev/null || true
   rm -rf "$TMP"
 }
 trap cleanup EXIT
+
+# Two settings this suite needs from the vault before the server reads them, both
+# of which are read once at startup.
+#
+#  - trustProxy, because several checks stand in for a reverse proxy with an
+#    X-Forwarded-Proto header, and without it the server would rightly ignore
+#    them. A vault with nothing in front wants the default, which is false.
+#  - requestsPerMinute: 0, which disables the coarse per-address ceiling. This
+#    suite sends every one of its several hundred requests from one address in
+#    about twenty seconds, which is nothing like browsing and well past any
+#    sensible limit. The limits are exercised deliberately further down, against
+#    a second server started with a configuration of its own.
+cat > "$VAULT/config.json" <<'CONFIG'
+{
+  "theme": "paper",
+  "network": { "trustProxy": true },
+  "limits": { "requestsPerMinute": 0 }
+}
+CONFIG
 
 node dist/index.js serve "$VAULT" --port "$PORT" > "$LOG" 2>&1 &
 SERVER_PID=$!
@@ -1840,12 +1861,7 @@ YML
 echo "# ci" > "$CI_REPO/README.md"
 git -C "$CI_REPO" add -A
 git -C "$CI_REPO" -c user.email=ci@example.com -c user.name=ci commit -qm "Add workflows"
-git -C "$CI_REPO" push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/demo/ci" main
-sleep 1
-
 RUNS="$VAULT/demo/ci.runs"
-[ -d "$RUNS" ] || { echo "FAIL: no .runs directory after a push"; exit 1; }
-PASS=$((PASS+1)); echo "ok: push created run state in the vault"
 
 run_field() { python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2],''))" "$1" "$2"; }
 job_field() { python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2],''))" "$1" "$2"; }
@@ -1862,6 +1878,34 @@ for e in sorted(os.listdir(base)):
 print(' '.join(out))
 PY
 }
+# The engine plans a push's runs after git-receive-pack has already answered
+# the client, so a push returns before its runs are on disk. Wait for the
+# state rather than guessing at a sleep: under load, planning four workflow
+# files takes longer than the one second this used to allow.
+wait_runs_at_least() {
+  for _ in $(seq 1 150); do
+    if [ -d "$RUNS" ] && [ "$(find "$RUNS" -mindepth 2 -maxdepth 2 -name run.json | wc -l)" -ge "$1" ]; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  echo "FAIL: fewer than $1 runs were planned within 30s"; exit 1
+}
+wait_run_named() {
+  for _ in $(seq 1 150); do
+    [ -n "$(runs_named "$1")" ] && return 0
+    sleep 0.2
+  done
+  echo "FAIL: no run named '$1' was planned within 30s"; exit 1
+}
+
+git -C "$CI_REPO" push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/demo/ci" main
+# broken.yml, build.yml, and shadowed.yml each plan a run, in that order;
+# tagsonly.yml is considered last and must plan none.
+wait_runs_at_least 3
+
+[ -d "$RUNS" ] || { echo "FAIL: no .runs directory after a push"; exit 1; }
+PASS=$((PASS+1)); echo "ok: push created run state in the vault"
 
 [ -n "$(runs_named 'Build')" ] || { echo "FAIL: the push did not plan the Build workflow"; exit 1; }
 PASS=$((PASS+1)); echo "ok: a matching push trigger plans a run"
@@ -1892,7 +1936,9 @@ YML
 git -C "$CI_REPO" add -A
 git -C "$CI_REPO" -c user.email=ci@example.com -c user.name=ci commit -qm "A workflow with a job id shaped like a path"
 git -C "$CI_REPO" push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/demo/ci" main
-sleep 1
+# The rejection itself is a visible run, so waiting for it means the engine
+# has decided about this push.
+wait_run_named 'badjobid.yml'
 [ -z "$(runs_named 'Bad job id')" ] || { echo "FAIL: a path-shaped job id was accepted"; exit 1; }
 PASS=$((PASS+1)); echo "ok: a job id shaped like a path is refused rather than written"
 [ ! -e "$VAULT/demo/escape.json" ] && [ ! -e "$VAULT/escape.json" ] || {
@@ -2561,6 +2607,148 @@ fi
 grep -q "not usable" "$TMP/short.log" || { echo "FAIL: no explanation for the refused owner token"; cat "$TMP/short.log"; exit 1; }
 [ ! -e "$TMP/short-vault/vault.json" ] || { echo "FAIL: the vault was initialized despite the refused token"; exit 1; }
 PASS=$((PASS+1)); echo "ok: a too-short supplied owner token is refused"
+
+# ---- rate limits and abuse controls ----
+
+# A test that trips a limit leaves the limiter tripped for everything after it,
+# so these run last and against servers of their own, started on this same vault
+# with a limits block written into config.json. The limits and trustProxy are
+# read once at startup, which is why a restart is what applies them; the server
+# already running read its own configuration and is unaffected.
+LIMIT_LOG="$TMP/limits.log"
+LIMIT_PORT=$((PORT + 4))
+LIMIT_BASE="http://127.0.0.1:$LIMIT_PORT"
+LIMIT_PID=""
+start_limited() {
+  cat > "$VAULT/config.json"
+  node dist/index.js serve "$VAULT" --port "$LIMIT_PORT" > "$LIMIT_LOG" 2>&1 &
+  LIMIT_PID=$!
+  local started=0
+  for _ in $(seq 1 50); do
+    if curl -s -o /dev/null "$LIMIT_BASE/api/whoami"; then started=1; break; fi
+    sleep 0.2
+  done
+  [ "$started" = 1 ] || { echo "FAIL: the limited server did not start"; cat "$LIMIT_LOG"; exit 1; }
+}
+stop_limited() {
+  [ -n "$LIMIT_PID" ] && kill "$LIMIT_PID" 2>/dev/null || true
+  wait "$LIMIT_PID" 2>/dev/null || true
+  LIMIT_PID=""
+}
+
+# Two failed credential checks per address and username, and the coarse ceiling
+# out of the way so that these checks are the only thing counting.
+start_limited <<'CONFIG'
+{
+  "theme": "paper",
+  "limits": { "authFailures": 2, "requestsPerMinute": 0, "clone": 1, "search": 1 }
+}
+CONFIG
+
+check "a wrong login is refused" 401 "$LIMIT_BASE/login" \
+  --data-urlencode username=nosuchperson --data-urlencode token=wrong
+body_has "with the generic message" 'Invalid username or token'
+check "a second wrong login is still refused the same way" 401 "$LIMIT_BASE/login" \
+  --data-urlencode username=nosuchperson --data-urlencode token=wrong
+body_has "and says no more than before" 'Invalid username or token'
+check "the third is throttled" 429 -D "$TMP/headers" "$LIMIT_BASE/login" \
+  --data-urlencode username=nosuchperson --data-urlencode token=wrong
+header_has "and says when to come back" 'retry-after: [0-9]'
+body_has "naming the wait in minutes" 'Try again in [0-9]* minutes\?'
+body_lacks "and still saying nothing about the username" 'Invalid username or token'
+
+# A working credential is never charged, so no amount of ordinary signing in
+# throttles anyone, and one throttled username does not throttle another.
+check "a correct login still works while another username is throttled" 302 "$LIMIT_BASE/login" \
+  --data-urlencode username=owner --data-urlencode "token=$OWNER_TOKEN" --data-urlencode next=/
+check "and again" 302 "$LIMIT_BASE/login" \
+  --data-urlencode username=owner --data-urlencode "token=$OWNER_TOKEN" --data-urlencode next=/
+check "and again, past the failure limit" 302 "$LIMIT_BASE/login" \
+  --data-urlencode username=owner --data-urlencode "token=$OWNER_TOKEN" --data-urlencode next=/
+
+# The API path, where there is no username in the request at all.
+check "a wrong bearer token is refused" 401 -H 'authorization: Bearer cofferdam_wrong' "$LIMIT_BASE/api/whoami"
+check "a second wrong bearer token too" 401 -H 'authorization: Bearer cofferdam_wrong' "$LIMIT_BASE/api/whoami"
+check "the third is throttled" 429 -D "$TMP/headers" -H 'authorization: Bearer cofferdam_wrong' "$LIMIT_BASE/api/whoami"
+header_has "with a Retry-After" 'retry-after: [0-9]'
+body_has "and an error object" '"error"'
+# A request with no Authorization header presented no credential, so there was
+# nothing to get wrong: charging it would let a browser wandering onto an API
+# path spend a real client's budget.
+for _ in 1 2 3 4; do
+  check "a request with no bearer token is never throttled" 401 "$LIMIT_BASE/api/whoami"
+done
+
+# The refusal must look the same whether or not the username exists, or it
+# becomes a way to enumerate users.
+check "a wrong token for a real user is refused" 401 "$LIMIT_BASE/login" \
+  --data-urlencode username=owner --data-urlencode token=wrong
+check "twice" 401 "$LIMIT_BASE/login" \
+  --data-urlencode username=owner --data-urlencode token=wrong
+check "and then throttled" 429 "$LIMIT_BASE/login" \
+  --data-urlencode username=owner --data-urlencode token=wrong
+body_has "with the same message a nonexistent username gets" 'Try again in [0-9]* minutes\?'
+
+# The gate releases its slot on every path out of a request, including one the
+# client abandoned. With one slot and a leak, the clone below would queue until
+# the gate's timeout and then fail, which is the regression this checks for.
+rm -rf "$TMP/gateclone"
+run_ok "a clone works with one concurrency slot" \
+  git clone -q "$LIMIT_BASE/pushed/created" "$TMP/gateclone"
+rm -rf "$TMP/gateclone"
+run_ok "and again in sequence, so the slot came back" \
+  git clone -q "$LIMIT_BASE/pushed/created" "$TMP/gateclone"
+for _ in 1 2 3; do
+  curl -sS --max-time 0.05 -o /dev/null "$LIMIT_BASE/pushed/created/info/refs?service=git-upload-pack" 2>/dev/null || true
+done
+rm -rf "$TMP/gateclone"
+run_ok "an abandoned request does not leak the slot" \
+  git clone -q "$LIMIT_BASE/pushed/created" "$TMP/gateclone"
+
+# Beyond the gate a search either waits its turn or is refused; what it must
+# never do is hang past the queue timeout.
+SEARCH_CODES="$(
+  for _ in $(seq 1 12); do
+    curl -sS -o /dev/null -w '%{http_code}\n' --max-time 20 \
+      "$LIMIT_BASE/pushed/created/search?q=e&ref=main" &
+  done
+  wait
+)"
+if [ "$(printf '%s\n' "$SEARCH_CODES" | grep -cvE '^(200|503)$')" != 0 ]; then
+  echo "FAIL: a gated search answered something other than 200 or 503:"; printf '%s\n' "$SEARCH_CODES"; exit 1
+fi
+PASS=$((PASS+1)); echo "ok: concurrent searches are answered or refused, never left hanging"
+
+# 0 disables the coarse ceiling, which is what a vault behind a proxy that
+# already does this wants.
+for _ in $(seq 1 30); do
+  curl -sS -o /dev/null "$LIMIT_BASE/" || { echo "FAIL: a request was refused with requestsPerMinute 0"; exit 1; }
+done
+PASS=$((PASS+1)); echo "ok: requestsPerMinute 0 refuses nothing"
+stop_limited
+
+# The coarse ceiling itself, low enough to reach from a test.
+start_limited <<'CONFIG'
+{
+  "theme": "paper",
+  "limits": { "requestsPerMinute": 5 }
+}
+CONFIG
+# The startup probe above already spent one request, so the count starts at one.
+check "the second request is fine" 200 "$LIMIT_BASE/"
+check "the third" 200 "$LIMIT_BASE/"
+check "the fourth" 200 "$LIMIT_BASE/"
+check "the fifth" 200 "$LIMIT_BASE/"
+check "the sixth is refused" 429 -D "$TMP/headers" "$LIMIT_BASE/"
+header_has "with a Retry-After" 'retry-after: [0-9]'
+# Served from memory or from a package directory, so they are cheaper to answer
+# than to count, and a limit that broke the stylesheet would be turned off.
+check "the stylesheet is exempt" 200 "$LIMIT_BASE/assets/style.css"
+check "and the favicon" 200 "$LIMIT_BASE/favicon.svg"
+stop_limited
+
+# Leave the vault as the still-running first server expects to find it.
+printf '{\n  "theme": "paper"\n}\n' > "$VAULT/config.json"
 
 # ---- sign out ----
 

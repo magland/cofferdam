@@ -48,6 +48,8 @@ The token is minted on your machine, not on the server: the deploy sets it as th
 
 Note that the deploy stores nothing on your machine and logs you in to nothing. That is deliberate: `cofferdam login` is the one command that writes a credential, so a deploy from a machine that is not yours leaves no token behind on it.
 
+Fly always terminates TLS in front of the app, so the deploy also tells the vault to believe the forwarded headers: it records `network.trustProxy: true` in the vault's `config.json` on the next start. That is what makes the clone URLs, the `Secure` cookies, and the per-address [limits](#limits) read the real scheme and address rather than the internal ones. It is only seeded, so changing it by hand afterwards sticks.
+
 ### Deploying updates, and changing settings
 
 The same command deploys an update:
@@ -200,6 +202,47 @@ cofferdam user add alice --scope 'alice/*'
 git clone https://cofferdam.example.org/alice/some-repo
 ```
 
-The server honors `X-Forwarded-*` headers, so clone URLs, cookies, and the web UI behave correctly behind any of these proxies.
+The server honors `X-Forwarded-*` headers when the vault says a proxy is in front, which is what makes clone URLs, cookies, and the web UI correct behind one. Caddy is such a proxy, so set it:
 
-Backing up a vault is copying a directory. Moving it to another host, or from your laptop to the cloud, is copying it there. Note that rate limiting and abuse controls for public vaults are not implemented; a vault on the open internet is readable by anyone, so say so in your own deployment notes.
+```json
+{
+  "network": { "trustProxy": true }
+}
+```
+
+It is false by default, and deliberately so: `X-Forwarded-For` is supplied by the client, so on a vault exposed directly any visitor could claim any address, which defeats every per-address limit below and lets one attacker fill the limiter's key space. Set it only when a reverse proxy you control is the only way in. `cofferdam deploy fly` sets it for you, since Fly always terminates TLS in front.
+
+Backing up a vault is copying a directory. Moving it to another host, or from your laptop to the cloud, is copying it there. Note that a vault on the open internet is readable by anyone, so say so in your own deployment notes.
+
+## Limits
+
+Two kinds of load are bounded in the server, and a third is the reverse proxy's job.
+
+**Concurrent git work.** A clone, a push, a content search, a file listing, and a source archive each spawn git, and each holds a subprocess and a socket for as long as the client cares to read. Counting requests per minute does not bound that, because the requests are slow rather than frequent, so what is bounded is how many may run at once. There are four separate gates, so that a flood of anonymous clones cannot stop an authorized push, which is the operation whose failure costs a person their work. Beyond a gate a request waits briefly and is then refused with `503` and a `Retry-After`.
+
+**Failed credential checks.** `/login`, the API, git push, Git LFS, and the runner endpoints are throttled per address, and per address and username together, but only on failure: a working credential is never throttled however often it is used, which matters because a runner calls the vault continuously with a valid one. Refusals are `429` with a `Retry-After`. Nothing is ever locked per account, because anyone could then lock an owner out by presenting wrong tokens for their username; the source is throttled, never the target.
+
+**Ordinary traffic** has a coarse per-address ceiling, so that one misbehaving crawler cannot saturate the process with cheap page renders. It is high on purpose: one page load of a static site can be dozens of requests, and a limit that makes a site feel broken gets turned off and takes the useful limits with it. `/api/runner/*`, `/assets/*`, and the favicons are exempt.
+
+**Connection limits, request timeouts, slow-loris defence, and body-size limits** are not here. They belong to the reverse proxy, which the `docker-compose.yml` deployment already has, and duplicating them in the server would mean two places to get them wrong.
+
+The numbers live in `config.json`:
+
+```json
+{
+  "limits": {
+    "requestsPerMinute": 600,
+    "authFailures": 10,
+    "clone": 4,
+    "push": 4,
+    "search": 2,
+    "tree": 4
+  }
+}
+```
+
+Those are the defaults, chosen for the small VPS this document describes. `requestsPerMinute` is per address over everything not exempt, and `0` disables it, which is what a vault behind a proxy that already does this wants. `authFailures` is failed credential checks per address per username per fifteen minutes, and `0` disables it; the more generous per-address window that catches an attacker spreading attempts over many usernames is derived from it rather than configured, so there is one number to think about. The four concurrencies are git subprocesses in flight per class. Queue depths and timeouts are constants in the code rather than settings.
+
+Unlike `theme` and `ci`, these are read **once at startup**, because they hold live counts and slot tallies that cannot be rebuilt per request without discarding them. Changing them needs a restart. The same is true of `network.trustProxy`, which is what makes any per-address limit meaningful in the first place: without it the address a limit is charged to is whatever the client said it was.
+
+Two limitations, stated plainly rather than engineered around. The counters live in process memory and nowhere else, because rate-limit state is high-frequency and worthless once stale and does not belong in a vault directory whose whole design is durable plain files. So a restart forgives every offender, and two servers pointed at one vault count separately.

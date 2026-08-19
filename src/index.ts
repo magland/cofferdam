@@ -24,6 +24,7 @@ import { TARGET_OPTIONS, targetFrom } from './cli/target';
 import { collectionAddCmd, collectionListCmd, importCmd } from './import-cli';
 import { deployDestroyCmd, deployFlyCmd, deployShowCmd } from './deploy-cli';
 import { runnerAddCmd, runnerListCmd, runnerRemoveCmd, runnerRunCmd } from './runner-cli';
+import { seedTrustProxy } from './config';
 import { createApp } from './server';
 import { isValidName } from './scan';
 import { DEFAULT_THEME, themeNames } from './themes';
@@ -79,6 +80,10 @@ function serveCmd(args: string[], usage: () => never) {
   // already where it needs to be, and a hosted server's log is not a good
   // place to leave a copy.
   const boot = bootstrapVault(vault, process.env.COFFERDAM_OWNER_TOKEN ?? null);
+  // Set by `cofferdam deploy fly`, which knows there is a TLS proxy in front but
+  // cannot write to the volume before the vault exists. It only seeds the
+  // setting; config.json remains the place it lives and can be edited by hand.
+  const seeded = process.env.COFFERDAM_TRUST_PROXY === '1' ? seedTrustProxy(vault) : false;
   const app = createApp(vault);
   app.listen(port, host, () => {
     const url = `http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`;
@@ -99,6 +104,7 @@ function serveCmd(args: string[], usage: () => never) {
       console.log(`  cofferdam login ${url}`);
       console.log('');
     }
+    if (seeded) console.log('Recorded network.trustProxy: true in config.json (COFFERDAM_TRUST_PROXY is set).');
     console.log(`cofferdam serving vault ${vault}`);
     console.log(`  ${url}`);
   });

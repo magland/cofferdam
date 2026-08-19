@@ -6,16 +6,17 @@ import { OpError } from './ops';
 import { displayName, isValidName, listCollections, listRepoDirs } from './scan';
 import { addUserToken, canAdmin, canCreateCollection, grantScope, loadVault } from './vault';
 import { apiError, requireApiAuth as authenticateRequest } from './api/auth';
+import { AuthLimiter } from './limit';
 
 // The bearer-token JSON API used by the cofferdam CLI. Only Bearer tokens are
 // accepted; session cookies never authorize API calls.
 
-export function registerApi(app: Express, root: string): void {
+export function registerApi(app: Express, root: string, authLimiter: AuthLimiter): void {
   app.use('/api', express.json());
 
   // Both helpers live in src/api/auth.ts now that more than one file of routes
   // uses them; this closure only saves passing root at every call site.
-  const requireApiAuth = (req: Request, res: Response) => authenticateRequest(root, req, res);
+  const requireApiAuth = (req: Request, res: Response) => authenticateRequest(root, authLimiter, req, res);
 
   function sanitizeGlobs(v: unknown): string[] | null | undefined {
     if (v === undefined || v === null) return undefined;

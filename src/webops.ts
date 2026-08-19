@@ -2,6 +2,7 @@ import express, { Express, Request, Response } from 'express';
 import { CiEngine } from './ci/engine';
 import { loadConfig, saveConfig } from './config';
 import { isValidRefName, isValidRepoPath, isValidSha } from './git';
+import { AuthLimiter } from './limit';
 import { LfsContext } from './lfsstore';
 import { looksLikePointer } from './pointer';
 import { THEMES, findTheme, setActiveTheme } from './themes';
@@ -85,6 +86,7 @@ function globsField(req: Request, name: string): string[] | null {
 export function registerWebOps(
   app: Express,
   root: string,
+  authLimiter: AuthLimiter,
   lfs: LfsContext | null = null,
   engine?: CiEngine
 ): void {
@@ -165,9 +167,32 @@ export function registerWebOps(
       res.status(500).type('html').send(forms.loginPage(next, 'The vault is not available; try again later.'));
       return;
     }
-    const auth = authenticate(state.vault, field(req, 'username'), field(req, 'token'));
+    const username = field(req, 'username');
+    // Throttled per address, and per address and username together, so that one
+    // person mistyping a token does not lock out everyone behind the same
+    // address. Never per account: anyone could then lock an owner out by
+    // presenting wrong tokens for their username.
+    const allowed = authLimiter.allow(req, username);
+    if (!allowed.ok) {
+      const minutes = Math.max(1, Math.ceil(allowed.retryAfter / 60));
+      res.status(429).setHeader('Retry-After', String(allowed.retryAfter));
+      res
+        .type('html')
+        .send(
+          forms.loginPage(
+            next,
+            `Too many failed sign-in attempts from this address. Try again in ${minutes} minute${
+              minutes === 1 ? '' : 's'
+            }.`
+          )
+        );
+      return;
+    }
+    const auth = authenticate(state.vault, username, field(req, 'token'));
     if (!auth) {
-      // One generic message: no username/token distinction.
+      authLimiter.fail(req, username);
+      // One generic message: no username/token distinction. The refusal above
+      // says nothing about whether the username exists either.
       res.status(401).type('html').send(forms.loginPage(next, 'Invalid username or token.'));
       return;
     }

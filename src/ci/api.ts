@@ -1,6 +1,7 @@
 import express, { Express, Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
+import { AuthLimiter } from '../limit';
 import { isValidName } from '../scan';
 import { AuthResult, authenticateToken, canAdmin, loadVault } from '../vault';
 import { baseUrlOf } from '../web';
@@ -20,11 +21,19 @@ import { RunnerAuth, authenticateRunner, loadRunners, registerRunner, removeRunn
 const ACQUIRE_TIMEOUT_MS = 25 * 1000;
 const MAX_LOG_BODY = 4 * 1024 * 1024;
 
-export function registerCiApi(app: Express, root: string, engine: CiEngine): void {
+export function registerCiApi(app: Express, root: string, engine: CiEngine, authLimiter: AuthLimiter): void {
   const json = express.json({ limit: '1mb' });
 
   function apiError(res: Response, status: number, message: string) {
     res.status(status).json({ error: message });
+  }
+
+  // A missing header is not a failed attempt and is not charged; a wrong token
+  // is. Nothing here throttles a working credential, which matters because the
+  // runner calls these endpoints continuously with a valid one.
+  function denyTooMany(res: Response, retryAfter: number) {
+    res.setHeader('Retry-After', String(retryAfter));
+    apiError(res, 429, 'too many failed authentication attempts; try again later');
   }
 
   function requireAdmin(req: Request, res: Response): AuthResult | null {
@@ -38,8 +47,14 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine): voi
       apiError(res, 401, 'missing bearer token: send Authorization: Bearer <token>');
       return null;
     }
+    const allowed = authLimiter.allow(req, null);
+    if (!allowed.ok) {
+      denyTooMany(res, allowed.retryAfter);
+      return null;
+    }
     const auth = authenticateToken(state.vault, m[1].trim());
     if (!auth) {
+      authLimiter.fail(req, null);
       apiError(res, 401, 'invalid token');
       return null;
     }
@@ -52,8 +67,14 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine): voi
       apiError(res, 401, 'missing runner token');
       return null;
     }
+    const allowed = authLimiter.allow(req, null);
+    if (!allowed.ok) {
+      denyTooMany(res, allowed.retryAfter);
+      return null;
+    }
     const auth = authenticateRunner(root, m[1].trim());
     if (!auth) {
+      authLimiter.fail(req, null);
       apiError(res, 401, 'invalid runner token');
       return null;
     }

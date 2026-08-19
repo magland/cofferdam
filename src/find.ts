@@ -1,8 +1,9 @@
 import { Express } from 'express';
 import { SearchHit, execGit, isValidRefName } from './git';
+import { Gates } from './limit';
 import { getViewer } from './session';
 import * as views from './views';
-import { ah, loadRepo, makeCtx, send404, wildcard } from './web';
+import { ah, loadRepo, makeCtx, send404, sendBusy, wildcard } from './web';
 
 // The two ways of finding something in a repository: by name and by content.
 //
@@ -19,7 +20,7 @@ import { ah, loadRepo, makeCtx, send404, wildcard } from './web';
 
 const MAX_PATHS = 20000;
 
-export function registerFind(app: Express, root: string): void {
+export function registerFind(app: Express, root: string, gates: Gates): void {
   const handler = ah(async (req, res) => {
     const viewer = getViewer(req, root);
     const loaded = await loadRepo(root, req, res, viewer);
@@ -29,6 +30,15 @@ export function registerFind(app: Express, root: string): void {
       send404(res, 'Not found', viewer);
       return;
     }
+    // ls-tree walks the whole tree, and execGit's maxBuffer is 256 MB, so a
+    // handful of these at once on a large repository is a memory problem before
+    // it is a CPU one. MAX_PATHS bounds one response; the gate bounds how many
+    // are in flight.
+    const release = await gates.tree.enter();
+    if (!release) {
+      sendBusy(res, viewer);
+      return;
+    }
     let paths: string[];
     try {
       const out = (await execGit(loaded.repo.dir, ['ls-tree', '-r', '--name-only', '-z', ref])).toString('utf8');
@@ -36,6 +46,8 @@ export function registerFind(app: Express, root: string): void {
     } catch {
       send404(res, `Ref ${ref} not found`, viewer);
       return;
+    } finally {
+      release();
     }
     const ctx = await makeCtx(root, req, loaded, ref, viewer);
     res.type('html').send(views.findFilePage(ctx, paths.slice(0, MAX_PATHS), paths.length));
@@ -82,7 +94,7 @@ function groupHits(hits: SearchHit[]): { files: SearchFileHits[]; capped: boolea
   return { files, capped };
 }
 
-export function registerSearch(app: Express, root: string): void {
+export function registerSearch(app: Express, root: string, gates: Gates): void {
   app.get(
     '/:collection/:repo/search',
     ah(async (req, res) => {
@@ -103,7 +115,20 @@ export function registerSearch(app: Express, root: string): void {
         res.type('html').send(views.searchPage(ctx, query, { files: [], total: 0, truncated: false, capped: false }));
         return;
       }
-      const { hits, truncated } = await loaded.repo.search(ref, query);
+      // git grep over a whole tree is the most expensive thing an anonymous
+      // reader can ask for, so it has the tightest gate of the four.
+      const release = await gates.search.enter();
+      if (!release) {
+        sendBusy(res, viewer);
+        return;
+      }
+      let hits: SearchHit[];
+      let truncated: boolean;
+      try {
+        ({ hits, truncated } = await loaded.repo.search(ref, query));
+      } finally {
+        release();
+      }
       const { files, capped } = groupHits(hits);
       res.type('html').send(views.searchPage(ctx, query, { files, total: hits.length, truncated, capped }));
     })

@@ -27,10 +27,32 @@ export interface SitesConfig {
   host: string;
 }
 
+export interface NetworkConfig {
+  /**
+   * Whether X-Forwarded-For and X-Forwarded-Proto may be believed. True only
+   * when a reverse proxy you control is the only way in.
+   */
+  trustProxy: boolean;
+}
+
+export interface LimitsConfig {
+  /** Requests per minute per address, over everything not exempt. 0 disables. */
+  requestsPerMinute: number;
+  /** Failed credential checks per address per username, per 15 minutes. 0 disables. */
+  authFailures: number;
+  /** Concurrent git subprocesses, per class. */
+  clone: number;
+  push: number;
+  search: number;
+  tree: number;
+}
+
 export interface VaultConfig {
   theme: string;
   ci: CiConfig;
   sites: SitesConfig;
+  network: NetworkConfig;
+  limits: LimitsConfig;
 }
 
 // A hostname of at least two labels, each of letters, digits, and interior
@@ -46,10 +68,18 @@ const DEFAULTS: VaultConfig = {
   theme: DEFAULT_THEME,
   ci: { runs: 100, days: 0, artifactMb: 500 },
   sites: { host: '' },
+  network: { trustProxy: false },
+  limits: { requestsPerMinute: 600, authFailures: 10, clone: 4, push: 4, search: 2, tree: 4 },
 };
 
 function defaults(): VaultConfig {
-  return { ...DEFAULTS, ci: { ...DEFAULTS.ci }, sites: { ...DEFAULTS.sites } };
+  return {
+    ...DEFAULTS,
+    ci: { ...DEFAULTS.ci },
+    sites: { ...DEFAULTS.sites },
+    network: { ...DEFAULTS.network },
+    limits: { ...DEFAULTS.limits },
+  };
 }
 
 let cache: { file: string; mtimeMs: number; size: number; config: VaultConfig } | null = null;
@@ -92,6 +122,36 @@ export function loadConfig(root: string): VaultConfig {
       const raw = typeof sites.host === 'string' ? sites.host.trim().toLowerCase().replace(/\.$/, '') : '';
       config.sites = { host: HOSTNAME_RE.test(raw) ? raw : DEFAULTS.sites.host };
     }
+    // Whether the forwarded headers may be believed. False by default, because
+    // believing them on a directly exposed vault lets any client claim any
+    // address, which defeats every per-address limit and makes the limiter's own
+    // key space unbounded.
+    if (typeof parsed.network === 'object' && parsed.network !== null) {
+      const network = parsed.network as Record<string, unknown>;
+      config.network = {
+        trustProxy: typeof network.trustProxy === 'boolean' ? network.trustProxy : DEFAULTS.network.trustProxy,
+      };
+    }
+    // Each field falls back to its own default, so one bad value does not
+    // discard the block.
+    if (typeof parsed.limits === 'object' && parsed.limits !== null) {
+      const limits = parsed.limits as Record<string, unknown>;
+      // A limit may be 0, which disables it. A concurrency may not: a gate of
+      // zero slots would refuse everything forever, which is an outage rather
+      // than a setting, so it is treated as a bad value.
+      const limit = (v: unknown, fallback: number) =>
+        typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : fallback;
+      const slots = (v: unknown, fallback: number) =>
+        typeof v === 'number' && Number.isFinite(v) && v >= 1 ? Math.floor(v) : fallback;
+      config.limits = {
+        requestsPerMinute: limit(limits.requestsPerMinute, DEFAULTS.limits.requestsPerMinute),
+        authFailures: limit(limits.authFailures, DEFAULTS.limits.authFailures),
+        clone: slots(limits.clone, DEFAULTS.limits.clone),
+        push: slots(limits.push, DEFAULTS.limits.push),
+        search: slots(limits.search, DEFAULTS.limits.search),
+        tree: slots(limits.tree, DEFAULTS.limits.tree),
+      };
+    }
   } catch {
     config = defaults();
   }
@@ -104,4 +164,30 @@ export function saveConfig(root: string, changes: Partial<VaultConfig>): VaultCo
   writeFileAtomic(configFilePath(root), JSON.stringify(next, null, 2) + '\n');
   cache = null;
   return next;
+}
+
+/**
+ * Record network.trustProxy: true unless the vault has already said something
+ * about it. Called by `serve` when COFFERDAM_TRUST_PROXY is set, which is how
+ * `cofferdam deploy fly` tells a vault it is behind a proxy: the deploy cannot
+ * write to the volume itself, since the vault does not exist until the server
+ * starts.
+ *
+ * It runs on every start and not only on a fresh vault, because a vault created
+ * before this setting existed would otherwise come back from an upgrade with
+ * forwarded headers no longer believed, which would break its clone URLs and its
+ * Secure cookies. An explicit value in config.json is always left alone, so
+ * turning it off by hand stays turned off.
+ */
+export function seedTrustProxy(root: string): boolean {
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(fs.readFileSync(configFilePath(root), 'utf8')) as Record<string, unknown>;
+  } catch {
+    parsed = {};
+  }
+  const network = typeof parsed.network === 'object' && parsed.network !== null ? (parsed.network as Record<string, unknown>) : {};
+  if (typeof network.trustProxy === 'boolean') return false;
+  saveConfig(root, { network: { trustProxy: true } });
+  return true;
 }

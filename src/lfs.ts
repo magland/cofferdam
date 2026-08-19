@@ -5,6 +5,7 @@ import * as path from 'path';
 import { Transform } from 'stream';
 import { pipeline } from 'stream/promises';
 import { checkPushAuth } from './githttp';
+import { AuthLimiter } from './limit';
 import { LfsContext, SignedAction, localObjectPath, verifyTransfer } from './lfsstore';
 import { findRepo } from './scan';
 import { baseUrlOf } from './web';
@@ -86,7 +87,7 @@ function action(a: SignedAction, base: string): { href: string; header: Record<s
 
 class SizeExceeded extends Error {}
 
-export function registerLfs(app: Express, root: string, lfs: LfsContext | null): void {
+export function registerLfs(app: Express, root: string, lfs: LfsContext | null, authLimiter: AuthLimiter): void {
   const store = lfs?.store ?? null;
   const maxSize = lfs?.maxSize ?? 0;
   // Lenient about the request content type: git-lfs sends
@@ -113,12 +114,13 @@ export function registerLfs(app: Express, root: string, lfs: LfsContext | null):
   // Upload (and verify) reuse the push authorization; a 401 carries
   // LFS-Authenticate, which is the header git-lfs looks for.
   function requireUploadAuth(req: Request, res: Response, collection: string, repoName: string): boolean {
-    const check = checkPushAuth(root, req, collection, repoName);
+    const check = checkPushAuth(root, authLimiter, req, collection, repoName);
     if (!check.ok) {
       if (check.status === 401) {
         res.setHeader('LFS-Authenticate', 'Basic realm="cofferdam"');
         res.setHeader('WWW-Authenticate', 'Basic realm="cofferdam"');
       }
+      if (check.retryAfter !== undefined) res.setHeader('Retry-After', String(check.retryAfter));
       lfsError(res, check.status, check.message);
       return false;
     }

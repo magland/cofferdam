@@ -3,6 +3,7 @@ import { hasCiState } from './ci/present';
 import * as forms from './forms';
 import { GitRepo, RefInfo } from './git';
 import { issueCounts } from './issues';
+import { BUSY_RETRY_SECONDS } from './limit';
 import { pullCounts } from './pulls';
 import { listReleases } from './releases';
 import { findRepo, forkParent, siteDir } from './scan';
@@ -26,6 +27,18 @@ export function wildcard(req: Request): string {
 
 export function send404(res: Response, message = 'Not found', viewer: Viewer | null = null) {
   res.status(404).type('html').send(views.errorPage(404, message, { viewer }));
+}
+
+/**
+ * How a web route refuses when a concurrency gate is full. 503 rather than 429:
+ * the condition is server capacity rather than a client quota, and nothing about
+ * this request was wrong.
+ */
+export function sendBusy(res: Response, viewer: Viewer | null = null) {
+  res.status(503).setHeader('Retry-After', String(BUSY_RETRY_SECONDS));
+  res
+    .type('html')
+    .send(views.errorPage(503, 'The server is busy with other git work. Try again in a moment.', { viewer }));
 }
 
 // Form posts are read as urlencoded bodies with express's simple parser: the

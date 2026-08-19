@@ -24,7 +24,7 @@ By default the server binds 127.0.0.1. A vault on the internet is the same serve
 cofferdam deploy fly my-vault-name       # -> https://my-vault-name.fly.dev
 ```
 
-See [Deploying a vault](docs/deploying.md) for that, for updating it afterwards, and for hosting it on a machine of your own instead.
+See [Deploying a vault](docs/deploying.md) for that, for updating it afterwards, and for hosting it on a machine of your own instead. A public vault also wants `network.trustProxy` set, which is what makes its per-address limits meaningful.
 
 ## What it does
 

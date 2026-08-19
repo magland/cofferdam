@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { GitRepo, isValidRefName, isValidRepoPath } from './git';
 import { languageBreakdown } from './languages';
+import { Gates } from './limit';
 import { LfsContext } from './lfsstore';
 import { isMarkdownFile, renderMarkdown } from './markdown';
 import { parsePointer } from './pointer';
@@ -14,7 +15,7 @@ import { getViewer } from './session';
 import { serveSite, siteHostUrl } from './site';
 import * as views from './views';
 import { encPath, repoUrl } from './views';
-import { LoadedRepo, ah, baseUrlOf, loadRepo, makeCtx, send404, wildcard } from './web';
+import { LoadedRepo, ah, baseUrlOf, loadRepo, makeCtx, send404, sendBusy, wildcard } from './web';
 
 const COMMITS_PER_PAGE = 35;
 const MAX_RENDER_SIZE = 1024 * 1024;
@@ -36,7 +37,7 @@ export const IMAGE_TYPES: Record<string, string> = {
   svg: 'image/svg+xml',
 };
 
-export function registerBrowse(app: Express, root: string, lfs: LfsContext | null = null): void {
+export function registerBrowse(app: Express, root: string, gates: Gates, lfs: LfsContext | null = null): void {
   app.get('/', (req, res) => {
     res.type('html').send(views.homePage(root, listCollections(root), getViewer(req, root)));
   });
@@ -375,6 +376,15 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
         send404(res, `Ref ${ref} not found`, viewer);
         return;
       }
+      // The slot is held until the stream ends, which is what the gate is for: an
+      // archive holds a subprocess and a socket for as long as the client cares
+      // to read.
+      const release = await gates.tree.enter();
+      if (!release) {
+        sendBusy(res, viewer);
+        return;
+      }
+      res.on('close', release);
       const stem = `${loaded.repo.name}-${ref.replace(/\//g, '-')}`;
       res.type(spec.type);
       res.setHeader('Content-Disposition', `attachment; filename="${stem}.${ext}"`);
@@ -385,6 +395,8 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
         // The response is already streaming, so there is no status left to
         // send: break the connection rather than finish a truncated archive.
         res.destroy();
+      } finally {
+        release();
       }
     })
   );

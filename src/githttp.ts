@@ -5,6 +5,7 @@ import { CiEngine } from './ci/engine';
 import { GitRepo, execGit } from './git';
 import { createRepo } from './ops';
 import { displayName, findRepo, isValidName, reservedRepoSuffix } from './scan';
+import { AuthLimiter, BUSY_RETRY_SECONDS, Gates } from './limit';
 import { AuthResult, authenticate, canPush, loadVault } from './vault';
 import { ah } from './web';
 
@@ -43,10 +44,11 @@ export function parseBasicAuth(req: Request): { username: string; password: stri
 // the batch API), so this returns a result rather than writing the response.
 export type PushAuthCheck =
   | { ok: true; auth: AuthResult }
-  | { ok: false; status: 401 | 403 | 500; message: string };
+  | { ok: false; status: 401 | 403 | 429 | 500; message: string; retryAfter?: number };
 
 export function checkPushAuth(
   root: string,
+  limiter: AuthLimiter,
   req: Request,
   collection: string,
   repoName: string
@@ -62,12 +64,25 @@ export function checkPushAuth(
   if (state.status === 'error') {
     return { ok: false, status: 500, message: `push denied: vault.json could not be read: ${state.message}` };
   }
+  // git's first request to a push endpoint carries no Basic auth by protocol and
+  // always will, so a missing credential is not a failed attempt and is not
+  // charged.
   const creds = parseBasicAuth(req);
   if (!creds) {
     return { ok: false, status: 401, message: 'authentication required to push' };
   }
+  const allowed = limiter.allow(req, creds.username);
+  if (!allowed.ok) {
+    return {
+      ok: false,
+      status: 429,
+      message: 'too many failed authentication attempts; try again later',
+      retryAfter: allowed.retryAfter,
+    };
+  }
   const auth = authenticate(state.vault, creds.username, creds.password);
   if (!auth) {
+    limiter.fail(req, creds.username);
     return { ok: false, status: 401, message: 'invalid username or token' };
   }
   if (!canPush(auth, collection, repoName)) {
@@ -103,16 +118,25 @@ async function refSnapshot(repo: GitRepo): Promise<Map<string, string>> {
 
 const ZERO = '0'.repeat(40);
 
-export function registerGitHttp(app: Express, root: string, engine?: CiEngine): void {
-  function denyPush(res: Response, status: number, message: string) {
+export function registerGitHttp(app: Express, root: string, gates: Gates, authLimiter: AuthLimiter, engine?: CiEngine): void {
+  // git shows the body of a 503 on the RPC to the person who ran the command, so
+  // it is one sentence. Not 429: this is server capacity rather than a client
+  // quota, and git's own error surface reads better with 503.
+  function denyBusy(res: Response) {
+    res.status(503).setHeader('Retry-After', String(BUSY_RETRY_SECONDS));
+    res.type('text/plain').send('the server is busy with other git work; please try again in a moment\n');
+  }
+
+  function denyPush(res: Response, status: number, message: string, retryAfter?: number) {
     if (status === 401) res.setHeader('WWW-Authenticate', 'Basic realm="cofferdam"');
+    if (retryAfter !== undefined) res.setHeader('Retry-After', String(retryAfter));
     res.status(status).type('text/plain').send(message + '\n');
   }
 
   function requirePushAuth(req: Request, res: Response, collection: string, repoName: string): AuthResult | null {
-    const check = checkPushAuth(root, req, collection, repoName);
+    const check = checkPushAuth(root, authLimiter, req, collection, repoName);
     if (!check.ok) {
-      denyPush(res, check.status, check.message);
+      denyPush(res, check.status, check.message, check.retryAfter);
       return null;
     }
     return check.auth;
@@ -132,24 +156,55 @@ export function registerGitHttp(app: Express, root: string, engine?: CiEngine): 
     await execGit(repo.dir, ['symbolic-ref', 'HEAD', `refs/heads/${pick}`]);
   }
 
-  function advertise(req: Request, res: Response, service: 'git-upload-pack' | 'git-receive-pack', dir: string) {
+  // Both of these spawn git, and both hold their gate slot until the child is
+  // gone rather than until the handler returns: runService pipes and returns
+  // immediately, so releasing on return would bound nothing at all. The gate's
+  // release is idempotent, which is what lets it be wired to both the child
+  // closing and the response closing; an aborted clone is ordinary traffic, and
+  // a gate that leaked a slot per abort would stop answering after four of them.
+  function gateFor(service: 'git-upload-pack' | 'git-receive-pack') {
+    return service === 'git-upload-pack' ? gates.clone : gates.push;
+  }
+
+  async function advertise(
+    req: Request,
+    res: Response,
+    service: 'git-upload-pack' | 'git-receive-pack',
+    dir: string
+  ): Promise<void> {
+    const release = await gateFor(service).enter();
+    if (!release) {
+      denyBusy(res);
+      return;
+    }
+    res.on('close', release);
     res.setHeader('Content-Type', `application/x-${service}-advertisement`);
     res.setHeader('Cache-Control', 'no-cache');
     res.write(pkt(`# service=${service}\n`) + '0000');
     const child = spawn('git', [service.slice(4), '--stateless-rpc', '--advertise-refs', dir], {
       env: gitEnv(req),
     });
+    child.on('close', release);
     child.stdout.pipe(res);
-    child.on('error', () => res.end());
+    child.on('error', () => {
+      release();
+      res.end();
+    });
   }
 
-  function runService(
+  async function runService(
     req: Request,
     res: Response,
     service: 'git-upload-pack' | 'git-receive-pack',
     dir: string,
     onClose?: (code: number | null) => void
-  ) {
+  ): Promise<void> {
+    const release = await gateFor(service).enter();
+    if (!release) {
+      denyBusy(res);
+      return;
+    }
+    res.on('close', release);
     res.setHeader('Content-Type', `application/x-${service}-result`);
     res.setHeader('Cache-Control', 'no-cache');
     const child = spawn('git', [service.slice(4), '--stateless-rpc', dir], { env: gitEnv(req) });
@@ -159,8 +214,14 @@ export function registerGitHttp(app: Express, root: string, engine?: CiEngine): 
     }
     body.pipe(child.stdin);
     child.stdout.pipe(res);
-    child.on('error', () => res.status(500).end());
-    if (onClose) child.on('close', onClose);
+    child.on('error', () => {
+      release();
+      res.status(500).end();
+    });
+    child.on('close', (code) => {
+      release();
+      if (onClose) onClose(code);
+    });
   }
 
   app.get(
@@ -175,7 +236,7 @@ export function registerGitHttp(app: Express, root: string, engine?: CiEngine): 
           res.status(404).type('text/plain').send('repository not found\n');
           return;
         }
-        advertise(req, res, 'git-upload-pack', repo.dir);
+        await advertise(req, res, 'git-upload-pack', repo.dir);
         return;
       }
       if (service === 'git-receive-pack') {
@@ -200,21 +261,25 @@ export function registerGitHttp(app: Express, root: string, engine?: CiEngine): 
           }
           repo = await createRepo(root, collectionName, repoName);
         }
-        advertise(req, res, 'git-receive-pack', repo.dir);
+        await advertise(req, res, 'git-receive-pack', repo.dir);
         return;
       }
       res.status(403).type('text/plain').send('unsupported service\n');
     })
   );
 
-  app.post('/:collection/:repo/git-upload-pack', (req, res) => {
-    const repo = findRepo(root, req.params.collection, req.params.repo);
-    if (!repo) {
-      res.status(404).type('text/plain').send('repository not found\n');
-      return;
-    }
-    runService(req, res, 'git-upload-pack', repo.dir);
-  });
+  app.post(
+    '/:collection/:repo/git-upload-pack',
+    ah(async (req, res) => {
+      const repo = findRepo(root, req.params.collection, req.params.repo);
+      if (!repo) {
+        res.status(404).type('text/plain').send('repository not found\n');
+        return;
+      }
+      // The gate is entered after findRepo and before anything expensive.
+      await runService(req, res, 'git-upload-pack', repo.dir);
+    })
+  );
 
   app.post(
     '/:collection/:repo/git-receive-pack',
@@ -242,7 +307,10 @@ export function registerGitHttp(app: Express, root: string, engine?: CiEngine): 
       const target = repo;
       const actor = auth.username;
       const before = await refSnapshot(target);
-      runService(req, res, 'git-receive-pack', repo.dir, (code) => {
+      // The push gate is entered only now, after requirePushAuth has succeeded:
+      // an unauthenticated request must not be able to occupy a slot that
+      // authorized users depend on.
+      await runService(req, res, 'git-receive-pack', repo.dir, (code) => {
         if (code !== 0) return;
         ensureHead(target)
           .then(() => (engine ? firePushEvents(engine, target, before, actor) : undefined))
