@@ -2,7 +2,7 @@ import { BlameLine, CommitDetail, CommitSummary, RefInfo, TreeEntry } from './gi
 import { LanguageStat } from './languages';
 import { esc, formatDay, formatSize, highlightedLines, timeTag } from './render';
 import { Viewer, viewerIsAdmin } from './session';
-import { activeTheme } from './themes';
+import { THEMES, activeTheme, darkFor } from './themes';
 import { WORDMARK } from './logo';
 import { IconName, icon } from './icons';
 import { avatar } from './avatar';
@@ -38,6 +38,17 @@ export interface PageOpts {
   viewer?: Viewer | null;
   // Current request path, used as the ?next= target of the Sign in link.
   path?: string;
+  // What the jump box can reach from this page besides the vault's
+  // repositories: where a repository page's own sections are, and where its
+  // search and file finder take a query.
+  jump?: JumpContext;
+}
+
+export interface JumpContext {
+  repo: string;
+  sections: { label: string; href: string }[];
+  searchUrl: string;
+  findUrl: string;
 }
 
 export function encPath(p: string): string {
@@ -84,6 +95,54 @@ function userBox(opts: PageOpts): string {
 </details>`;
 }
 
+/**
+ * The jump box. A vault is many repositories and one collection page, so the
+ * way between any two of them was previously up and back down; this is the
+ * one control that goes straight there, from every page, on one keystroke.
+ * The button carries the keystroke on its face, since a shortcut nothing
+ * mentions is a shortcut nobody finds.
+ */
+function jumpButton(): string {
+  return `<button type="button" class="jump-open" onclick="openJump()" aria-haspopup="dialog" aria-label="Jump to a repository">${icon(
+    'search'
+  )}<span class="jump-label">Jump to</span><kbd class="jump-key">/</kbd></button>`;
+}
+
+/**
+ * Which appearance the reader wants. The vault's theme is what the operator
+ * chose and stays the default, but the reader is the one looking at it, on
+ * their screen and at their hour, so they get the last word. The choice is
+ * kept in their own browser: nothing about it reaches the vault, and a vault
+ * that is read anonymously has nowhere to keep it anyway.
+ */
+function themeMenu(): string {
+  const item = (name: string, label: string) =>
+    `<button type="button" class="dd-item theme-item" role="menuitemradio" aria-checked="false" data-theme-name="${esc(
+      name
+    )}" onclick="setTheme('${esc(name)}')"><span class="theme-check">${icon('check')}</span><span>${esc(
+      label
+    )}</span></button>`;
+  return `<details class="dropdown theme-menu">
+<summary aria-label="Appearance">${icon('appearance')}</summary>
+<div class="dropdown-menu dd-right" role="menu">
+  <div class="dd-section">Appearance</div>
+  ${item('auto', 'Match my system')}
+  ${THEMES.map((t) => item(t.name, t.label)).join('\n  ')}
+</div>
+</details>`;
+}
+
+function jumpDialog(jump: JumpContext | null): string {
+  const data = jump
+    ? `<script type="application/json" id="jump-data">${JSON.stringify(jump).replace(/</g, '\\u003c')}</script>`
+    : '';
+  return `${data}<dialog class="jump" id="jump" aria-label="Jump to">
+<div class="jump-field">${icon('search', 'jump-glyph')}<input id="jump-q" type="text" autocomplete="off" spellcheck="false" placeholder="Jump to a repository" aria-label="Jump to a repository" aria-controls="jump-list" oninput="renderJump()" onkeydown="jumpKey(event)"></div>
+<ul class="jump-list" id="jump-list" role="listbox" aria-label="Results"></ul>
+<div class="jump-foot"><kbd>↑</kbd><kbd>↓</kbd> move<kbd>↵</kbd>open<kbd>esc</kbd>close</div>
+</dialog>`;
+}
+
 export function layout(title: string, content: string, opts: PageOpts = {}): string {
   // The theme name rides along as a query parameter so a changed theme busts
   // any cache in front of the stylesheets.
@@ -95,17 +154,52 @@ export function layout(title: string, content: string, opts: PageOpts = {}): str
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
 <link rel="stylesheet" href="/assets/style.css?t=${encodeURIComponent(theme)}">
-<link rel="stylesheet" href="/assets/hl.css?t=${encodeURIComponent(theme)}">
+<link id="hl-css" rel="stylesheet" href="/assets/hl.css?t=${encodeURIComponent(theme)}">
 <link rel="stylesheet" href="/assets/katex/katex.css">
 <link rel="icon" href="/favicon.svg?t=${encodeURIComponent(theme)}" type="image/svg+xml">
+<script>
+// The appearance the reader chose, applied before the page is painted so the
+// vault's own theme is never shown for a frame first. The stylesheet carries
+// every theme's tokens, so this is one attribute; the code colours are a whole
+// stylesheet of their own and so are a second request when they differ.
+var cofferdamTheme = { vault: ${JSON.stringify(theme)}, dark: ${JSON.stringify(darkFor(activeTheme()))} };
+function applyTheme() {
+  var pick = null;
+  try { pick = localStorage.getItem('cofferdam.theme'); } catch (e) {}
+  var auto = !pick || pick === 'auto';
+  if (auto) pick = matchMedia('(prefers-color-scheme: dark)').matches ? cofferdamTheme.dark : cofferdamTheme.vault;
+  document.documentElement.setAttribute('data-theme', pick);
+  var hl = document.getElementById('hl-css');
+  var href = '/assets/hl.css?t=' + encodeURIComponent(pick);
+  if (hl && hl.getAttribute('href') !== href) hl.setAttribute('href', href);
+  var items = document.querySelectorAll('[data-theme-name]');
+  for (var i = 0; i < items.length; i++) {
+    var n = items[i].getAttribute('data-theme-name');
+    items[i].setAttribute('aria-checked', String(auto ? n === 'auto' : n === pick));
+  }
+}
+function setTheme(name) {
+  try { localStorage.setItem('cofferdam.theme', name); } catch (e) {}
+  applyTheme();
+  if (typeof closeMenus === 'function') closeMenus(null);
+}
+applyTheme();
+// Again once the menu exists: the call above runs before the body is parsed,
+// which is the point of it, but it means the menu's marks are set here.
+document.addEventListener('DOMContentLoaded', applyTheme);
+// Following the system means following it while the page is open, not only
+// when it was loaded.
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+</script>
 </head>
 <body>
 <header class="topbar"><div class="container"><a class="brand" href="/">${WORDMARK}</a><span class="crumbs">${
     opts.crumbs ?? ''
-  }</span><div class="userbox">${userBox(opts)}</div></div></header>
+  }</span><div class="userbox">${jumpButton()}${themeMenu()}${userBox(opts)}</div></div></header>
 <main class="container">
 ${content}
 </main>
+${jumpDialog(opts.jump ?? null)}
 <script>
 function copyText(btn, text) {
   function done() { btn.classList.add('copied'); setTimeout(function () { btn.classList.remove('copied'); }, 1400); }
@@ -178,16 +272,135 @@ function findKey(e, input) {
     if (!items[i].hidden) { e.preventDefault(); location.href = items[i].href; return; }
   }
 }
-// t goes to the file finder, as on GitHub, from any page offering it. A key
-// pressed while typing into something is a keystroke, not a shortcut.
+// ---- the jump box ----
+// The repository names are the same list the front page shows, fetched once
+// and kept for the tab, so typing costs nothing after the first opening.
+var jumpRepos = null;
+var jumpCtx = null;
+var jumpSel = 0;
+(function () {
+  var el = document.getElementById('jump-data');
+  if (el) { try { jumpCtx = JSON.parse(el.textContent); } catch (e) {} }
+})();
+function loadJumpRepos() {
+  if (jumpRepos) return Promise.resolve(jumpRepos);
+  var cached = null;
+  try { cached = sessionStorage.getItem('cofferdam.repos'); } catch (e) {}
+  if (cached) { try { jumpRepos = JSON.parse(cached); return Promise.resolve(jumpRepos); } catch (e) {} }
+  return fetch('/assets/repos.json').then(function (r) { return r.json(); }).then(function (list) {
+    jumpRepos = list;
+    try { sessionStorage.setItem('cofferdam.repos', JSON.stringify(list)); } catch (e) {}
+    return list;
+  }, function () { jumpRepos = []; return jumpRepos; });
+}
+function openJump() {
+  var dlg = document.getElementById('jump');
+  if (!dlg || dlg.open) return;
+  closeMenus(null);
+  dlg.showModal();
+  var q = document.getElementById('jump-q');
+  q.value = '';
+  q.focus();
+  renderJump();
+  loadJumpRepos().then(renderJump);
+}
+// The score is the position of the first character of the match, so a name
+// beginning with what was typed comes before one that merely contains it, and
+// a match on the repository's own name before one on its collection.
+function jumpScore(hay, q) {
+  if (q === '') return 0;
+  var i = hay.toLowerCase().indexOf(q);
+  if (i !== -1) return i;
+  return findMatch(hay.toLowerCase(), q) ? 900 : -1;
+}
+function jumpItems() {
+  var q = document.getElementById('jump-q').value.trim().toLowerCase();
+  var out = [];
+  if (jumpCtx) {
+    for (var s = 0; s < jumpCtx.sections.length; s++) {
+      var sec = jumpCtx.sections[s];
+      var ss = jumpScore(sec.label, q);
+      if (ss >= 0) out.push({ score: ss, group: jumpCtx.repo, label: sec.label, href: sec.href });
+    }
+  }
+  var repos = jumpRepos || [];
+  for (var i = 0; i < repos.length; i++) {
+    var name = repos[i];
+    var slash = name.indexOf('/');
+    var short = name.slice(slash + 1);
+    var sc = jumpScore(short, q);
+    // Falling back to the whole path lets "concept/bench" find a repository,
+    // but only as a literal substring: a collection name spread across it a
+    // letter at a time would match nearly everything.
+    if (sc < 0 && q !== '' && name.toLowerCase().indexOf(q) !== -1) sc = 950;
+    // A repository is what the box is mostly for, so its matches sort above a
+    // section of equal quality rather than below.
+    if (sc >= 0) out.push({ score: sc - 1, group: 'Repositories', label: short, note: name.slice(0, slash), href: '/' + name.split('/').map(encodeURIComponent).join('/') });
+  }
+  out.sort(function (a, b) { return a.score - b.score || a.label.localeCompare(b.label); });
+  out = out.slice(0, 15);
+  if (jumpCtx && q !== '') {
+    var g = 'Search ' + jumpCtx.repo;
+    out.push({ group: g, label: 'Contents matching \u201c' + q + '\u201d', href: jumpCtx.searchUrl + encodeURIComponent(q) });
+    out.push({ group: g, label: 'File names', href: jumpCtx.findUrl });
+  }
+  return out;
+}
+function renderJump() {
+  var list = document.getElementById('jump-list');
+  if (!list) return;
+  var items = jumpItems();
+  if (jumpSel >= items.length) jumpSel = 0;
+  var html = '';
+  var group = null;
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    if (it.group !== group) { group = it.group; html += '<li class="jump-group" role="presentation">' + escapeHtml(group) + '</li>'; }
+    html += '<li role="option" aria-selected="' + (i === jumpSel) + '"><a class="jump-item' + (i === jumpSel ? ' on' : '') +
+      '" href="' + escapeHtml(it.href) + '" onmouseenter="jumpPoint(' + i + ')">' + escapeHtml(it.label) +
+      (it.note ? '<span class="jump-note">' + escapeHtml(it.note) + '</span>' : '') + '</a></li>';
+  }
+  list.innerHTML = html || '<li class="jump-empty" role="presentation">' +
+    (jumpRepos === null ? 'Loading\u2026' : 'Nothing matches.') + '</li>';
+  var on = list.querySelector('.jump-item.on');
+  if (on) on.scrollIntoView({ block: 'nearest' });
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+function jumpPoint(i) { jumpSel = i; renderJump(); }
+function jumpKey(e) {
+  var items = document.getElementById('jump-list').querySelectorAll('.jump-item');
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (!items.length) return;
+    jumpSel = (jumpSel + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length;
+    renderJump();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (items[jumpSel]) location.href = items[jumpSel].getAttribute('href');
+  }
+}
+// / opens the box and t still goes straight to the file finder. A key pressed
+// while typing into something is a keystroke, not a shortcut.
 document.addEventListener('keydown', function (e) {
-  if (e.key !== 't' || e.metaKey || e.ctrlKey || e.altKey) return;
   var el = document.activeElement;
   if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+  if ((e.key === 'k' || e.key === 'K') && (e.metaKey || e.ctrlKey)) { e.preventDefault(); openJump(); return; }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === '/') { e.preventDefault(); openJump(); return; }
+  if (e.key !== 't') return;
   var btn = document.querySelector('[data-find-url]');
   if (!btn) return;
   e.preventDefault();
   location.href = btn.getAttribute('data-find-url');
+});
+// Clicking the backdrop closes the box, as clicking outside any other menu does.
+document.addEventListener('click', function (e) {
+  var dlg = document.getElementById('jump');
+  if (dlg && dlg.open && e.target === dlg) dlg.close();
 });
 // The filter box above a listing: hide the rows that do not match, and say so
 // when none do.
@@ -201,6 +414,20 @@ function filterRows(input) {
   for (var i = 0; i < rows.length; i++) {
     var hit = q === '' || rows[i].textContent.toLowerCase().indexOf(q) !== -1;
     rows[i].hidden = !hit;
+    if (hit) shown++;
+  }
+  if (empty) empty.hidden = shown !== 0;
+}
+// The same as filterRows, over a list of cards rather than table rows.
+function filterCards(input) {
+  var list = document.getElementById(input.getAttribute('data-target'));
+  var empty = document.getElementById(input.getAttribute('data-target') + '-empty');
+  var q = input.value.trim().toLowerCase();
+  var items = list.children;
+  var shown = 0;
+  for (var i = 0; i < items.length; i++) {
+    var hit = q === '' || items[i].textContent.toLowerCase().indexOf(q) !== -1;
+    items[i].hidden = !hit;
     if (hit) shown++;
   }
   if (empty) empty.hidden = shown !== 0;
@@ -234,7 +461,35 @@ export function repoOpts(ctx: RepoCtx, path?: string): PageOpts {
   const crumbs = ` / <a href="/${encodeURIComponent(ctx.collection)}">${esc(
     ctx.collection
   )}</a> / <a href="${repoUrl(ctx)}">${esc(ctx.repo)}</a>`;
-  return { viewer: ctx.viewer, path, crumbs };
+  return { viewer: ctx.viewer, path, crumbs, jump: jumpContext(ctx) };
+}
+
+/**
+ * What the jump box offers from inside a repository: the sections its tabs
+ * lead to, and the two searches that take what has been typed rather than
+ * matching against it. The list mirrors the tab row, so a section that is not
+ * shown there is not reachable here either.
+ */
+function jumpContext(ctx: RepoCtx): JumpContext {
+  const base = repoUrl(ctx);
+  const sections: { label: string; href: string }[] = [
+    { label: 'Code', href: base },
+    { label: 'Commits', href: `${base}/commits/${encPath(ctx.ref)}` },
+    { label: 'Issues', href: `${base}/issues` },
+    { label: 'Pull requests', href: `${base}/pulls` },
+    { label: 'Branches', href: `${base}/branches` },
+    { label: 'Tags', href: `${base}/tags` },
+    { label: 'Releases', href: `${base}/releases` },
+  ];
+  if (ctx.hasCi) sections.push({ label: 'Actions', href: `${base}/actions` });
+  if (ctx.hasSite) sections.push({ label: 'Site', href: ctx.siteUrl });
+  if (ctx.canPush || ctx.canAdmin) sections.push({ label: 'Settings', href: `${base}/settings` });
+  return {
+    repo: ctx.repo,
+    sections,
+    searchUrl: `${base}/search?ref=${encodeURIComponent(ctx.ref)}&q=`,
+    findUrl: `${base}/find/${encPath(ctx.ref)}`,
+  };
 }
 
 /**
@@ -402,75 +657,155 @@ function noMatches(target: string): string {
   return `<div class="empty-state" id="${esc(target)}-empty" hidden>No match.</div>`;
 }
 
+/** One repository as a listing shows it, on the front page or in a collection. */
+export interface RepoCard {
+  collection: string;
+  name: string;
+  description: string | null;
+  updated: string | null;
+  /** Where this repository's published site is, or null if it has none. */
+  siteUrl?: string | null;
+  /** How its newest workflow run ended, for the health mark. */
+  ci?: { conclusion: string | null; running: boolean; url: string } | null;
+}
+
+const CI_MARKS: Record<string, { glyph: IconName; label: string }> = {
+  running: { glyph: 'dot', label: 'running' },
+  success: { glyph: 'check-circle', label: 'passed' },
+  failure: { glyph: 'x-circle', label: 'failed' },
+  cancelled: { glyph: 'stop', label: 'cancelled' },
+  skipped: { glyph: 'skip', label: 'skipped' },
+};
+
+function ciMark(ci: NonNullable<RepoCard['ci']>, repoName: string): string {
+  const state = ci.running ? 'running' : (ci.conclusion ?? 'skipped');
+  const mark = CI_MARKS[state] ?? CI_MARKS.skipped;
+  return `<a class="ci-mark ci-${esc(state)}" href="${esc(ci.url)}" aria-label="Last workflow run for ${esc(
+    repoName
+  )}: ${mark.label}" title="Last workflow run ${mark.label}">${icon(mark.glyph)}</a>`;
+}
+
+/**
+ * A repository in a listing. Everything a reader decides on from a list of
+ * names is here and nothing else is: what it is called, what it is, when it
+ * was last touched, whether it publishes a site, and whether its last build
+ * passed. The name is the only link that fills the card, so the site and the
+ * build are reachable without opening the repository to find them.
+ */
+function repoCard(r: RepoCard, showCollection: boolean): string {
+  const href = `/${encodeURIComponent(r.collection)}/${encodeURIComponent(r.name)}`;
+  const prefix = showCollection
+    ? `<span class="rc-collection">${esc(r.collection)}/</span>`
+    : '';
+  const site = r.siteUrl
+    ? `<a class="site-link" href="${esc(r.siteUrl)}" title="Site" aria-label="Site for ${esc(r.name)}">${icon(
+        'globe'
+      )}</a>`
+    : '';
+  const ci = r.ci ? ciMark(r.ci, r.name) : '';
+  const desc = r.description ? `<p class="rc-desc">${esc(r.description)}</p>` : '';
+  const when = r.updated ? `<span class="rc-when">${timeTag(r.updated)}</span>` : '';
+  return `<li class="repo-card">
+<div class="rc-top"><a class="rc-name" href="${href}">${prefix}${esc(r.name)}</a><span class="rc-marks">${site}${ci}</span></div>
+${desc}
+<div class="rc-meta">${when}</div>
+</li>`;
+}
+
+/**
+ * The listing itself. Sorting is a link rather than a script, so the order a
+ * reader chose is in the address they can keep, and the two orders answer the
+ * two questions a listing is asked: what has been happening lately, and where
+ * is the one I already know the name of.
+ */
+function repoListing(
+  repos: RepoCard[],
+  opts: { showCollection: boolean; sort: 'recent' | 'name'; sortBase: string }
+): string {
+  const sorted = [...repos];
+  if (opts.sort === 'name') {
+    sorted.sort((a, b) => a.name.localeCompare(b.name) || a.collection.localeCompare(b.collection));
+  } else {
+    sorted.sort((a, b) => (b.updated ?? '').localeCompare(a.updated ?? ''));
+  }
+  const sortLink = (id: 'recent' | 'name', label: string) =>
+    `<a${opts.sort === id ? ' class="current" aria-current="true"' : ''} href="${opts.sortBase}${
+      id === 'recent' ? '' : `?sort=${id}`
+    }">${label}</a>`;
+  const controls = `<div class="listing-controls">
+<input class="list-filter" type="text" placeholder="Filter repositories" data-target="repo-list" oninput="filterCards(this)" aria-label="Filter repositories">
+<span class="seg">${sortLink('recent', 'Recent')}${sortLink('name', 'A–Z')}</span>
+</div>`;
+  return `${repos.length > 5 ? controls : ''}<ul class="repo-grid" id="repo-list">${sorted
+    .map((r) => repoCard(r, opts.showCollection))
+    .join('\n')}</ul>${noMatches('repo-list')}`;
+}
+
 export function homePage(
   rootLabel: string,
   collections: { name: string; repoCount: number }[],
+  repos: RepoCard[],
+  sort: 'recent' | 'name',
   viewer: Viewer | null
 ): string {
-  const rows = collections
-    .map(
-      (o) =>
-        `<tr><td class="with-avatar">${avatar(o.name, 24, 'square')}<a href="/${encodeURIComponent(o.name)}">${esc(
-          o.name
-        )}</a></td><td class="right muted">${o.repoCount} ${
-          o.repoCount === 1 ? 'repository' : 'repositories'
-        }</td></tr>`
-    )
-    .join('');
+  const total = repos.length;
+  const chips = collections.length
+    ? `<nav class="collection-chips" aria-label="Collections">${collections
+        .map(
+          (c) =>
+            `<a class="coll-chip" href="/${encodeURIComponent(c.name)}">${avatar(c.name, 18, 'square')}<span>${esc(
+              c.name
+            )}</span><span class="coll-count">${c.repoCount}</span></a>`
+        )
+        .join('')}</nav>`
+    : '';
   const body =
-    collections.length === 0
+    total === 0
       ? `<div class="empty-state">No repositories yet.${
           viewer ? ' Create one with the buttons above, or push to a new path.' : ''
         }</div>`
-      : `${listFilter('collection-list', 'Find a collection', collections.length)}<table class="listing roster" id="collection-list"><tbody>${rows}</tbody></table>${noMatches(
-          'collection-list'
-        )}`;
+      : repoListing(repos, { showCollection: true, sort, sortBase: '/' });
   const newBtn = viewer
     ? `<a class="btn" href="/new/collection">${icon('plus')}<span>New collection</span></a><a class="btn btn-primary" href="/new">${icon(
         'plus'
       )}<span>New repository</span></a>`
     : '';
-  const content = `<div class="page-head"><h1>Collections</h1><span class="right-group">${newBtn}</span></div>${body}<p class="muted small" style="margin-top:16px">Serving ${esc(
-    rootLabel
-  )}</p>`;
+  const summary =
+    total === 0
+      ? ''
+      : `<p class="lede">${total} ${total === 1 ? 'repository' : 'repositories'} in ${collections.length} ${
+          collections.length === 1 ? 'collection' : 'collections'
+        }.</p>`;
+  const content = `<div class="page-head"><h1>Repositories</h1><span class="right-group">${newBtn}</span></div>
+${summary}
+${chips}
+${body}
+${
+    // Where the vault sits on disk is the operator's business and not a
+    // visitor's, so the path is shown to someone who could act on it.
+    viewerIsAdmin(viewer)
+      ? `<p class="muted small vault-note">Serving ${esc(rootLabel)}</p>`
+      : ''
+  }`;
   return layout('cofferdam', content, { viewer, path: '/' });
 }
 
 export function collectionPage(
   collection: string,
-  repoList: {
-    name: string;
-    description: string | null;
-    updated: string | null;
-    /** Where this repository's published site is, or null if it has none. */
-    siteUrl?: string | null;
-  }[],
+  repoList: RepoCard[],
+  sort: 'recent' | 'name',
   viewer: Viewer | null
 ): string {
-  const rows = repoList
-    .map(
-      (r) =>
-        `<tr><td>${REPO_ICON}<a href="/${encodeURIComponent(collection)}/${encodeURIComponent(r.name)}"><b>${esc(
-          r.name
-        )}</b></a>${
-          r.siteUrl
-            ? `<a class="site-link" href="${esc(r.siteUrl)}" title="Site" aria-label="Site for ${esc(
-                r.name
-              )}">${icon('globe')}</a>`
-            : ''
-        }${r.description ? `<div class="muted small">${esc(r.description)}</div>` : ''}</td><td class="right small">${
-          r.updated ? `Updated ${timeTag(r.updated)}` : ''
-        }</td></tr>`
-    )
-    .join('');
   const body =
     repoList.length === 0
       ? `<div class="empty-state">No repositories in this collection yet.${
           viewer ? ' Create one with the buttons above, or push to a new path.' : ''
         }</div>`
-      : `${listFilter('repo-list', 'Find a repository', repoList.length)}<table class="listing roster" id="repo-list"><tbody>${rows}</tbody></table>${noMatches(
-          'repo-list'
-        )}`;
+      : repoListing(repoList, {
+          showCollection: false,
+          sort,
+          sortBase: `/${encodeURIComponent(collection)}`,
+        });
   const newBtn = viewer
     ? `<a class="btn" href="/import?collection=${encodeURIComponent(collection)}">${icon(
         'download'

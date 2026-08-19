@@ -109,6 +109,78 @@ code, pre, .mono { font-family: var(--font-mono); }
 .user-menu .dropdown-menu { width: 220px; }
 .user-menu form { margin: 0; }
 
+/* --- the jump box ---
+
+   The one control that goes from any page to any repository. In the bar it
+   reads as a search field rather than a button, because that is what pressing
+   it gives, and it carries its own keystroke so the shortcut is discovered by
+   people who never read a help page. On a phone the words go and the glyph
+   stays, since the bar has no room for a field that opens another field. */
+.jump-open {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: var(--touch); padding: 0 8px 0 10px;
+  background: var(--input-bg); border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--fg-subtle); font: inherit; font-size: var(--t-sm); cursor: pointer;
+}
+.jump-open:hover { border-color: var(--accent-soft); color: var(--fg-muted); }
+.jump-open .glyph { color: var(--fg-subtle); flex: none; }
+.jump-label { min-width: 96px; text-align: left; }
+kbd {
+  font: inherit; font-family: var(--font-mono); font-size: 11px; line-height: 1;
+  padding: 3px 5px; border: 1px solid var(--border); border-bottom-width: 2px;
+  border-radius: 4px; background: var(--surface); color: var(--fg-subtle);
+}
+.jump::backdrop { background: var(--overlay); }
+.jump {
+  width: min(560px, calc(100vw - 2 * var(--s4)));
+  padding: 0; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg); color: var(--fg);
+  box-shadow: 0 16px 48px var(--shadow);
+  /* Near the top rather than centred: the list grows downwards, and a box that
+     re-centres itself as results arrive is a box whose first result moves out
+     from under the pointer. */
+  margin: 12vh auto auto;
+}
+.jump-field { display: flex; align-items: center; gap: var(--s2); padding: 0 var(--s4); border-bottom: 1px solid var(--border-soft); }
+.jump-glyph { color: var(--fg-subtle); flex: none; }
+/* The dialog's own edge is the field's edge, so the input draws none of its
+   own. Matched on the attribute as well as the class, or the general rule for
+   text inputs further down the sheet would put a box back around it. */
+.jump-field input[type="text"] {
+  flex: 1; width: auto; max-width: none; border: 0; background: transparent; color: var(--fg);
+  font: inherit; font-size: var(--t-lg); padding: 14px 0;
+}
+.jump-field input:focus { outline: none; }
+.jump-list { list-style: none; margin: 0; padding: var(--s2) 0; max-height: 52vh; overflow-y: auto; }
+.jump-group {
+  padding: var(--s2) var(--s4) 4px;
+  font-size: var(--t-xs); text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--fg-subtle);
+}
+.jump-item {
+  display: flex; align-items: center; gap: var(--s2);
+  padding: 7px var(--s4); min-height: var(--touch);
+  color: var(--fg); font-size: var(--t-sm);
+}
+.jump-item:hover { text-decoration: none; }
+/* The highlight follows the keyboard, and the pointer moves the keyboard, so
+   there is only ever one selected row however the reader is driving. */
+.jump-item.on { background: var(--accent); color: var(--on-primary); }
+.jump-note { margin-left: auto; color: var(--fg-subtle); font-size: var(--t-xs); }
+.jump-item.on .jump-note { color: inherit; opacity: 0.75; }
+.jump-empty { padding: var(--s4); color: var(--fg-subtle); font-size: var(--t-sm); }
+.jump-foot {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: var(--s2) var(--s4); border-top: 1px solid var(--border-soft);
+  color: var(--fg-subtle); font-size: var(--t-xs);
+}
+@media (max-width: 700px) {
+  .jump-label, .jump-key { display: none; }
+  .jump-open { padding: 0 8px; }
+  .jump { margin-top: 6vh; }
+  .jump-foot { display: none; }
+}
+
 /* An identicon in its frame (see avatar.ts): a circle for a person, a rounded
    square for a collection, so the two kinds of owner are told apart without
    reading the name under them. */
@@ -169,9 +241,13 @@ h3 { font-family: var(--font-head); font-size: var(--t-lg); line-height: 1.35; }
   display: flex; gap: var(--s1); border-bottom: 1px solid var(--border);
   margin-bottom: var(--s4); overflow-x: auto;
   /* The row scrolls on a narrow screen. A scrollbar under it would read as a
-     second rule beside the one the tabs already hang from, so it is taken
-     away and the tab cut off at the edge is what says there is more. */
+     second rule beside the one the tabs already hang from, so it is taken away
+     and the row fades out at its trailing edge instead. A tab cut off square at
+     the screen's edge reads as a page too wide for the phone; a tab fading out
+     reads as a row that continues. The mask is an alpha ramp and not a colour,
+     which is why it works over whatever the theme paints behind it. */
   scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  mask-image: linear-gradient(to right, black calc(100% - 28px), transparent 100%);
 }
 .tabs::-webkit-scrollbar { display: none; }
 .tab {
@@ -244,6 +320,19 @@ button.dd-item { width: 100%; background: none; font: inherit; font-size: 13px; 
 .dd-item .dd-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dd-check { width: 16px; flex: none; color: var(--accent); }
 .dd-current { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Appearance menu. The check column keeps its width whether or not the glyph is
+   showing, so the labels do not shift as the reader moves between themes. */
+.theme-menu > summary {
+  display: flex; align-items: center; justify-content: center;
+  width: var(--touch); height: var(--touch); border-radius: var(--radius); color: var(--fg-muted);
+}
+.theme-menu > summary:hover { background: var(--surface-hover); color: var(--fg); }
+.theme-menu .dropdown-menu { width: 200px; }
+.theme-item { text-align: left; }
+.theme-check { width: 16px; flex: none; color: var(--accent); visibility: hidden; }
+[aria-checked='true'] > .theme-check { visibility: visible; }
+[aria-checked='true'].theme-item { font-weight: 600; }
 .clone-menu .cmd-row input {
   flex: 1; min-width: 0; padding: 5px 8px; font-size: 12px; border: 1px solid var(--border);
   border-radius: var(--radius); background: var(--input-bg); color: var(--fg); font-family: var(--font-mono);
@@ -957,18 +1046,109 @@ a.chip.label:hover { text-decoration: none; filter: brightness(1.1); }
   .issue-filters { flex-direction: column; align-items: stretch; }
 }
 
-/* --- a roster: a short list of names, each with one fact beside it ---
+/* --- the repository listing ---
 
-   The collections on the front page and the repositories in a collection are
-   lists of a handful of names, and a name set against the far edge of a wide
+   The front page and a collection's page are the same list: every repository
+   the reader can see, one card each. A name set against the far edge of a wide
    page with a thousand pixels of nothing between it and its date is a name the
-   eye has to hunt for. So a roster is capped at a width it can be read across
-   in one movement, and the fact beside each name is pulled in to hug it. Every
-   other listing on the site, where the middle column carries a commit message
-   worth the room, keeps the full width of the page. */
-table.listing.roster { max-width: 720px; }
-table.listing.roster td { vertical-align: top; }
-table.listing.roster td.right { width: 1%; white-space: nowrap; }
+   eye has to hunt for, so a card is capped at a readable width and the page's
+   spare room is spent on a second column rather than on stretching the first.
+   Three columns is where the cards get too narrow for a description, so two is
+   as far as it goes. */
+.listing-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-bottom: var(--s4);
+  flex-wrap: wrap;
+}
+.listing-controls .list-filter { flex: 1 1 240px; max-width: 360px; }
+.listing-controls .seg { margin-left: auto; }
+
+.repo-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1px;
+  background: var(--border-soft);
+  border-block: 1px solid var(--border-soft);
+}
+@media (min-width: 900px) {
+  .repo-grid { grid-template-columns: 1fr 1fr; }
+}
+.repo-card {
+  background: var(--bg);
+  padding: var(--s3) var(--s4) var(--s3) 0;
+  min-width: 0;
+  /* The card highlights on hover, so the whole card is the target that
+     promises: the name's link is stretched over it, and the two marks that
+     lead somewhere else are lifted back above it. */
+  position: relative;
+}
+@media (min-width: 900px) {
+  /* The gap between the two columns is a hairline of the grid's own
+     background, so the right column gets the padding the gap would have been. */
+  .repo-card:nth-child(even) { padding-left: var(--s4); }
+}
+.repo-card:hover { background: var(--surface); }
+.rc-top { display: flex; align-items: baseline; gap: var(--s2); }
+.rc-name {
+  font-weight: 600;
+  font-size: var(--t-base);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.rc-name::after { content: ''; position: absolute; inset: 0; }
+/* The collection stays whole, so a narrow column breaks the name at the slash
+   rather than in the middle of the collection's own word. */
+.rc-collection { color: var(--fg-subtle); font-weight: 400; white-space: nowrap; }
+.rc-marks {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-left: auto;
+  flex: none;
+  position: relative;
+}
+.rc-desc {
+  margin: 2px 0 0;
+  color: var(--fg-muted);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+  /* Two lines, so a long description cannot make one card twice the height of
+     its neighbour and break the rhythm of the column. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.rc-meta { margin-top: var(--s2); color: var(--fg-subtle); font-size: var(--t-xs); }
+.site-link, .ci-mark { display: inline-flex; color: var(--fg-subtle); }
+.site-link:hover, .ci-mark:hover { color: var(--accent); }
+.ci-success { color: var(--primary); }
+.ci-failure { color: var(--danger); }
+.ci-running { color: var(--alert-warning); }
+
+/* Which collection a repository is in, when the vault has more than one. */
+.collection-chips { display: flex; flex-wrap: wrap; gap: var(--s2); margin-bottom: var(--s5); }
+.coll-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: var(--t-sm);
+  color: var(--fg);
+  min-height: var(--touch);
+}
+.coll-chip:hover { background: var(--surface-hover); text-decoration: none; }
+.coll-count { color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
+
+.lede { margin: calc(-1 * var(--s3)) 0 var(--s4); color: var(--fg-muted); font-size: var(--t-sm); }
+.vault-note { margin-top: var(--s5); }
 
 /* --- what a finger has to hit ---
 
@@ -977,7 +1157,7 @@ table.listing.roster td.right { width: 1%; white-space: nowrap; }
    buttons that were comfortable for a mouse simply become large enough to be
    hit by a thumb. */
 @media (pointer: coarse) {
-  .btn, .copy-btn, .seg a, .state-tab, .filter-chip { min-height: var(--touch); }
+  .btn, .copy-btn, .seg a, .state-tab, .filter-chip, .list-filter { min-height: var(--touch); }
   .dd-item, .find-item, .job-item, .wf-side .side-links a, .admin-side .side-links a {
     min-height: var(--touch);
   }

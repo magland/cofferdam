@@ -47,6 +47,8 @@ export interface ThemeVars {
   errBorder: string;
   /** The drop shadow under a popover menu. */
   shadow: string;
+  /** The dimming behind a dialog. */
+  overlay: string;
   /** The background of a file line someone linked to (#L12). */
   lineMark: string;
   /** Backgrounds for file content, text inputs, and inline code. */
@@ -114,6 +116,7 @@ export const THEMES: Theme[] = [
       errBg: '#fbe6e2',
       errBorder: '#b3261e55',
       shadow: 'rgba(43,38,33,0.16)',
+      overlay: 'rgba(43,38,33,0.32)',
       lineMark: '#f6ecd0',
       codeBg: '#fffdf9',
       inputBg: '#fffdf9',
@@ -162,6 +165,7 @@ export const THEMES: Theme[] = [
       errBg: '#ffebe9',
       errBorder: '#cf222e55',
       shadow: 'rgba(31,35,40,0.15)',
+      overlay: 'rgba(31,35,40,0.32)',
       lineMark: '#fff8c5',
       codeBg: '#ffffff',
       inputBg: '#ffffff',
@@ -210,6 +214,7 @@ export const THEMES: Theme[] = [
       errBg: '#fdeaed',
       errBorder: '#c02a3f55',
       shadow: 'rgba(28,30,43,0.16)',
+      overlay: 'rgba(28,30,43,0.34)',
       lineMark: '#eeecfb',
       codeBg: '#ffffff',
       inputBg: '#ffffff',
@@ -258,6 +263,7 @@ export const THEMES: Theme[] = [
       errBg: '#2d1417',
       errBorder: '#f8514966',
       shadow: 'rgba(1,4,9,0.85)',
+      overlay: 'rgba(1,4,9,0.66)',
       lineMark: '#2b2512',
       codeBg: '#0d1117',
       inputBg: '#0d1117',
@@ -306,6 +312,7 @@ export const THEMES: Theme[] = [
       errBg: '#2a1113',
       errBorder: '#dc262655',
       shadow: 'rgba(0,0,0,0.8)',
+      overlay: 'rgba(0,0,0,0.7)',
       lineMark: '#13251a',
       codeBg: '#0a0c0e',
       inputBg: '#0a0c0e',
@@ -351,9 +358,35 @@ function kebab(s: string): string {
   return s.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 }
 
-export function themeVarsCss(theme: Theme): string {
+export function themeVarsCss(theme: Theme, selector = ':root'): string {
   const decls = Object.entries(theme.vars)
     .map(([k, v]) => `  --${kebab(k)}: ${v};`)
     .join('\n');
-  return `:root {\n  color-scheme: ${theme.dark ? 'dark' : 'light'};\n${decls}\n}\n`;
+  return `${selector} {\n  color-scheme: ${theme.dark ? 'dark' : 'light'};\n${decls}\n}\n`;
+}
+
+/**
+ * Every theme's tokens in one stylesheet: the vault's own under :root, and all
+ * of them again under the attribute the page carries. The stylesheet is the
+ * same for every visitor and so stays cacheable, and a reader who has chosen a
+ * different appearance gets it by one attribute on <html> rather than by a
+ * request of their own. The cost is the four sets of tokens nobody is using,
+ * which is about four kilobytes.
+ */
+export function allThemeVarsCss(vault: Theme): string {
+  return (
+    themeVarsCss(vault) +
+    THEMES.map((t) => themeVarsCss(t, `[data-theme="${t.name}"]`)).join('')
+  );
+}
+
+/**
+ * The dark theme a light vault falls back to when the reader's system asks for
+ * dark and they have expressed no preference of their own. A vault whose theme
+ * is already dark keeps it: the operator has answered the question.
+ */
+export const DARK_COUNTERPART = 'midnight';
+
+export function darkFor(vault: Theme): string {
+  return vault.dark ? vault.name : DARK_COUNTERPART;
 }

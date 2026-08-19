@@ -17,11 +17,12 @@ import { registerPulls } from './pullweb';
 import { registerReleases } from './releases';
 import { createLfsStore } from './lfsstore';
 import { faviconSvg } from './logo';
+import { displayName, listCollections, listRepoDirs } from './scan';
 import { getViewer } from './session';
 import { registerSiteHost } from './site';
 import { isUnderSitesHost } from './siteshost';
 import { CSS } from './style';
-import { activeTheme, setActiveTheme, themeVarsCss } from './themes';
+import { activeTheme, allThemeVarsCss, findTheme, setActiveTheme } from './themes';
 import * as views from './views';
 import { registerWebOps } from './webops';
 
@@ -102,12 +103,14 @@ export function createApp(root: string) {
 
   const hlCache = new Map<string, string>();
   app.get('/assets/style.css', (_req, res) => {
-    const theme = activeTheme();
-    res.type('text/css').set('Cache-Control', 'no-cache').send(themeVarsCss(theme) + CSS);
+    res.type('text/css').set('Cache-Control', 'no-cache').send(allThemeVarsCss(activeTheme()) + CSS);
   });
-  app.get('/assets/hl.css', (_req, res) => {
-    // The name comes from the theme table, never from the request.
-    const name = activeTheme().hljs;
+  app.get('/assets/hl.css', (req, res) => {
+    // Code colours are a whole stylesheet rather than a set of tokens, so the
+    // reader's theme picks a file instead of an attribute. The name still
+    // comes from the theme table and never from the request: ?t= selects a
+    // theme by name, and an unknown one falls back to the vault's.
+    const name = (findTheme(String(req.query.t ?? '')) ?? activeTheme()).hljs;
     let css = hlCache.get(name);
     if (css === undefined) {
       try {
@@ -118,6 +121,18 @@ export function createApp(root: string) {
       hlCache.set(name, css);
     }
     res.type('text/css').set('Cache-Control', 'no-cache').send(css);
+  });
+  // Every repository the interface would show anyway, as a list of names, for
+  // the jump box to search without a round trip per keystroke. Anonymous, as
+  // browsing is: it says no more than the front page already does. It is not
+  // /api/repos, which is the authenticated interface for programs and carries
+  // much more per repository than a name.
+  app.get('/assets/repos.json', (_req, res) => {
+    const repos: string[] = [];
+    for (const c of listCollections(root)) {
+      for (const d of listRepoDirs(root, c.name)) repos.push(`${c.name}/${displayName(d)}`);
+    }
+    res.set('Cache-Control', 'no-cache').json(repos);
   });
   // KaTeX ships the stylesheet and fonts its output needs; serving them from
   // the installed package keeps rendered math working with no external

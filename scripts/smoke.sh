@@ -209,6 +209,33 @@ body_lacks() {
   if grep -q -e "$pattern" "$BODY"; then echo "FAIL: $desc (pattern unexpectedly found: $pattern)"; exit 1; fi
   PASS=$((PASS+1)); echo "ok: $desc"
 }
+# The stylesheet is every theme's palette followed by the structure, so asking
+# about a colour in it means asking about one part of it. These two look only
+# at the :root block, which is the vault's own theme and what a browser with no
+# choice stored gets.
+root_theme_has() {
+  local desc="$1" pattern="$2"
+  sed -n '/^:root {/,/^}/p' "$BODY" | grep -q -e "$pattern" \
+    || { echo "FAIL: $desc (not in :root: $pattern)"; sed -n '/^:root {/,/^}/p' "$BODY"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: $desc"
+}
+root_theme_lacks() {
+  local desc="$1" pattern="$2"
+  if sed -n '/^:root {/,/^}/p' "$BODY" | grep -q -e "$pattern"; then
+    echo "FAIL: $desc (unexpectedly in :root: $pattern)"; exit 1
+  fi
+  PASS=$((PASS+1)); echo "ok: $desc"
+}
+# And this looks only at the structure below the palettes, where a colour
+# literal would mean a new theme could not be added by editing themes.ts alone.
+structure_names_no_colour() {
+  local found
+  found="$(sed -n '/\/\* The scale\./,$p' "$BODY" | grep -niE '#[0-9a-fA-F]{3,8}\b|\brgba?\(' || true)"
+  if [ -n "$found" ]; then
+    echo "FAIL: the structural stylesheet names a colour directly"; echo "$found"; exit 1
+  fi
+  PASS=$((PASS+1)); echo "ok: the structure names no colour of its own"
+}
 # A repository is a bare repository plus the sibling directories it
 # accumulates beside it: .site, .runs, .issues, .pulls, .releases. Renaming
 # one must take all of them along and deleting one must take all of them away,
@@ -409,7 +436,7 @@ check "create an empty collection" 302 -b "$JAR" "$BASE/new/collection" \
 check "the empty collection has a page" 200 "$BASE/empties"
 body_has "and says it is empty" 'No repositories in this collection yet'
 check "the empty collection is listed" 200 "$BASE/"
-body_has "with no repositories in it" '>empties</a></td><td class="right muted">0 repositories'
+body_has "with no repositories in it" '<span>empties</span><span class="coll-count">0</span>'
 check "creating it twice is refused" 409 -b "$JAR" "$BASE/new/collection" \
   --data-urlencode "csrf=$CSRF" --data-urlencode name=empties
 check "a reserved collection name is refused" 400 -b "$JAR" "$BASE/new/collection" \
@@ -855,7 +882,14 @@ check "default theme is not github" 200 "$BASE/"
 body_has "default theme linked" 'style.css?t=paper'
 check "themed stylesheet" 200 "$BASE/assets/style.css?t=paper"
 body_has "theme variables emitted" '--accent:'
-body_lacks "no hardcoded github blue in structure" '#0969da'
+# Every theme's palette ships in the one stylesheet, so a reader switching
+# appearance changes an attribute rather than fetching a sheet. The vault's own
+# theme is the one at :root, which is what an unset browser gets.
+body_has "the vault's theme is the one at the root" ':root {'
+body_has "and the others ship under their own attribute" '\[data-theme="github"\] {'
+root_theme_has "the root is the vault's teal, not github's blue" '#0f6466'
+root_theme_lacks "which is the whole point of the root block" '#0969da'
+structure_names_no_colour
 check "highlight stylesheet follows the theme" 200 "$BASE/assets/hl.css?t=paper"
 
 check "admin index" 200 -b "$JAR" "$BASE/admin"
@@ -870,7 +904,7 @@ check "switch to github theme" 302 -b "$JAR" "$BASE/admin/appearance" \
 check "pages now use github theme" 200 "$BASE/"
 body_has "github theme linked" 'style.css?t=github'
 check "github stylesheet has github blue" 200 "$BASE/assets/style.css"
-body_has "github accent value" '#0969da'
+root_theme_has "and it is the root's accent now, not merely present" '#0969da'
 grep -q '"theme": "github"' "$VAULT/config.json" || { echo "FAIL: theme not persisted to config.json"; exit 1; }
 PASS=$((PASS+1)); echo "ok: theme persisted to config.json"
 

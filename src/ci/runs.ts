@@ -198,6 +198,29 @@ export function appendJobLog(
   fs.appendFileSync(jobLogPath(root, collection, repoName, n, jobId), ndjson);
 }
 
+/**
+ * The newest run, read without reading the rest. A listing of a whole vault
+ * asks this of every repository, so it finds the highest-numbered directory
+ * and reads that one file rather than parsing the hundred a repository may
+ * have kept.
+ */
+export function latestRun(root: string, collection: string, repoName: string): RunRecord | null {
+  const base = runsDir(root, collection, repoName);
+  if (!base) return null;
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(base);
+  } catch {
+    return null;
+  }
+  let max = 0;
+  for (const e of entries) {
+    const n = parseInt(e, 10);
+    if (Number.isInteger(n) && String(n) === e && n > max) max = n;
+  }
+  return max === 0 ? null : readJson<RunRecord>(path.join(base, String(max), 'run.json'));
+}
+
 export function listRuns(root: string, collection: string, repoName: string): RunRecord[] {
   const base = runsDir(root, collection, repoName);
   if (!base) return [];

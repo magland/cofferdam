@@ -9,6 +9,7 @@ import { isMarkdownFile, renderMarkdown } from './markdown';
 import { parsePointer } from './pointer';
 import { esc, highlightCode, isBinary } from './render';
 import { atomFeed } from './atom';
+import { latestRun } from './ci/runs';
 import { renderDiff } from './diff';
 import { displayName, isValidName, listCollections, listRepoDirs, repoDescription, siteDir } from './scan';
 import { getViewer } from './session';
@@ -38,9 +39,59 @@ export const IMAGE_TYPES: Record<string, string> = {
 };
 
 export function registerBrowse(app: Express, root: string, gates: Gates, lfs: LfsContext | null = null): void {
-  app.get('/', (req, res) => {
-    res.type('html').send(views.homePage(root, listCollections(root), getViewer(req, root)));
-  });
+  /**
+   * What a listing says about one repository. The three facts beyond the name
+   * come from three different places, so they are gathered once here and used
+   * by both the front page and a collection's own.
+   */
+  async function repoCards(req: Request, collection: string): Promise<views.RepoCard[]> {
+    return Promise.all(
+      listRepoDirs(root, collection).map(async (d) => {
+        const name = displayName(d);
+        const repo = new GitRepo(`${root}/${collection}/${d}`, collection, name);
+        // A repository with a site is linked straight to it from the listing,
+        // at its own origin where it has one, so a visitor scanning a
+        // collection reaches the published page without stopping at the
+        // repository first.
+        const hasSite = siteDir(root, collection, name) !== null;
+        const origin = hasSite ? siteHostUrl(root, req, collection, name) : null;
+        const run = latestRun(root, collection, name);
+        return {
+          collection,
+          name,
+          description: repoDescription(repo.dir),
+          updated: await repo.lastUpdated(),
+          siteUrl: !hasSite
+            ? null
+            : origin
+              ? `${origin}/`
+              : `/${encodeURIComponent(collection)}/${encodeURIComponent(name)}/site/`,
+          ci: run
+            ? {
+                conclusion: run.conclusion ?? null,
+                running: run.status !== 'completed',
+                url: `/${encodeURIComponent(collection)}/${encodeURIComponent(name)}/actions/runs/${run.number}`,
+              }
+            : null,
+        };
+      })
+    );
+  }
+
+  // Newest first is the default: a listing is read to see what has been
+  // happening, and only sometimes to find a name already known.
+  function sortParam(req: Request): 'recent' | 'name' {
+    return req.query.sort === 'name' ? 'name' : 'recent';
+  }
+
+  app.get(
+    '/',
+    ah(async (req, res) => {
+      const collections = listCollections(root);
+      const repos = (await Promise.all(collections.map((c) => repoCards(req, c.name)))).flat();
+      res.type('html').send(views.homePage(root, collections, repos, sortParam(req), getViewer(req, root)));
+    })
+  );
 
   app.get(
     '/:collection',
@@ -57,30 +108,9 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
         send404(res, `Collection ${collection} not found`, viewer);
         return;
       }
-      const dirs = listRepoDirs(root, collection);
-      const repoList = await Promise.all(
-        dirs.map(async (d) => {
-          const name = displayName(d);
-          const repo = new GitRepo(`${root}/${collection}/${d}`, collection, name);
-          // A repository with a site is linked straight to it from the listing,
-          // at its own origin where it has one, so a visitor scanning a
-          // collection reaches the published page without stopping at the
-          // repository first.
-          const hasSite = siteDir(root, collection, name) !== null;
-          const origin = hasSite ? siteHostUrl(root, req, collection, name) : null;
-          return {
-            name,
-            description: repoDescription(repo.dir),
-            updated: await repo.lastUpdated(),
-            siteUrl: !hasSite
-              ? null
-              : origin
-                ? `${origin}/`
-                : `/${encodeURIComponent(collection)}/${encodeURIComponent(name)}/site/`,
-          };
-        })
-      );
-      res.type('html').send(views.collectionPage(collection, repoList, viewer));
+      res
+        .type('html')
+        .send(views.collectionPage(collection, await repoCards(req, collection), sortParam(req), viewer));
     })
   );
 
