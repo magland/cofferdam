@@ -5,14 +5,13 @@ import { GitRepo, isValidRefName, isValidRepoPath } from './git';
 import { languageBreakdown } from './languages';
 import { LfsContext } from './lfsstore';
 import { isMarkdownFile, renderMarkdown } from './markdown';
-import { containedIn } from './ops';
 import { parsePointer } from './pointer';
 import { esc, highlightCode, isBinary } from './render';
 import { atomFeed } from './atom';
 import { renderDiff } from './diff';
-import { displayName, isValidName, listCollections, listRepoDirs, repoDescription, siteDir } from './scan';
-import { findRepo } from './scan';
+import { displayName, isValidName, listCollections, listRepoDirs, repoDescription } from './scan';
 import { getViewer } from './session';
+import { serveSite } from './site';
 import * as views from './views';
 import { encPath, repoUrl } from './views';
 import { LoadedRepo, ah, baseUrlOf, loadRepo, makeCtx, send404, wildcard } from './web';
@@ -508,89 +507,13 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
     })
   );
 
-  app.get(
-    '/:collection/:repo/site/*',
-    ah(async (req, res) => {
-      const repo = findRepo(root, req.params.collection, req.params.repo);
-      if (!repo) {
-        send404(res, `Repository ${req.params.collection}/${req.params.repo} not found`);
-        return;
-      }
-      const dir = siteDir(root, repo.collection, repo.name);
-      if (!dir) {
-        send404(
-          res,
-          `No site for ${repo.collection}/${repo.name}. Create a ${repo.name}.site directory next to the repository, with an index.html at its root.`
-        );
-        return;
-      }
-      // The real path of the site directory, which every path we serve has to
-      // sit under. It is resolved once here so that a vault reached through a
-      // symlinked root still compares equal.
-      let dirReal: string;
-      try {
-        dirReal = fs.realpathSync(dir);
-      } catch {
-        send404(res);
-        return;
-      }
-      const segs = wildcard(req)
-        .split('/')
-        .filter((s) => s !== '' && s !== '.');
-      if (segs.some((s) => s === '..' || s.includes('\0'))) {
-        send404(res);
-        return;
-      }
-      // Site content is written by whatever published it, which may be a
-      // workflow unpacking a tar, so it can contain symlinks. Refusing `..`
-      // segments stops a traversal spelled in the URL but not a link on disk
-      // pointing at /etc/passwd, at the vault's own files, or into another
-      // repository's site, which has a different owner. Every path we are
-      // about to read is therefore resolved and required to land strictly
-      // under dirReal; containedIn refuses the directory itself as well as
-      // anything outside it, so only files below the site root are servable.
-      //
-      // Resolving and then opening is two syscalls, so a link swapped in
-      // between them would still be followed. Closing that window means
-      // holding an open handle and checking what we hold, which is more
-      // machinery than this is worth; the interesting case is content that
-      // was already on disk when the request arrived.
-      const statInside = (p: string): fs.Stats | null => {
-        if (!containedIn(dirReal, p)) return null;
-        try {
-          return fs.statSync(p);
-        } catch {
-          return null;
-        }
-      };
-      const requested = path.join(dir, ...segs);
-      // The site root is the directory itself, which statInside refuses; it is
-      // still a directory request, and resolves to the index.html below it.
-      const isDir = segs.length === 0 || statInside(requested)?.isDirectory() === true;
-      let target = requested;
-      if (isDir) {
-        if (!req.path.endsWith('/')) {
-          res.redirect(`${req.path}/`);
-          return;
-        }
-        target = path.join(requested, 'index.html');
-      }
-      // A refused path answers exactly as a missing one does, so a prober
-      // learns nothing about what is really there from the difference.
-      const stat = statInside(target);
-      if (!stat || !stat.isFile()) {
-        const notFound = path.join(dir, '404.html');
-        const notFoundStat = statInside(notFound);
-        if (notFoundStat && notFoundStat.isFile()) {
-          res.status(404).sendFile(notFound);
-        } else {
-          send404(res, 'Page not found in this site');
-        }
-        return;
-      }
-      res.sendFile(target);
-    })
-  );
+  // Sites are served through src/site.ts, which both this route and the
+  // per-site hostname share. The mode is what differs: on the forge's own
+  // origin a site is sandboxed, because its script would otherwise run as the
+  // visitor.
+  app.get('/:collection/:repo/site/*', (req, res) => {
+    serveSite(root, req.params.collection, req.params.repo, req, res, 'sandbox');
+  });
 
   app.get('/:collection/:repo/site', (req, res) => {
     res.redirect(

@@ -133,6 +133,16 @@ body_has() {
   grep -q -e "$pattern" "$BODY" || { echo "FAIL: $desc (pattern not found: $pattern)"; head -c 2000 "$BODY"; echo; exit 1; }
   PASS=$((PASS+1)); echo "ok: $desc"
 }
+header_has() {
+  local desc="$1" pattern="$2"
+  grep -qi -e "$pattern" "$TMP/headers" || { echo "FAIL: $desc (header not found: $pattern)"; cat "$TMP/headers"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: $desc"
+}
+header_lacks() {
+  local desc="$1" pattern="$2"
+  if grep -qi -e "$pattern" "$TMP/headers"; then echo "FAIL: $desc (header unexpectedly found: $pattern)"; cat "$TMP/headers"; exit 1; fi
+  PASS=$((PASS+1)); echo "ok: $desc"
+}
 body_lacks() {
   local desc="$1" pattern="$2"
   if grep -q -e "$pattern" "$BODY"; then echo "FAIL: $desc (pattern unexpectedly found: $pattern)"; exit 1; fi
@@ -1359,6 +1369,56 @@ body_lacks "and the vault's users do not leak" 'tokens'
 check "a symlinked directory out of the site is not served" 404 "$BASE/pushed/created/site/etcdir"
 check "a symlink within the site still works" 200 "$BASE/pushed/created/site/inner.html"
 body_has "the in-site link serves its target" 'site ok'
+
+# Site files are the only bytes in the vault that someone other than the server
+# supplies and that come back as HTML. On the forge's own origin that would let
+# a site's script read the visitor's session, scrape the CSRF token out of any
+# page it can fetch, and act as them, which is a privilege escalation from push
+# scope on one repository to whatever the visitor can do. The sandbox puts the
+# document in an opaque origin instead.
+check "site response for the header checks" 200 -D "$TMP/headers" "$BASE/pushed/created/site/"
+header_has "the site response is sandboxed" 'content-security-policy: sandbox'
+header_lacks "without allow-same-origin, which is what makes the origin opaque" 'allow-same-origin'
+header_lacks "and without anything unsafe" 'unsafe'
+# Load-bearing: a page in an opaque origin cannot fetch its own sibling files
+# without it, and those fetches still carry no credentials.
+header_has "cross-origin reads of the site's own files are allowed" 'access-control-allow-origin: \*'
+header_has "and the type is not sniffed" 'x-content-type-options: nosniff'
+header_lacks "no session cookie is set on a site response" 'set-cookie'
+check "the site's own 404 response" 404 -D "$TMP/headers" "$BASE/pushed/created/site/nope.html"
+header_has "carries the sandbox too" 'content-security-policy: sandbox'
+header_has "and the cross-origin header" 'access-control-allow-origin: \*'
+# Only site responses. A forge page that allowed cross-origin reads would hand
+# any other site the contents of whatever the visitor can see.
+check "a forge page for comparison" 200 -D "$TMP/headers" -b "$JAR" "$BASE/pushed/created"
+header_lacks "forge pages allow no cross-origin reads" 'access-control-allow-origin'
+header_lacks "and are not sandboxed" 'content-security-policy'
+
+# ---- session cookie naming ----
+
+# Cookies are not scoped by origin, so a sibling subdomain of a shared parent
+# domain can set one named cofferdam_session with Domain=<parent> and shadow a
+# real session. Browsers refuse a __Host- cookie that carries Domain at all,
+# and the prefix is legal only with Secure and Path=/, so the name follows the
+# scheme.
+check "login over plain http" 302 -D "$TMP/headers" "$BASE/login" \
+  --data-urlencode username=owner --data-urlencode "token=$OWNER_TOKEN" --data-urlencode next=/
+header_has "keeps the bare cookie name" 'set-cookie: cofferdam_session='
+header_lacks "since __Host- would need Secure" '__Host-'
+check "login behind a TLS proxy" 302 -D "$TMP/headers" -H 'X-Forwarded-Proto: https' "$BASE/login" \
+  --data-urlencode username=owner --data-urlencode "token=$OWNER_TOKEN" --data-urlencode next=/
+header_has "uses the __Host- prefix" 'set-cookie: __Host-cofferdam_session='
+HOST_COOKIE="$({ grep -io 'set-cookie: __Host-cofferdam_session=[^;]*' "$TMP/headers" || true; } | head -1 | sed 's/^[Ss]et-[Cc]ookie: //')"
+[ -n "$HOST_COOKIE" ] || { echo "FAIL: no __Host- cookie to present back"; exit 1; }
+check "a request presenting the prefixed cookie is signed in" 200 \
+  -H 'X-Forwarded-Proto: https' -H "Cookie: $HOST_COOKIE" "$BASE/"
+body_has "as the owner" '>owner<'
+# A session minted before the prefix existed keeps working, or every signed-in
+# browser would be signed out by an upgrade.
+BARE_COOKIE="cofferdam_session=$(printf '%s' "$HOST_COOKIE" | sed 's/^__Host-cofferdam_session=//')"
+check "the old bare cookie name is still accepted over https" 200 \
+  -H 'X-Forwarded-Proto: https' -H "Cookie: $BARE_COOKIE" "$BASE/"
+body_has "and resolves to the same user" '>owner<'
 
 # ---- Git LFS: batch API and local transfer routes ----
 # All of this runs against the local backend, so the suite needs no bucket

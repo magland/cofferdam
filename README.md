@@ -33,7 +33,7 @@ See [Deploying a vault](docs/deploying.md) for that, for updating it afterwards,
 - **Issues and pull requests,** stored as markdown files in the vault. A pull request is merged as a merge commit or a squash, computed in the bare repository and refused on conflicts.
 - **Releases** attached to a tag, with the source archives as their downloads, and Atom feeds for releases and for any history.
 - **Workflows.** GitHub Actions workflows, planned by the server and executed by a runner you start elsewhere with Docker.
-- **Sites.** A static site per repository, published by a workflow or by copying files in.
+- **Sites.** A static site per repository, published by a workflow or by copying files in, sandboxed so its script cannot act as a signed-in visitor.
 - **Git.** Anonymous `git clone` over smart HTTP, token-authenticated `git push` including push-to-create, and Git LFS with objects in an S3-compatible bucket or inside the vault.
 - **A CLI and a JSON API** for users, collections, and importing existing repositories.
 

@@ -555,7 +555,7 @@ export function registerWebOps(
       const parts = parseMultipart(req.body, boundary);
       // The CSRF value rides in the same form, so it is compared from the
       // parsed parts: express did not fill in req.body for a multipart post.
-      if (!csrfMatches(partField(parts, 'csrf'), viewer)) {
+      if (!csrfMatches(req, partField(parts, 'csrf'), viewer)) {
         fail(res, 403, 'The form has expired; go back, reload the page, and try again.', viewer);
         return;
       }

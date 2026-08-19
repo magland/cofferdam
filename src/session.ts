@@ -18,7 +18,19 @@ import { AuthResult, TokenRecord, canAdmin, loadVault } from './vault';
 // token record found this way is the real one, which is why the session carries
 // no copy of the token's scope: canPush and canAdmin read it from the vault.
 
+// Cookies are not scoped by origin, so any document on any host under a shared
+// parent domain can set a cookie named cofferdam_session with
+// Domain=<parent>, which the browser then also sends here. With several vaults
+// on sibling subdomains of one domain, that lets one of them shadow another's
+// session. Browsers refuse a __Host--prefixed cookie that carries a Domain
+// attribute at all, which closes it.
+//
+// The prefix also requires Secure and Path=/, so the name is conditional on
+// exactly when the prefix is legal: setSessionCookie already sets path '/' and
+// sets secure from req.protocol, and a plain-http vault keeps the bare name.
+const HOST_COOKIE_NAME = '__Host-cofferdam_session';
 const COOKIE_NAME = 'cofferdam_session';
+const cookieName = (req: Request) => (req.protocol === 'https' ? HOST_COOKIE_NAME : COOKIE_NAME);
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 
 interface SessionPayload {
@@ -61,7 +73,7 @@ export function setSessionCookie(req: Request, res: Response, root: string, auth
     t: auth.token.hash,
   };
   const body = b64url(Buffer.from(JSON.stringify(payload), 'utf8'));
-  res.cookie(COOKIE_NAME, `${body}.${sign(root, body)}`, {
+  res.cookie(cookieName(req), `${body}.${sign(root, body)}`, {
     httpOnly: true,
     sameSite: 'lax',
     secure: req.protocol === 'https',
@@ -70,7 +82,10 @@ export function setSessionCookie(req: Request, res: Response, root: string, auth
   });
 }
 
+// Both names, since a session minted before the prefix existed, or over http
+// on a vault that has since gained TLS, is still a session to clear.
 export function clearSessionCookie(res: Response): void {
+  res.clearCookie(HOST_COOKIE_NAME, { path: '/' });
   res.clearCookie(COOKIE_NAME, { path: '/' });
 }
 
@@ -90,7 +105,11 @@ function parseCookies(header: string | undefined): Record<string, string> {
 }
 
 function readSession(req: Request, root: string): SessionPayload | null {
-  const raw = parseCookies(req.headers.cookie)[COOKIE_NAME];
+  // The prefixed name first, then the bare one, so a session minted before this
+  // existed survives. A sibling subdomain can still set the bare name, which is
+  // why the prefixed one wins when both arrive.
+  const cookies = parseCookies(req.headers.cookie);
+  const raw = cookies[HOST_COOKIE_NAME] ?? cookies[COOKIE_NAME];
   if (!raw) return null;
   const dot = raw.lastIndexOf('.');
   if (dot === -1) return null;
@@ -145,14 +164,44 @@ export function viewerIsAdmin(viewer: Viewer | null): boolean {
 
 export function checkCsrf(req: Request, viewer: Viewer): boolean {
   const presented = (req.body as Record<string, unknown> | undefined)?.csrf;
-  return typeof presented === 'string' && csrfMatches(presented, viewer);
+  return typeof presented === 'string' && csrfMatches(req, presented, viewer);
+}
+
+/**
+ * A state-changing request whose Origin names somewhere else is refused. This
+ * does nothing against same-origin script, which is what the site sandbox in
+ * src/site.ts closes; it is a few lines that catch a misconfigured proxy, and it
+ * belongs next to the CSRF check so the two are read together. An absent Origin
+ * is not a failure: plenty of legitimate clients send none.
+ */
+function originOk(req: Request): boolean {
+  const origin = req.get('origin');
+  // Absent is allowed. Literal "null" is not: that is an opaque origin, which
+  // is what a sandboxed document has, and nothing in the forge's own interface
+  // sends it.
+  if (!origin) return true;
+  if (origin === 'null') return false;
+  let u: URL;
+  try {
+    u = new URL(origin);
+  } catch {
+    return false;
+  }
+  // The hostname only, and not the scheme or the port. req.hostname honours
+  // X-Forwarded-Host, so it is the name the browser used; req.protocol is
+  // http on a vault behind a TLS proxy that is not trusted, and comparing it
+  // would then refuse every legitimate form on a merely misconfigured vault.
+  // An attacker who can answer for our hostname over plain http is already
+  // between the browser and the server.
+  return u.hostname.toLowerCase() === req.hostname.toLowerCase();
 }
 
 /**
  * The comparison behind checkCsrf, for a handler that has the value in hand
  * rather than in req.body - a multipart form, which express does not parse.
  */
-export function csrfMatches(presented: string, viewer: Viewer): boolean {
+export function csrfMatches(req: Request, presented: string, viewer: Viewer): boolean {
+  if (!originOk(req)) return false;
   const a = Buffer.from(presented);
   const b = Buffer.from(viewer.csrf);
   return a.length === b.length && crypto.timingSafeEqual(a, b);
