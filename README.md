@@ -18,7 +18,13 @@ cofferdam user add alice --scope 'alice/*'
 git push http://127.0.0.1:3000/alice/myrepo main
 ```
 
-By default the server binds 127.0.0.1. See [Deploying a vault](docs/deploying.md) for a remote one, which is the same server with a persistent disk and TLS in front.
+By default the server binds 127.0.0.1. A vault on the internet is the same server with a persistent disk and TLS in front, and one command puts it on Fly.io, owner token and login included:
+
+```bash
+cofferdam deploy fly my-vault-name       # -> https://my-vault-name.fly.dev
+```
+
+See [Deploying a vault](docs/deploying.md) for that, for updating it afterwards, and for hosting it on a machine of your own instead.
 
 ## What it does
 
@@ -56,7 +62,7 @@ There is no database and no state outside this directory, so backing up a vault 
 
 - [The vault](docs/vault.md): the layout on disk, and how signing in relates to the tokens git uses
 - [The command line](docs/cli.md): the `cofferdam` command, `cofferdam login`, pushing, importing, users, scopes, and the JSON API
-- [Deploying a vault](docs/deploying.md): Docker, automatic HTTPS with Caddy, and Fly.io
+- [Deploying a vault](docs/deploying.md): `cofferdam deploy fly`, Docker, and automatic HTTPS with Caddy
 - [Workflows](docs/workflows.md): what runs today, runners, artifacts, and the divergences from GitHub
 - [Git LFS](docs/lfs.md): storage backends, bucket configuration, and limitations
 - [Issues and pull requests](docs/issues-and-pull-requests.md), [Sites](docs/sites.md), [Themes](docs/themes.md)
