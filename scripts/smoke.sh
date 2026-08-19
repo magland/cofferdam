@@ -1288,6 +1288,128 @@ api "closing it instead works" 200 -H "$JSON_CT" \
   --data '{"state":"closed"}' "$BASE/api/repos/apis/repo/pulls/2/state"
 body_has "and records who closed it" '"closedBy":"owner"'
 
+# ---- writing a repository over the API ----
+
+api "api creates a repository, with a first commit in it" 201 -H "$JSON_CT" \
+  --data '{"collection":"apis","name":"made","description":"Made over the api","initReadme":true}' "$BASE/api/repos"
+body_has "reporting the commit it made" '"sha":"'
+check "and it is browsable" 200 "$BASE/apis/made"
+body_has "with its README rendered" 'Made over the api'
+api "creating it again is a conflict" 409 -H "$JSON_CT" \
+  --data '{"collection":"apis","name":"made"}' "$BASE/api/repos"
+api "a reserved suffix is refused" 400 -H "$JSON_CT" \
+  --data '{"collection":"apis","name":"thing.git"}' "$BASE/api/repos"
+api_as "creating outside your scope is refused" 403 "$ALICE_TOKEN" -H "$JSON_CT" \
+  --data '{"collection":"apis","name":"notmine"}' "$BASE/api/repos"
+
+# PUT creates or updates, so a caller that has read a file and means to change it
+# does not have to know which of the two it is doing.
+api "api writes a new file" 200 -X PUT -H "$JSON_CT" \
+  --data '{"branch":"main","message":"Add a.txt","content":"hello\n"}' "$BASE/api/repos/apis/made/contents/dir/a.txt"
+body_has "saying it created it" '"created":true'
+api "api writes over it" 200 -X PUT -H "$JSON_CT" \
+  --data '{"branch":"main","message":"Change a.txt","content":"goodbye\n"}' "$BASE/api/repos/apis/made/contents/dir/a.txt"
+body_lacks "and says it did not create it this time" '"created":true'
+api "the change is there to read" 200 "$BASE/api/repos/apis/made/contents/dir/a.txt"
+body_has "with the new content" '"content":"goodbye'
+API_MADE_SHA="$({ grep -o '"commit":"[0-9a-f]*"' "$BODY" || true; } | head -1 | cut -d'"' -f4)"
+
+# The stale-edit conflict the editor already implements, in the API's own shape.
+# A caller that reads, thinks, and writes is exactly the one that needs it.
+api "a write against the commit the caller last saw goes through" 200 -X PUT -H "$JSON_CT" \
+  --data "{\"branch\":\"main\",\"expectedSha\":\"$API_MADE_SHA\",\"message\":\"guarded\",\"content\":\"guarded\n\"}" \
+  "$BASE/api/repos/apis/made/contents/dir/a.txt"
+# The same request again: the branch has moved since, which is the whole reason
+# for sending the sha at all.
+api "and the same write again is a conflict, because the branch moved" 409 -X PUT -H "$JSON_CT" \
+  --data "{\"branch\":\"main\",\"expectedSha\":\"$API_MADE_SHA\",\"message\":\"stale\",\"content\":\"stale\n\"}" \
+  "$BASE/api/repos/apis/made/contents/dir/a.txt"
+api "a sha that names no commit here is a conflict too, not a 500" 409 -X PUT -H "$JSON_CT" \
+  --data '{"branch":"main","expectedSha":"0000000000000000000000000000000000000000","message":"stale","content":"x"}' \
+  "$BASE/api/repos/apis/made/contents/dir/a.txt"
+body_has "saying to read it again" 're-read the file'
+
+api "base64 content is accepted" 200 -X PUT -H "$JSON_CT" \
+  --data '{"branch":"main","encoding":"base64","content":"AAECAw==","message":"binary"}' "$BASE/api/repos/apis/made/contents/bin.dat"
+api "an unknown encoding is refused" 400 -X PUT -H "$JSON_CT" \
+  --data '{"branch":"main","encoding":"rot13","content":"x","message":"no"}' "$BASE/api/repos/apis/made/contents/x.txt"
+api "a write can make its own branch" 200 -X PUT -H "$JSON_CT" \
+  --data '{"branch":"main","newBranch":"from-api","message":"on a branch","content":"branchy\n"}' "$BASE/api/repos/apis/made/contents/b.txt"
+body_has "and says which branch it landed on" '"branch":"from-api"'
+api "a branch that already exists is a conflict, not a bad request" 409 -X PUT -H "$JSON_CT" \
+  --data '{"branch":"main","newBranch":"from-api","message":"again","content":"y"}' "$BASE/api/repos/apis/made/contents/c.txt"
+
+# Several files as one commit, which is what a caller changing three files as one
+# logical edit wants rather than three commits nobody chose.
+api "api commits several files at once" 200 -H "$JSON_CT" \
+  --data '{"branch":"main","message":"three at once","files":[{"path":"m/1.txt","content":"one"},{"path":"m/2.txt","content":"two"},{"path":"dir/a.txt","delete":true}]}' \
+  "$BASE/api/repos/apis/made/commits"
+body_has "counting what it wrote" '"files":2'
+body_has "and what it removed" '"removed":1'
+api "the tree is as the one commit left it" 200 "$BASE/api/repos/apis/made/paths"
+body_has "with the files it added" '"m/1.txt"'
+body_lacks "and without the one it removed" '"dir/a.txt"'
+api "an empty file list is refused" 400 -H "$JSON_CT" \
+  --data '{"branch":"main","files":[]}' "$BASE/api/repos/apis/made/commits"
+
+api "api deletes a file" 200 -X DELETE -H "$JSON_CT" \
+  --data '{"branch":"main","message":"drop it"}' "$BASE/api/repos/apis/made/contents/m/1.txt"
+api "deleting a file that is not there is a 404" 404 -X DELETE -H "$JSON_CT" \
+  --data '{"branch":"main"}' "$BASE/api/repos/apis/made/contents/nosuchfile"
+api_as "writing without push scope is refused" 403 "$ALICE_TOKEN" -X PUT -H "$JSON_CT" \
+  --data '{"branch":"main","content":"x","message":"no"}' "$BASE/api/repos/apis/made/contents/nope.txt"
+
+# A ref name may contain slashes, which is why deletion takes the name as a
+# wildcard rather than one path segment.
+api "api creates a branch" 201 -H "$JSON_CT" \
+  --data '{"name":"release/1.0","from":"main"}' "$BASE/api/repos/apis/made/branches"
+api "api deletes a branch whose name has a slash in it" 200 -X DELETE "$BASE/api/repos/apis/made/branches/release/1.0"
+body_has "naming what went" '"deleted":"release/1.0"'
+api "api creates a tag" 201 -H "$JSON_CT" \
+  --data '{"name":"v1.0.0","at":"main"}' "$BASE/api/repos/apis/made/tags"
+api "api lists it" 200 "$BASE/api/repos/apis/made/tags"
+body_has "among the tags" '"name":"v1.0.0"'
+api "api deletes the tag" 200 -X DELETE "$BASE/api/repos/apis/made/tags/v1.0.0"
+
+api "api changes the description and the default branch" 200 -X PATCH -H "$JSON_CT" \
+  --data '{"description":"Changed over the api","defaultBranch":"from-api"}' "$BASE/api/repos/apis/made"
+body_has "reporting the new default branch" '"defaultBranch":"from-api"'
+api "api changes it back" 200 -X PATCH -H "$JSON_CT" --data '{"defaultBranch":"main"}' "$BASE/api/repos/apis/made"
+api "changing nothing is a bad request rather than a no-op" 400 -X PATCH -H "$JSON_CT" \
+  --data '{}' "$BASE/api/repos/apis/made"
+
+api "api forks a repository" 201 -H "$JSON_CT" \
+  --data '{"collection":"apiforks"}' "$BASE/api/repos/apis/made/fork"
+body_has "recording where it came from" '"forkedFrom":{"collection":"apis","repo":"made"}'
+check "and the fork serves" 200 "$BASE/apiforks/made"
+api "api renames it" 200 -H "$JSON_CT" --data '{"name":"renamed"}' "$BASE/api/repos/apiforks/made/rename"
+check "at its new address" 200 "$BASE/apiforks/renamed"
+no_trace_of "and nothing of it is left under the old name" apiforks made
+
+# The API's equivalent of the web's typed confirmation. It costs nothing and it
+# makes an accidental DELETE from a loop over a listing impossible.
+api "deleting without a confirmation is refused" 400 -X DELETE "$BASE/api/repos/apiforks/renamed"
+body_has "saying what to send" 'confirm=apiforks/renamed'
+api "so is the wrong confirmation" 400 -X DELETE "$BASE/api/repos/apiforks/renamed?confirm=apiforks/wrong"
+api "with the right one it goes" 200 -X DELETE "$BASE/api/repos/apiforks/renamed?confirm=apiforks/renamed"
+check "and it is gone" 404 "$BASE/apiforks/renamed"
+no_trace_of "with every sibling directory of it" apiforks renamed
+
+# The divergence most likely to be missed: a commit made over the API is a push
+# as far as workflows are concerned, so it plans a run exactly as a git push does.
+api "api commits a workflow file" 200 -X PUT -H "$JSON_CT" \
+  --data '{"branch":"main","message":"Add a workflow","content":"name: From the api\non: [push]\njobs:\n  one:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n"}' \
+  "$BASE/api/repos/apis/made/contents/.github/workflows/api.yml"
+API_RUN=""
+for _ in $(seq 1 50); do
+  if [ -d "$VAULT/apis/made.runs" ] && [ -n "$(ls "$VAULT/apis/made.runs" 2>/dev/null)" ]; then API_RUN=1; break; fi
+  sleep 0.2
+done
+[ -n "$API_RUN" ] || { echo "FAIL: a commit made over the API did not trigger a workflow run"; exit 1; }
+PASS=$((PASS+1)); echo "ok: a commit made over the API triggers a workflow run, as a push does"
+check "and the run is listed on the web" 200 "$BASE/apis/made/actions"
+body_has "under the workflow's name" 'From the api'
+
 # ---- cofferdam login: the token in git's credential store ----
 
 # An isolated HOME so this never touches the developer's own git configuration,
@@ -1481,6 +1603,47 @@ body_has "including the merged one" 'Add a thing'
 run_ok "pr view" cli pr view 1 --repo apis/repo
 body_has "saying it was merged" 'merged'
 run_code "pr merge on a closed pull request exits 5" 5 cli pr merge 2 --repo apis/repo
+
+# Writing, from the command line. --yes rather than a prompt on everything
+# destructive: a prompt is no use to a caller that is not a person, and a command
+# that prompts is a command that hangs in a container.
+run_ok "repo create" cli repo create clirepos/made --description "Made from the cli" --readme
+body_has "printing its url" "$BASE/clirepos/made"
+run_ok "file write from stdin" \
+  sh -c "printf 'written from the cli\n' | $(printf '%s ' env HOME="$CRED_HOME" XDG_CONFIG_HOME="$CRED_HOME/.config" GIT_CONFIG_GLOBAL="$CRED_HOME/.gitconfig" GIT_ASKPASS="$TMP/askpass") node dist/index.js file write notes.md --repo clirepos/made --message 'Add notes'"
+body_has "saying what it did" 'Created notes.md on main'
+run_ok "file view reads it back" cli file view notes.md --repo clirepos/made
+body_has "with the content" 'written from the cli'
+run_ok "the commit to hand back is available" cli file view notes.md --repo clirepos/made --json=commit
+CLI_SHA="$({ grep -o '"commit": "[0-9a-f]*"' "$BODY" || true; } | head -1 | cut -d'"' -f4)"
+run_ok "a guarded write goes through" \
+  cli file write notes.md --repo clirepos/made --body "second" --expected-sha "$CLI_SHA" --message "Second"
+run_code "and the same one again exits 5" 5 \
+  cli file write notes.md --repo clirepos/made --body "third" --expected-sha "$CLI_SHA" --message "Third"
+
+run_ok "branch create" cli branch create topic --repo clirepos/made
+run_ok "branch list shows it" cli branch list --repo clirepos/made
+body_has "among the branches" 'topic'
+run_code "branch delete refuses without --yes" 2 cli branch delete topic --repo clirepos/made
+err_has "and says what to pass" -- '--yes'
+run_ok "branch delete with --yes" cli branch delete topic --repo clirepos/made --yes
+run_ok "tag create" cli tag create v0.1.0 --repo clirepos/made
+run_ok "tag list shows it" cli tag list --repo clirepos/made
+body_has "among the tags" 'v0.1.0'
+run_ok "tag delete with --yes" cli tag delete v0.1.0 --repo clirepos/made --yes
+run_code "file delete refuses without --yes" 2 cli file delete notes.md --repo clirepos/made
+run_ok "file delete with --yes" cli file delete notes.md --repo clirepos/made --yes
+
+run_ok "repo edit" cli repo edit clirepos/made --description "Edited from the cli"
+run_ok "repo view shows the change" cli repo view clirepos/made
+body_has "with the new description" 'Edited from the cli'
+run_ok "repo clone fills in the vault url" \
+  sh -c "rm -rf '$TMP/cliclone' && cd '$TMP' && $(printf '%s ' env HOME="$CRED_HOME" XDG_CONFIG_HOME="$CRED_HOME/.config" GIT_CONFIG_GLOBAL="$CRED_HOME/.gitconfig" GIT_ASKPASS="$TMP/askpass") node '$PWD/dist/index.js' repo clone clirepos/made cliclone"
+[ -d "$TMP/cliclone/.git" ] || { echo "FAIL: repo clone produced no clone"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the clone is there"
+run_code "repo delete refuses without --yes" 2 cli repo delete clirepos/made
+run_ok "repo delete with --yes" cli repo delete clirepos/made --yes
+check "and the repository is gone" 404 "$BASE/clirepos/made"
 run_code "and a conflict is reported with its paths" 5 cli pr merge 2 --repo apis/repo
 err_has "naming the file that conflicts" 'This pull request is not open'
 

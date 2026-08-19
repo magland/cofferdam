@@ -1,5 +1,7 @@
+import { spawn } from 'child_process';
 import { api, request } from '../cli-api';
-import { CliError, EXIT_USAGE, exitCodeForStatus } from './exit';
+import { CliError, EXIT_FAIL, EXIT_USAGE, exitCodeForStatus } from './exit';
+import { readFileArg } from './input';
 import { JSON_OPTION, jsonMode, pickFields, pickObject, printJson, printTable, shortDate } from './output';
 import { Command, OptionSpec } from './parse';
 import { REPO_OPTION, repoPath, resolveRepo } from './repo';
@@ -16,6 +18,19 @@ const REF_OPTION: OptionSpec = {
   value: '<r>',
   summary: 'Branch, tag, or commit; the default branch otherwise',
 };
+
+// Every destructive command takes --yes and refuses without it, rather than
+// prompting. A prompt is no use to a caller that is not a person, and a command
+// that prompts is a command that hangs in a container.
+const YES_OPTION: OptionSpec = {
+  name: 'yes',
+  type: 'boolean',
+  summary: 'Required: confirm that this cannot be undone',
+};
+
+function requireYes(inv: { bool(name: string): boolean }, what: string): void {
+  if (!inv.bool('yes')) throw new CliError(`${what} cannot be undone. Pass --yes to go ahead.`, EXIT_USAGE);
+}
 
 function refQuery(ref: string | null, extra: Record<string, string> = {}): string {
   const q = new URLSearchParams(extra);
@@ -82,6 +97,160 @@ export const repoCommands: Command[] = [
     },
   },
   {
+    path: ['repo', 'create'],
+    summary: 'Create an empty repository, or one with a README in it',
+    args: [{ name: 'collection/name', required: true }],
+    options: [
+      { name: 'description', type: 'string', value: '<d>', summary: 'One-line description' },
+      { name: 'readme', type: 'boolean', summary: 'Add a first commit with a README.md' },
+      JSON_OPTION,
+      ...TARGET_OPTIONS,
+    ],
+    async run(inv) {
+      const parts = inv.args[0].split('/');
+      if (parts.length !== 2 || !parts[0] || !parts[1]) {
+        throw new CliError('name the repository as <collection>/<name>', EXIT_USAGE);
+      }
+      const target = await targetFrom(inv);
+      const data = await api(target, 'POST', '/api/repos', {
+        collection: parts[0],
+        name: parts[1],
+        description: inv.str('description') ?? undefined,
+        initReadme: inv.bool('readme'),
+      });
+      const json = jsonMode(inv);
+      if (json.enabled) {
+        printJson(pickObject(data, json.fields));
+        return;
+      }
+      console.log(`${target.host}/${data.collection}/${data.name}`);
+    },
+  },
+  {
+    path: ['repo', 'fork'],
+    summary: 'Copy a repository into another collection',
+    args: [
+      { name: 'repo', required: true },
+      { name: 'collection[/name]', required: true },
+    ],
+    options: [JSON_OPTION, ...TARGET_OPTIONS],
+    async run(inv) {
+      const target = await targetFrom(inv);
+      const source = await resolveRepo(inv, target, inv.args[0]);
+      const parts = inv.args[1].split('/');
+      const data = await api(target, 'POST', `${repoPath(source)}/fork`, {
+        collection: parts[0],
+        name: parts[1] ?? undefined,
+      });
+      const json = jsonMode(inv);
+      if (json.enabled) {
+        printJson(pickObject(data, json.fields));
+        return;
+      }
+      console.log(`${target.host}/${data.collection}/${data.name}`);
+    },
+  },
+  {
+    path: ['repo', 'edit'],
+    summary: 'Change a repository description or default branch',
+    args: [{ name: 'repo' }],
+    options: [
+      { name: 'description', type: 'string', value: '<d>', summary: 'New description' },
+      { name: 'default-branch', type: 'string', value: '<b>', summary: 'New default branch' },
+      JSON_OPTION,
+      ...COMMON,
+    ],
+    async run(inv) {
+      const description = inv.str('description');
+      const defaultBranch = inv.str('default-branch');
+      if (description === null && defaultBranch === null) {
+        throw new CliError('Nothing to change. Pass --description or --default-branch.', EXIT_USAGE);
+      }
+      const target = await targetFrom(inv);
+      const repo = await resolveRepo(inv, target, inv.args[0] ?? null);
+      const data = await api(target, 'PATCH', repoPath(repo), {
+        description: description ?? undefined,
+        defaultBranch: defaultBranch ?? undefined,
+      });
+      const json = jsonMode(inv);
+      if (json.enabled) {
+        printJson(pickObject(data, json.fields));
+        return;
+      }
+      console.log(`Updated ${data.collection}/${data.name}`);
+    },
+  },
+  {
+    path: ['repo', 'rename'],
+    summary: 'Rename a repository, or move it to another collection',
+    description: `A repository is a bare repository plus the directories it keeps beside it, for
+its issues, pull requests, releases, site, and run history. All of them move
+together.`,
+    args: [
+      { name: 'repo', required: true },
+      { name: 'new-name', required: true },
+    ],
+    options: [
+      { name: 'collection', type: 'string', value: '<c>', summary: 'Move it to this collection as well' },
+      JSON_OPTION,
+      ...TARGET_OPTIONS,
+    ],
+    async run(inv) {
+      const target = await targetFrom(inv);
+      const repo = await resolveRepo(inv, target, inv.args[0]);
+      const data = await api(target, 'POST', `${repoPath(repo)}/rename`, {
+        name: inv.args[1],
+        collection: inv.str('collection') ?? undefined,
+      });
+      const json = jsonMode(inv);
+      if (json.enabled) {
+        printJson(pickObject(data, json.fields));
+        return;
+      }
+      console.log(`Now ${data.collection}/${data.name}`);
+    },
+  },
+  {
+    path: ['repo', 'delete'],
+    summary: 'Delete a repository and everything beside it',
+    args: [{ name: 'repo', required: true }],
+    options: [YES_OPTION, JSON_OPTION, ...TARGET_OPTIONS],
+    async run(inv) {
+      requireYes(inv, 'Deleting a repository');
+      const target = await targetFrom(inv);
+      const repo = await resolveRepo(inv, target, inv.args[0]);
+      const full = `${repo.collection}/${repo.repo}`;
+      const data = await api(target, 'DELETE', `${repoPath(repo)}?confirm=${encodeURIComponent(full)}`);
+      const json = jsonMode(inv);
+      if (json.enabled) {
+        printJson(pickObject(data, json.fields));
+        return;
+      }
+      console.log(`Deleted ${full}`);
+    },
+  },
+  {
+    path: ['repo', 'clone'],
+    summary: 'git clone, with the vault URL filled in',
+    description: `A thin wrapper over git clone. The URL is otherwise assembled by hand from the
+login, and the credential arrangement is already in place, so this saves the
+assembling and nothing else.`,
+    args: [{ name: 'repo', required: true }, { name: 'directory' }],
+    options: [...TARGET_OPTIONS],
+    async run(inv) {
+      const target = await targetFrom(inv);
+      const repo = await resolveRepo(inv, target, inv.args[0]);
+      const url = `${target.host}/${repo.collection}/${repo.repo}`;
+      const args = ['clone', url, ...(inv.args[1] ? [inv.args[1]] : [])];
+      const code = await new Promise<number>((resolve) => {
+        const child = spawn('git', args, { stdio: 'inherit' });
+        child.on('error', () => resolve(EXIT_FAIL));
+        child.on('close', (c) => resolve(c ?? EXIT_FAIL));
+      });
+      if (code !== 0) process.exit(code);
+    },
+  },
+  {
     path: ['branch', 'list'],
     summary: 'List branches',
     options: [JSON_OPTION, ...COMMON],
@@ -106,6 +275,47 @@ export const repoCommands: Command[] = [
     },
   },
   {
+    path: ['branch', 'create'],
+    summary: 'Create a branch at a ref',
+    args: [{ name: 'name', required: true }, { name: 'from' }],
+    options: [JSON_OPTION, ...COMMON],
+    async run(inv) {
+      const target = await targetFrom(inv);
+      const repo = await resolveRepo(inv, target);
+      const from = inv.args[1] ?? null;
+      const data = await api(target, 'POST', `${repoPath(repo)}/branches`, {
+        name: inv.args[0],
+        // No `from` means from the default branch, which is what a caller
+        // starting a branch almost always means.
+        from: from ?? (await api(target, 'GET', `${repoPath(repo)}/branches`)).defaultBranch,
+      });
+      const json = jsonMode(inv);
+      if (json.enabled) {
+        printJson(pickObject(data, json.fields));
+        return;
+      }
+      console.log(`Created ${data.name} at ${String(data.sha).slice(0, 10)}`);
+    },
+  },
+  {
+    path: ['branch', 'delete'],
+    summary: 'Delete a branch',
+    args: [{ name: 'name', required: true }],
+    options: [YES_OPTION, JSON_OPTION, ...COMMON],
+    async run(inv) {
+      requireYes(inv, 'Deleting a branch');
+      const target = await targetFrom(inv);
+      const repo = await resolveRepo(inv, target);
+      const data = await api(target, 'DELETE', `${repoPath(repo)}/branches/${inv.args[0]}`);
+      const json = jsonMode(inv);
+      if (json.enabled) {
+        printJson(pickObject(data, json.fields));
+        return;
+      }
+      console.log(`Deleted ${data.deleted}`);
+    },
+  },
+  {
     path: ['tag', 'list'],
     summary: 'List tags',
     options: [JSON_OPTION, ...COMMON],
@@ -124,6 +334,45 @@ export const repoCommands: Command[] = [
         return;
       }
       printTable(tags.map((t) => [String(t.name), String(t.sha).slice(0, 10), shortDate(t.date as string), String(t.subject ?? '')]));
+    },
+  },
+  {
+    path: ['tag', 'create'],
+    summary: 'Create a tag at a ref',
+    args: [{ name: 'name', required: true }, { name: 'at' }],
+    options: [JSON_OPTION, ...COMMON],
+    async run(inv) {
+      const target = await targetFrom(inv);
+      const repo = await resolveRepo(inv, target);
+      const at = inv.args[1] ?? null;
+      const data = await api(target, 'POST', `${repoPath(repo)}/tags`, {
+        name: inv.args[0],
+        at: at ?? (await api(target, 'GET', `${repoPath(repo)}/branches`)).defaultBranch,
+      });
+      const json = jsonMode(inv);
+      if (json.enabled) {
+        printJson(pickObject(data, json.fields));
+        return;
+      }
+      console.log(`Created ${data.name} at ${String(data.sha).slice(0, 10)}`);
+    },
+  },
+  {
+    path: ['tag', 'delete'],
+    summary: 'Delete a tag',
+    args: [{ name: 'name', required: true }],
+    options: [YES_OPTION, JSON_OPTION, ...COMMON],
+    async run(inv) {
+      requireYes(inv, 'Deleting a tag');
+      const target = await targetFrom(inv);
+      const repo = await resolveRepo(inv, target);
+      const data = await api(target, 'DELETE', `${repoPath(repo)}/tags/${inv.args[0]}`);
+      const json = jsonMode(inv);
+      if (json.enabled) {
+        printJson(pickObject(data, json.fields));
+        return;
+      }
+      console.log(`Deleted ${data.deleted}`);
     },
   },
   {
@@ -222,6 +471,80 @@ were the file, since the bytes are elsewhere.`,
         process.exit(EXIT_USAGE);
       }
       process.stdout.write(String(data.content ?? ''));
+    },
+  },
+  {
+    path: ['file', 'write'],
+    summary: 'Create or replace a file, committing the change',
+    description: `The content comes from --body-file, or from --body, or from stdin when neither is
+given, so a generated file can be piped straight in.
+
+--expected-sha is the commit the caller last saw. Given one, a branch that has
+moved since is a conflict (exit 5) rather than a silent overwrite, which is what a
+caller that reads, thinks, and then writes wants. 'cofferdam file view <path>
+--json=commit' is where that value comes from.`,
+    args: [{ name: 'path', required: true }],
+    options: [
+      { name: 'branch', type: 'string', value: '<b>', summary: 'Branch to commit on; the default branch otherwise' },
+      { name: 'new-branch', type: 'string', value: '<b>', summary: 'Create this branch and commit there instead' },
+      { name: 'message', type: 'string', value: '<m>', summary: 'Commit message' },
+      { name: 'body', type: 'string', value: '<t>', summary: 'The file content' },
+      { name: 'body-file', type: 'string', value: '<f>', summary: "Read the content from a file, or '-' for stdin" },
+      { name: 'expected-sha', type: 'string', value: '<s>', summary: 'The commit the caller last saw at the branch tip' },
+      JSON_OPTION,
+      ...COMMON,
+    ],
+    async run(inv) {
+      const target = await targetFrom(inv);
+      const repo = await resolveRepo(inv, target);
+      const inline = inv.str('body');
+      const file = inv.str('body-file');
+      if (inline !== null && file !== null) {
+        throw new CliError('Pass either --body or --body-file, not both.', EXIT_USAGE);
+      }
+      const content = inline !== null ? inline : await readFileArg(file ?? '-');
+      const data = await api(target, 'PUT', `${repoPath(repo)}/contents/${inv.args[0].replace(/^\/+/, '')}`, {
+        branch: inv.str('branch') ?? (await api(target, 'GET', `${repoPath(repo)}/branches`)).defaultBranch ?? 'main',
+        newBranch: inv.str('new-branch') ?? undefined,
+        message: inv.str('message') ?? undefined,
+        expectedSha: inv.str('expected-sha') ?? undefined,
+        content,
+      });
+      const json = jsonMode(inv);
+      if (json.enabled) {
+        printJson(pickObject(data, json.fields));
+        return;
+      }
+      console.log(`${data.created ? 'Created' : 'Updated'} ${data.path} on ${data.branch} as ${String(data.sha).slice(0, 10)}`);
+    },
+  },
+  {
+    path: ['file', 'delete'],
+    summary: 'Delete a file, committing the change',
+    args: [{ name: 'path', required: true }],
+    options: [
+      { name: 'branch', type: 'string', value: '<b>', summary: 'Branch to commit on; the default branch otherwise' },
+      { name: 'message', type: 'string', value: '<m>', summary: 'Commit message' },
+      { name: 'expected-sha', type: 'string', value: '<s>', summary: 'The commit the caller last saw at the branch tip' },
+      YES_OPTION,
+      JSON_OPTION,
+      ...COMMON,
+    ],
+    async run(inv) {
+      requireYes(inv, 'Deleting a file');
+      const target = await targetFrom(inv);
+      const repo = await resolveRepo(inv, target);
+      const data = await api(target, 'DELETE', `${repoPath(repo)}/contents/${inv.args[0].replace(/^\/+/, '')}`, {
+        branch: inv.str('branch') ?? (await api(target, 'GET', `${repoPath(repo)}/branches`)).defaultBranch ?? 'main',
+        message: inv.str('message') ?? undefined,
+        expectedSha: inv.str('expected-sha') ?? undefined,
+      });
+      const json = jsonMode(inv);
+      if (json.enabled) {
+        printJson(pickObject(data, json.fields));
+        return;
+      }
+      console.log(`Deleted ${data.path} on ${data.branch} as ${String(data.sha).slice(0, 10)}`);
     },
   },
   {

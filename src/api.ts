@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import express, { Express, Request, Response } from 'express';
 import * as ops from './ops';
-import { OpError } from './ops';
+import { MAX_UPLOAD_SIZE, OpError } from './ops';
 import { displayName, isValidName, listCollections, listRepoDirs } from './scan';
 import { addUserToken, canAdmin, canCreateCollection, grantScope, loadVault } from './vault';
 import { apiError, requireApiAuth as authenticateRequest } from './api/auth';
@@ -12,6 +12,7 @@ import { registerContentsApi } from './api/contents';
 import { registerIssueApi } from './api/issues';
 import { registerPullApi } from './api/pulls';
 import { registerRepoApi } from './api/repos';
+import { registerWriteApi } from './api/write';
 
 // The bearer-token JSON API used by the cofferdam CLI. Only Bearer tokens are
 // accepted; session cookies never authorize API calls.
@@ -23,7 +24,10 @@ export function registerApi(
   gates: Gates,
   engine?: CiEngine
 ): void {
-  app.use('/api', express.json());
+  // A write route carries a file in its body, so the limit is the one the upload
+  // route already applies rather than express's 100 kB default. Anything larger
+  // belongs in a push, or in Git LFS.
+  app.use('/api', express.json({ limit: MAX_UPLOAD_SIZE }));
 
   // The routes are split by subject, mirroring the split the HTML modules
   // already have, so that no one file grows unmanageable. Each of them calls the
@@ -33,6 +37,7 @@ export function registerApi(
   registerContentsApi(app, root, authLimiter, gates);
   registerIssueApi(app, root, authLimiter);
   registerPullApi(app, root, authLimiter, engine);
+  registerWriteApi(app, root, authLimiter, engine);
 
   // Both helpers live in src/api/auth.ts now that more than one file of routes
   // uses them; this closure only saves passing root at every call site.

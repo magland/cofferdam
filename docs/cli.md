@@ -94,6 +94,43 @@ cofferdam search 'needle'
 
 Which repository a command is about is resolved in this order: the positional argument or `--repo <collection>/<repo>`, then `COFFERDAM_REPO`, then the git remote in the current directory that points at the vault you are logged in to, preferring `origin`. A remote for some other host is not an answer, so a clone of a GitHub repository is never read as naming something here. Failing all three, the command says so and names all three.
 
+### Changing a repository
+
+```bash
+cofferdam repo create mycollection/thing --description 'A thing' --readme
+cofferdam repo edit --description 'A better thing'
+cofferdam repo fork demo/proj myfork
+cofferdam repo rename demo/proj newname --collection othercollection
+cofferdam repo delete demo/old --yes
+cofferdam repo clone demo/proj
+
+cofferdam branch create topic
+cofferdam branch delete topic --yes
+cofferdam tag create v1.0.0 main
+cofferdam tag delete v1.0.0 --yes
+
+cofferdam file write notes.md --message 'Add notes' < notes.md
+cofferdam file delete notes.md --yes
+```
+
+Everything destructive takes `--yes` and refuses without it, rather than prompting: a prompt is no use to a caller that is not a person, and a command that prompts is a command that hangs in a container.
+
+`cofferdam file write` reads the content from `--body`, from `--body-file`, or from stdin when neither is given, so a generated file can be piped straight in. Given `--expected-sha`, a branch that has moved since is a conflict (exit 5) rather than a silent overwrite, which is exactly what a caller that reads, thinks, and then writes wants:
+
+```bash
+sha="$(cofferdam file view config.json --json=commit | jq -r .commit)"
+# ... work out the new content ...
+cofferdam file write config.json --expected-sha "$sha" --body-file new.json
+```
+
+Several files as one commit is a single call, since three files changed as one logical edit should be one commit and not three:
+
+```bash
+cofferdam api repos/demo/proj/commits -X POST --input change.json
+```
+
+A commit made this way is a push as far as workflows are concerned, so it triggers the same runs a `git push` would.
+
 ### Issues and pull requests
 
 ```bash

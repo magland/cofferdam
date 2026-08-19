@@ -5,6 +5,7 @@ import * as path from 'path';
 import { writeFileAtomic } from './atomic';
 import { GitRepo, execGit, execGitStatus, isValidRefName, isValidRepoPath, isValidSha } from './git';
 import type { LfsStore } from './lfsstore';
+import { looksLikePointer } from './pointer';
 import { displayName, findRepo, isValidName, repoSiblingSuffixes, reservedRepoSuffix } from './scan';
 
 // The shared write-operations layer. Every function takes explicit arguments
@@ -24,6 +25,21 @@ export interface CommitAuthor {
   name: string;
   email: string;
 }
+
+/**
+ * The largest single file a commit made through the server may carry. Both
+ * transports use it, so that what the browser refuses to edit is what the API
+ * refuses to write.
+ */
+export const MAX_EDIT_SIZE = 1024 * 1024;
+
+/**
+ * What one upload or one multi-file commit may carry in total. Big enough for
+ * the images and fixtures people add through a browser, small enough that the
+ * body can be held whole while it is parsed; anything larger belongs in a push,
+ * or in Git LFS.
+ */
+export const MAX_UPLOAD_SIZE = 25 * 1024 * 1024;
 
 function authorEnv(author: CommitAuthor): NodeJS.ProcessEnv {
   return {
@@ -154,6 +170,15 @@ async function entryMode(repoDir: string, commit: string, filePath: string): Pro
   return m[1];
 }
 
+/** What a single-file commit does to the path. */
+export type FileAction =
+  | { kind: 'create'; content: Buffer }
+  // toPath renames the file in the same commit: the old path is removed and
+  // the content written at the new one, so a rename is one commit and not a
+  // delete followed by a create.
+  | { kind: 'edit'; content: Buffer; toPath?: string }
+  | { kind: 'delete' };
+
 interface FileCommitArgs {
   branch: string;
   filePath: string;
@@ -164,13 +189,7 @@ interface FileCommitArgs {
   // optimistic concurrency: if the branch has moved, the update fails with a
   // 'conflict' OpError instead of clobbering.
   expectedHead: string | null;
-  action:
-    | { kind: 'create'; content: Buffer }
-    // toPath renames the file in the same commit: the old path is removed and
-    // the content written at the new one, so a rename is one commit and not a
-    // delete followed by a create.
-    | { kind: 'edit'; content: Buffer; toPath?: string }
-    | { kind: 'delete' };
+  action: FileAction;
 }
 
 export interface UploadedFile {
@@ -189,13 +208,32 @@ export interface UploadedFile {
  */
 export async function commitFiles(
   repoDir: string,
-  args: { branch: string; files: UploadedFile[]; message: string; author: CommitAuthor; expectedHead: string | null }
+  args: {
+    branch: string;
+    files: UploadedFile[];
+    message: string;
+    author: CommitAuthor;
+    expectedHead: string | null;
+    /**
+     * Paths to remove in the same commit. An upload never has any; a caller
+     * changing three files as one logical edit may well be deleting a fourth,
+     * and splitting that into two commits would record a state nobody chose.
+     */
+    removals?: string[];
+  }
 ): Promise<string> {
   const { branch, files, message, author, expectedHead } = args;
+  const removals = args.removals ?? [];
   if (!isValidRefName(branch) || branch.startsWith('-')) throw new OpError('invalid branch name');
-  if (files.length === 0) throw new OpError('no files to commit');
+  if (files.length === 0 && removals.length === 0) throw new OpError('no files to commit');
   for (const file of files) {
     if (!isValidRepoPath(file.path) || file.path === '') throw new OpError(`invalid file path: ${file.path}`);
+  }
+  for (const target of removals) {
+    if (!isValidRepoPath(target) || target === '') throw new OpError(`invalid file path: ${target}`);
+  }
+  if (removals.length && expectedHead === null) {
+    throw new OpError('cannot delete a file on a branch that does not exist yet');
   }
   if (expectedHead !== null && !isValidSha(expectedHead)) throw new OpError('invalid expected commit');
 
@@ -224,6 +262,18 @@ export async function commitFiles(
         fs.rmSync(contentFile, { force: true });
       }
       await execGit(repoDir, ['update-index', '--add', '--cacheinfo', `${mode},${blobSha},${file.path}`], { env });
+    }
+
+    for (const target of removals) {
+      if (!(await entryExists(repoDir, expectedHead!, target))) {
+        throw new OpError(`${target} does not exist on ${branch}`, 'notfound');
+      }
+      // update-index --force-remove insists on a work tree; a zero-mode entry
+      // fed to --index-info removes a path without one.
+      await execGit(repoDir, ['update-index', '--index-info'], {
+        env,
+        input: `0 ${'0'.repeat(40)}\t${target}\n`,
+      });
     }
 
     const newTree = (await execGit(repoDir, ['write-tree'], { env })).toString('utf8').trim();
@@ -634,4 +684,124 @@ export async function deleteRepo(
       );
     }
   }
+}
+
+
+// ---- the sequence a transport performs to change a file ----
+//
+// Committing a file is not one call: the caller may want the commit on a new
+// branch, a file stored with Git LFS must be refused rather than replaced with
+// the text of its own pointer, and the branch must not have moved since the
+// caller last looked. That sequence lived inside the editor's POST handler, which
+// made the browser the only place it could be done correctly.
+
+export interface WriteRequest {
+  /** The branch the caller was looking at. */
+  branch: string;
+  /**
+   * Create this branch at expectedHead and commit there instead, which is what
+   * the editor's "commit to a new branch" box does and what the API's newBranch
+   * field asks for.
+   */
+  newBranch?: string | null;
+  filePath: string;
+  message: string;
+  author: CommitAuthor;
+  /**
+   * The commit the caller last saw at the branch tip, or null when there is no
+   * branch yet. Absent, the write is unconditional; present, a branch that has
+   * moved is a conflict rather than a silent overwrite.
+   */
+  expectedHead: string | null;
+  action: FileAction;
+}
+
+/**
+ * A write that failed before it began, because the branch it was to go on could
+ * not be made. Distinct from the write's own failures because it means something
+ * different to a caller: a name already taken is somebody else's branch, not a
+ * file that is already there.
+ */
+export class NewBranchError extends OpError {}
+
+export interface WriteResult {
+  /** The branch actually committed to, which is newBranch when one was asked for. */
+  branch: string;
+  sha: string;
+  before: string | null;
+}
+
+/** Whether a path holds a Git LFS pointer rather than the file itself. */
+async function isPointerAt(repoDir: string, commit: string, filePath: string): Promise<boolean> {
+  try {
+    const buf = await execGit(repoDir, ['cat-file', 'blob', `${commit}:${filePath}`]);
+    return looksLikePointer(buf);
+  } catch {
+    return false;
+  }
+}
+
+export async function writeFile(repoDir: string, request: WriteRequest): Promise<WriteResult> {
+  let branch = request.branch;
+  if (request.newBranch) {
+    if (request.expectedHead === null) {
+      throw new NewBranchError('There is nothing to branch from yet; commit to this branch first.');
+    }
+    try {
+      await createBranch(repoDir, request.newBranch, request.expectedHead);
+    } catch (e) {
+      if (e instanceof OpError) throw new NewBranchError(e.message, e.kind);
+      throw new NewBranchError('Could not create that branch.');
+    }
+    branch = request.newBranch;
+  }
+  // The repository holds a pointer, not the file, so replacing it with text
+  // would replace the pointer and leave the object orphaned. Refused rather than
+  // done, in both transports, and checked here so that neither can skip it.
+  if (
+    request.expectedHead !== null &&
+    request.action.kind !== 'create' &&
+    (await isPointerAt(repoDir, request.expectedHead, request.filePath))
+  ) {
+    throw new OpError(
+      `${request.filePath} is stored with Git LFS; the repository holds only a pointer to it. Change it with a git client instead.`
+    );
+  }
+  const sha = await commitFileChange(repoDir, {
+    branch,
+    filePath: request.filePath,
+    message: request.message,
+    author: request.author,
+    expectedHead: request.expectedHead,
+    action: request.action,
+  });
+  return { branch, sha, before: request.expectedHead };
+}
+
+/**
+ * Create a repository and, when asked, put a first commit in it. The README is
+ * what makes a new repository browsable rather than a page of instructions, and
+ * both transports offer it.
+ *
+ * The caller fires the push event, since it holds the CI engine.
+ */
+export async function createRepoWithReadme(
+  root: string,
+  collection: string,
+  name: string,
+  opts: { description?: string; readme?: boolean; author: CommitAuthor }
+): Promise<{ repo: GitRepo; sha: string | null }> {
+  const repo = await createRepo(root, collection, name);
+  const description = (opts.description ?? '').trim();
+  if (description) setDescription(repo.dir, description);
+  if (!opts.readme) return { repo, sha: null };
+  const sha = await commitFileChange(repo.dir, {
+    branch: 'main',
+    filePath: 'README.md',
+    message: 'Initial commit',
+    author: opts.author,
+    expectedHead: null,
+    action: { kind: 'create', content: Buffer.from(`# ${name}\n${description ? `\n${description}\n` : ''}`) },
+  });
+  return { repo, sha };
 }

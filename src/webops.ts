@@ -9,7 +9,7 @@ import { looksLikePointer } from './pointer';
 import { THEMES, findTheme, setActiveTheme } from './themes';
 import * as forms from './forms';
 import * as ops from './ops';
-import { OpError } from './ops';
+import { MAX_EDIT_SIZE, MAX_UPLOAD_SIZE, OpError } from './ops';
 import { findRepo, isValidName, listCollections, repoDescription, reservedRepoSuffix } from './scan';
 import {
   Viewer,
@@ -37,12 +37,6 @@ import {
 } from './web';
 import { isBinary } from './render';
 import { boundaryOf, parseMultipart, partField, partFiles } from './multipart';
-
-const MAX_EDIT_SIZE = 1024 * 1024;
-// What one upload may carry in total. Big enough for the images and fixtures
-// people add through a browser, small enough that the body can be held whole
-// while it is parsed; anything larger belongs in a push, or in Git LFS.
-const MAX_UPLOAD_SIZE = 25 * 1024 * 1024;
 
 function urlOf(repo: { collection: string; name: string }): string {
   return repoUrl({ collection: repo.collection, repo: repo.name });
@@ -103,38 +97,14 @@ export function registerWebOps(
   ) => firePush(root, engine, repo, branch, before, after, actor);
 
   /**
-   * Where a commit from the editor should land. Ticking "commit to a new
-   * branch" makes it here first: the branch is created at the same commit the
-   * form was loaded from, so the edit lands on a branch that starts level with
-   * the one being edited. Returns null when the name is unusable, having
-   * already answered the request.
+   * The branch the form asked to commit to, when "commit to a new branch" was
+   * ticked. Creating it is ops.writeFile's business; reading the form is this
+   * function's, and an empty name means the box was ticked without one.
    */
-  async function commitBranch(
-    req: Request,
-    res: Response,
-    viewer: Viewer,
-    repoDir: string,
-    branch: string,
-    expected: string | null,
-    backUrl: string
-  ): Promise<string | null> {
-    if (field(req, 'newBranchWanted') !== '1') return branch;
+  function newBranchWanted(req: Request): string | null {
+    if (field(req, 'newBranchWanted') !== '1') return null;
     const wanted = field(req, 'newBranch').trim();
-    if (wanted === '') {
-      fail(res, 400, 'Name the new branch, or untick the box to commit to this one.', viewer, backUrl);
-      return null;
-    }
-    if (expected === null) {
-      fail(res, 400, 'There is nothing to branch from yet; commit to this branch first.', viewer, backUrl);
-      return null;
-    }
-    try {
-      await ops.createBranch(repoDir, wanted, expected);
-    } catch (e) {
-      const message = e instanceof OpError ? e.message : 'Could not create that branch.';
-      fail(res, e instanceof OpError && e.kind === 'exists' ? 409 : 400, message, viewer, backUrl);
-      return null;
-    }
+    if (wanted === '') throw new OpError('Name the new branch, or untick the box to commit to this one.');
     return wanted;
   }
 
@@ -337,9 +307,13 @@ export function registerWebOps(
       // ops layer's own are a backstop. Rendered rather than thrown all the
       // same: a backstop that reaches the reader as a 500 is one that says the
       // server broke when what happened is that it declined.
-      let repo;
+      let created;
       try {
-        repo = await ops.createRepo(root, collection, name);
+        created = await ops.createRepoWithReadme(root, collection, name, {
+          description,
+          readme: field(req, 'init') === '1',
+          author: authorFor(viewer, req),
+        });
       } catch (e) {
         if (e instanceof OpError) {
           rerender(e.kind === 'exists' ? 409 : 400, e.message);
@@ -347,18 +321,7 @@ export function registerWebOps(
         }
         throw e;
       }
-      if (description) ops.setDescription(repo.dir, description);
-      if (field(req, 'init') === '1') {
-        const sha = await ops.commitFileChange(repo.dir, {
-          branch: 'main',
-          filePath: 'README.md',
-          message: 'Initial commit',
-          author: authorFor(viewer, req),
-          expectedHead: null,
-          action: { kind: 'create', content: Buffer.from(`# ${name}\n${description ? `\n${description}\n` : ''}`) },
-        });
-        fire(repo, 'main', null, sha, viewer.auth.username);
-      }
+      if (created.sha) fire(created.repo, 'main', null, created.sha, viewer.auth.username);
       res.redirect(`/${encodeURIComponent(collection)}/${encodeURIComponent(name)}`);
     })
   );
@@ -423,6 +386,12 @@ export function registerWebOps(
       res.status(409).type('html').send(forms.conflictPage(ctx, target.branch, retryUrl));
       return;
     }
+    // A branch that could not be made is not a file that could not be written:
+    // a name already taken is somebody else's branch, and 409 says so.
+    if (e instanceof ops.NewBranchError) {
+      fail(res, e.kind === 'exists' ? 409 : 400, e.message, viewer, retryUrl);
+      return;
+    }
     if (e instanceof OpError) {
       fail(res, e.kind === 'notfound' ? 404 : 400, e.message, viewer, retryUrl);
       return;
@@ -479,24 +448,6 @@ export function registerWebOps(
         fail(res, 400, 'The form is missing its base commit; reload and try again.', viewer);
         return;
       }
-      // The GET form refuses pointer files; re-check here so the refusal
-      // cannot be bypassed by posting directly.
-      let current: Buffer | null = null;
-      try {
-        current = await loaded.repo.catBlob(branch, filePath);
-      } catch {
-        current = null; // missing file surfaces as notfound from the commit below
-      }
-      if (current && looksLikePointer(current)) {
-        fail(
-          res,
-          400,
-          'This file is stored with Git LFS; the repository holds only a pointer to it. Change the file with a git client instead.',
-          viewer,
-          urlOf(loaded.repo)
-        );
-        return;
-      }
       const content = normalizeContent(field(req, 'content'));
       // A changed path renames or moves the file in the same commit, which is
       // what the path field on the form is for.
@@ -511,22 +462,27 @@ export function registerWebOps(
         req,
         toPath === undefined ? `Update ${filePath.split('/').pop()}` : `Rename ${filePath} to ${toPath}`
       );
-      const onto = await commitBranch(req, res, viewer, loaded.repo.dir, branch, expected, retryUrl);
-      if (onto === null) return;
+      // The branch choice, the pointer refusal, and the guarded commit are one
+      // sequence in ops.writeFile, which the API write path calls too. The GET
+      // form already refuses a pointer file; writeFile re-checks, so the refusal
+      // cannot be bypassed by posting directly.
+      let written;
       try {
-        const sha = await ops.commitFileChange(loaded.repo.dir, {
-          branch: onto,
+        written = await ops.writeFile(loaded.repo.dir, {
+          branch,
+          newBranch: newBranchWanted(req),
           filePath,
           message,
           author: authorFor(viewer, req),
           expectedHead: expected,
           action: { kind: 'edit', content: Buffer.from(content, 'utf8'), toPath },
         });
-        fire(loaded.repo, onto, expected, sha, viewer.auth.username);
       } catch (e) {
         await handleOpError(e, req, res, viewer, target, retryUrl);
         return;
       }
+      const onto = written.branch;
+      fire(loaded.repo, onto, expected, written.sha, viewer.auth.username);
       // A commit on a new branch wants to be seen against the one it left, so
       // that is where the editor lands.
       if (onto !== branch) {
@@ -695,22 +651,23 @@ export function registerWebOps(
       }
       const content = normalizeContent(field(req, 'content'));
       const message = commitMessage(req, `Create ${filename.split('/').pop()}`);
-      const onto = await commitBranch(req, res, viewer, loaded.repo.dir, branch, expected, retryUrl);
-      if (onto === null) return;
+      let written;
       try {
-        const sha = await ops.commitFileChange(loaded.repo.dir, {
-          branch: onto,
+        written = await ops.writeFile(loaded.repo.dir, {
+          branch,
+          newBranch: newBranchWanted(req),
           filePath: fullPath,
           message,
           author: authorFor(viewer, req),
           expectedHead: expected,
           action: { kind: 'create', content: Buffer.from(content, 'utf8') },
         });
-        fire(loaded.repo, onto, expected, sha, viewer.auth.username);
       } catch (e) {
         await handleOpError(e, req, res, viewer, target, retryUrl);
         return;
       }
+      const onto = written.branch;
+      fire(loaded.repo, onto, expected, written.sha, viewer.auth.username);
       if (onto !== branch) {
         res.redirect(`${urlOf(loaded.repo)}/compare/${encPath(branch)}...${encPath(onto)}`);
         return;
