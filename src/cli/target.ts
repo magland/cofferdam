@@ -1,5 +1,5 @@
 import { RemoteTarget, remoteTarget } from '../cli-api';
-import { CliError, EXIT_AUTH } from './exit';
+import { CliError, EXIT_AUTH, EXIT_USAGE } from './exit';
 import { readStdin } from './input';
 import { Invocation, OptionSpec } from './parse';
 
@@ -31,7 +31,10 @@ export const TARGET_OPTIONS: OptionSpec[] = [
 export async function targetFrom(inv: Invocation): Promise<RemoteTarget> {
   let token = inv.str('token');
   if (inv.bool('token-stdin')) {
-    if (token) throw new CliError('Pass either --token or --token-stdin, not both.', EXIT_AUTH);
+    // Two ways of saying where the token comes from is a usage error, as every
+    // other "not both" in the CLI is; an empty stdin below is not, because
+    // there the invocation was fine and the token is what is missing.
+    if (token) throw new CliError('Pass either --token or --token-stdin, not both.', EXIT_USAGE);
     token = (await readStdin()).trim();
     if (!token) throw new CliError('--token-stdin was given but stdin was empty.', EXIT_AUTH);
   }

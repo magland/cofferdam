@@ -1681,6 +1681,13 @@ PASS=$((PASS+1)); echo "ok: nothing on stdout when a --json command fails"
 # A token on stdin, so it is in neither argv nor shell history.
 run_ok "--token-stdin reads the token from stdin" sh -c "echo '$OWNER_TOKEN' | $(printf '%s ' env HOME="$CRED_HOME" XDG_CONFIG_HOME="$CRED_HOME/.config" GIT_CONFIG_GLOBAL="$CRED_HOME/.gitconfig" GIT_ASKPASS="$TMP/askpass") node dist/index.js whoami --host '$BASE' --token-stdin"
 body_has "and it worked" "owner @ $BASE"
+# The two ways of getting --token-stdin wrong exit differently on purpose, and
+# the difference is the documented one: naming the token twice is a malformed
+# invocation, while a pipe that came up empty is a missing token.
+run_code "--token and --token-stdin together is a usage error" 2 \
+  sh -c "node dist/index.js whoami --host '$BASE' --token x --token-stdin < /dev/null"
+run_code "--token-stdin with nothing on stdin is an auth error" 3 \
+  sh -c "echo '' | node dist/index.js whoami --host '$BASE' --token-stdin"
 
 # ---- the repository, issue, and pull request commands ----
 

@@ -22,7 +22,7 @@ import { adminCommands } from './cli/admin-cmd';
 import { releaseCommands } from './cli/release-cmd';
 import { repoCommands } from './cli/repo-cmd';
 import { runCommands } from './cli/run-cmd';
-import { CliError, EXIT_FAIL, EXIT_USAGE, jsonErrorsWanted } from './cli/exit';
+import { CliError, EXIT_AUTH, EXIT_FAIL, EXIT_USAGE, jsonErrorsWanted } from './cli/exit';
 import { readStdin } from './cli/input';
 import { JSON_OPTION, jsonMode, pickFields, pickObject, printJson } from './cli/output';
 import { Cli, Command, Invocation, OptionSpec, dispatch, registryJson } from './cli/parse';
@@ -304,7 +304,11 @@ async function tokenFor(inv: Invocation): Promise<string | null> {
   if (inv.bool('token-stdin')) {
     if (flag) throw new CliError('Pass either --token or --token-stdin, not both.', EXIT_USAGE);
     const value = (await readStdin()).trim();
-    if (!value) throw new CliError('--token-stdin was given but stdin was empty.', EXIT_USAGE);
+    // Empty stdin is 3 and not 2: the invocation was well formed, and what is
+    // missing is the token, which is the case exit code 3 is documented to
+    // cover. A pipeline whose token source came up empty gets the same code it
+    // would get for having supplied no token at all.
+    if (!value) throw new CliError('--token-stdin was given but stdin was empty.', EXIT_AUTH);
     return value;
   }
   return flag ?? process.env.COFFERDAM_TOKEN?.trim() ?? null;
