@@ -1,7 +1,6 @@
-# Publishes @magland/cofferdam to npm whenever the version in package.json
-# names a release that is not on the registry yet. Every push to main runs the
-# check; only a version bump gets past it, so an ordinary commit costs one
-# cheap job and publishes nothing.
+# Publishes @magland/cofferdam to npm when a push to main touches
+# package.json, which is where a version bump lives. Any other push is not a
+# release and does not start this workflow at all.
 #
 # Authentication is npm trusted publishing: npm trades this workflow's OIDC
 # identity for a short-lived, single-publish credential, so there is no token
@@ -14,6 +13,7 @@ name: publish
 on:
   push:
     branches: [main]
+    paths: [package.json]
   workflow_dispatch:
 
 # Two pushes in quick succession must not race to publish the same version.
@@ -35,61 +35,41 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      # npm view exits non-zero both when the package does not exist and when
-      # it exists without this version, which is exactly the condition to
-      # publish on. Nothing is installed yet, so a no-op run stays fast.
-      - name: Decide whether this version needs publishing
-        id: check
-        run: |
-          name=$(node -p "require('./package.json').name")
-          version=$(node -p "require('./package.json').version")
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          if npm view "$name@$version" version >/dev/null 2>&1; then
-            echo "$name@$version is already published; nothing to do."
-            echo "needed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "$name@$version is not on the registry; publishing."
-            echo "needed=true" >> "$GITHUB_OUTPUT"
-          fi
-
       # Trusted publishing needs npm 11.5.1 or newer. Node 24 already ships a
       # new enough npm, but the runner's bundled version is not ours to pin,
       # so ask for it explicitly and record what we got.
       - name: Use an npm that can publish with OIDC
-        if: steps.check.outputs.needed == 'true'
         run: |
           npm install -g npm@latest
           npm --version
 
       - name: Install
-        if: steps.check.outputs.needed == 'true'
         run: npm ci
 
       - name: Build
-        if: steps.check.outputs.needed == 'true'
         run: npm run build
 
       - name: Smoke test
-        if: steps.check.outputs.needed == 'true'
         run: npm run smoke
 
       # No NODE_AUTH_TOKEN: the credential comes from the OIDC exchange above.
       # Provenance is generated as part of trusted publishing; the flag makes
       # the intent explicit and fails the publish loudly if it cannot be met.
+      #
+      # An edit to package.json that leaves the version alone reaches here and
+      # is refused by the registry, which is the intended trade: the trigger
+      # asks one cheap question of git rather than a second one of npm.
       - name: Publish
-        if: steps.check.outputs.needed == 'true'
         run: npm publish --provenance
 
       - name: Tag the release
-        if: steps.check.outputs.needed == 'true'
-        env:
-          VERSION: ${{ steps.check.outputs.version }}
         run: |
-          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
-            echo "Tag v$VERSION already exists; leaving it alone."
+          version=$(node -p "require('./package.json').version")
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "Tag v$version already exists; leaving it alone."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "v$VERSION" -m "v$VERSION"
-          git push origin "v$VERSION"
+          git tag -a "v$version" -m "v$version"
+          git push origin "v$version"
