@@ -27,8 +27,17 @@ export const TARGET_OPTIONS: OptionSpec[] = [
   },
 ];
 
-/** The vault and token a command should use, from its options, the environment, or the login. */
-export async function targetFrom(inv: Invocation): Promise<RemoteTarget> {
+/**
+ * The vault and token a command should use, from its options, the environment, or
+ * the login.
+ *
+ * `opts.host` is a fallback a command can supply from state of its own, and sits
+ * between the environment and the login: `cofferdam backup` records the vault a
+ * backup directory is a backup of, and that has to outrank the last login,
+ * because a machine that has since logged in to another vault must not quietly
+ * start filling one backup directory from a different vault.
+ */
+export async function targetFrom(inv: Invocation, opts: { host?: string | null } = {}): Promise<RemoteTarget> {
   let token = inv.str('token');
   if (inv.bool('token-stdin')) {
     // Two ways of saying where the token comes from is a usage error, as every
@@ -38,5 +47,6 @@ export async function targetFrom(inv: Invocation): Promise<RemoteTarget> {
     token = (await readStdin()).trim();
     if (!token) throw new CliError('--token-stdin was given but stdin was empty.', EXIT_AUTH);
   }
-  return await remoteTarget({ host: inv.str('host'), token });
+  const host = inv.str('host') ?? process.env.COFFERDAM_HOST?.trim() ?? opts.host ?? null;
+  return await remoteTarget({ host, token });
 }

@@ -3,14 +3,13 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { RemoteTarget, remoteTarget } from '../cli-api';
+import { RemoteTarget } from '../cli-api';
 import { writeFileAtomic } from '../atomic';
 import { isBareRepo } from '../scan';
 import { CliError, EXIT_CONFLICT, EXIT_FAIL, EXIT_USAGE, exitCodeForStatus } from './exit';
-import { readStdin } from './input';
 import { JSON_OPTION, jsonMode, pickObject, printJson, printTable } from './output';
 import { Command, Invocation, OptionSpec } from './parse';
-import { TARGET_OPTIONS } from './target';
+import { TARGET_OPTIONS, targetFrom } from './target';
 
 // `cofferdam backup <dir>`: an incremental copy of a whole vault onto a disk of
 // your own, over HTTP.
@@ -164,6 +163,13 @@ interface Lock {
  * running. Only a lock taken on this same machine can be checked that way, so a
  * lock from elsewhere - a backup directory on a network share - is honoured
  * whatever its age.
+ *
+ * Not `withFileLock` from src/atomic.ts, which guards a read-modify-write of one
+ * state file: it waits for the lock and breaks one older than ten seconds, both
+ * of which are right for a critical section measured in milliseconds and wrong
+ * here. A backup of a large vault holds this for many minutes, so age says
+ * nothing about whether the holder is alive, and a second run should be told to
+ * come back rather than made to wait for a transfer it cannot know the length of.
  */
 function takeLock(dir: string, quiet: boolean): Lock {
   const file = path.join(dir, LOCK_FILE);
@@ -738,21 +744,13 @@ function retentionFor(inv: Invocation, state: BackupState): Retention {
 }
 
 /**
- * Which vault, and with what token. The same precedence every other command
- * has - the option, then the environment, then the login - with the URL
- * recorded in backup.json between the environment and the login, so that a
- * backup directory keeps pointing at the vault it is a backup of even when the
- * machine has since logged in to another one.
+ * Which vault, and with what token. targetFrom does the work, including the
+ * --token-stdin rules and the exit codes docs/cli.md promises for them; the URL
+ * recorded in backup.json is handed to it as the fallback that outranks the last
+ * login, so a backup directory keeps pointing at the vault it is a backup of.
  */
 async function targetForBackup(inv: Invocation, state: BackupState): Promise<RemoteTarget> {
-  let token = inv.str('token');
-  if (inv.bool('token-stdin')) {
-    if (token) throw new CliError('Pass either --token or --token-stdin, not both.', EXIT_USAGE);
-    token = (await readStdin()).trim();
-    if (!token) throw new CliError('--token-stdin was given but stdin was empty.', EXIT_USAGE);
-  }
-  const host = inv.str('host') ?? process.env.COFFERDAM_HOST?.trim() ?? (state.host || null);
-  return await remoteTarget({ host, token });
+  return await targetFrom(inv, { host: state.host || null });
 }
 
 // ---- the sync ----
