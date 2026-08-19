@@ -97,6 +97,39 @@ cofferdam deploy fly my-vault-name --lfs-bucket
 
 Tigris' secrets are the ones the server already reads, so there is nothing further to configure (see [Git LFS](lfs.md)). Note that this provisions a billable resource in your Fly organization, and that `deploy fly destroy` leaves the bucket alone: destroying it, and its contents, is `fly storage destroy <name>`.
 
+### Serving sites from their own hostname
+
+By default a repository's static site is served from the vault's own hostname and sandboxed, which costs it cookies, storage, and service workers (see [Sites](sites.md)). Giving each site a real origin means a wildcard hostname and a certificate for it, which is DNS work rather than something the CLI can do.
+
+For a vault at `vault1.magland.org` on a Fly app named `vault1`, with `magland.org` on Cloudflare:
+
+| Type | Name | Content | Proxy |
+|---|---|---|---|
+| CNAME | `vault1` | `vault1.fly.dev` | DNS only |
+| CNAME | `*.vault1-sites` | `vault1.fly.dev` | DNS only |
+| CNAME | `_acme-challenge.vault1-sites` | as printed by `fly certs show` | DNS only |
+
+```bash
+fly certs add vault1.magland.org -a vault1
+fly certs add '*.vault1-sites.magland.org' -a vault1
+fly certs show '*.vault1-sites.magland.org' -a vault1   # prints the DNS-01 target
+fly certs check '*.vault1-sites.magland.org' -a vault1
+```
+
+The plain subdomain is validated over HTTP-01, which Fly can answer itself because requests for that name reach the app. A wildcard cannot be: there is no single name to answer for, so it needs DNS-01, which is why the third record exists and why `fly certs show` has to be run to learn what to put in it.
+
+Then set the host in the vault's `config.json`, which is on the volume:
+
+```json
+{
+  "sites": { "host": "vault1-sites.magland.org" }
+}
+```
+
+This is one Fly app with two hostnames, not two apps. Sites hosts must differ per vault in any case, because two Fly apps cannot hold a certificate for the same hostname.
+
+A Cloudflare-specific trap, since it produces a certificate error rather than a clear failure: Universal SSL covers `example.com` and `*.example.com` only, one label deep, so a proxied `*.vault1-sites.magland.org` is not covered without Advanced Certificate Manager, and proxied wildcard DNS records are an Enterprise feature. All three records stay DNS only, which means no Cloudflare caching or WAF in front of the vault. Note also that a wildcard does not match the bare `vault1-sites.magland.org`, so that name needs its own record and certificate if it is ever to answer; without one it simply does not resolve, and the vault answers a minimal 404 on it if it does.
+
 ### What the deploy does, in flyctl terms
 
 There is nothing magic in the above, and no state anywhere but Fly. The equivalent by hand, if you would rather run it yourself or adapt it to another host:

@@ -1394,6 +1394,73 @@ check "a forge page for comparison" 200 -D "$TMP/headers" -b "$JAR" "$BASE/pushe
 header_lacks "forge pages allow no cross-origin reads" 'access-control-allow-origin'
 header_lacks "and are not sandboxed" 'content-security-policy'
 
+# ---- sites on their own hostname ----
+
+# A sandbox costs a site its cookies, storage, and service workers. Giving each
+# repository's site a hostname of its own gives them back, because the browser's
+# own origin separation is then doing the work. config.json is re-read per
+# request, so this needs no restart, which is also the point: removing
+# sites.host must take effect on the next request rather than at the next start.
+printf '{\n  "theme": "paper",\n  "sites": { "host": "sites.localhost" }\n}\n' > "$VAULT/config.json"
+SITE_HOST='created--pushed.sites.localhost'
+
+# On the forge host the path only points at the site origin now. 302 and not
+# 301, so that removing the setting is not defeated by a cached redirect.
+check "the forge site path redirects" 302 -D "$TMP/headers" "$BASE/pushed/created/site/"
+header_has "to the site's own origin" "location: http://$SITE_HOST/"
+check "and does so from the missing-slash path in one hop" 302 -D "$TMP/headers" "$BASE/pushed/created/site"
+header_has "landing on the origin root" "location: http://$SITE_HOST/"
+check "a path with a query string redirects too" 302 -D "$TMP/headers" "$BASE/pushed/created/site/sub/real.txt?x=1"
+header_has "keeping the query" "location: http://$SITE_HOST/sub/real.txt?x=1"
+
+check "the site serves on its own hostname" 200 -D "$TMP/headers" -H "Host: $SITE_HOST" "$BASE/"
+body_has "with its own index" 'site ok'
+header_has "the type is still not sniffed" 'x-content-type-options: nosniff'
+header_lacks "and it is not sandboxed there, which is the point of the hostname" 'content-security-policy'
+# The site handler runs before the forge's own asset routes, or /assets/style.css
+# on a site's hostname would give it the forge's stylesheet rather than its own.
+check "the forge stylesheet does not shadow the site's" 404 -H "Host: $SITE_HOST" "$BASE/assets/style.css"
+check "nor does the forge favicon" 404 -H "Host: $SITE_HOST" "$BASE/favicon.svg"
+check "an ordinary file on the site host" 200 -H "Host: $SITE_HOST" "$BASE/sub/real.txt"
+check "a directory redirects to its slash on the site host" 302 -D "$TMP/headers" -H "Host: $SITE_HOST" "$BASE/sub"
+header_has "relative to the site origin" 'location: /sub/'
+# The containment checks are the same code, so this is a regression test for the
+# extraction rather than for anything new.
+check "a symlink out of the site is refused on the site host too" 404 -H "Host: $SITE_HOST" "$BASE/escape.txt"
+body_lacks "and still leaks nothing" 'root:'
+
+# No session is resolved on a sites hostname and none is minted there, which is
+# what keeps the forge's authority on the forge's hostname.
+check "a session cookie on the site host is ignored" 200 -D "$TMP/headers" -b "$JAR" -H "Host: $SITE_HOST" "$BASE/"
+body_lacks "no signed-in chrome" '>owner<'
+header_lacks "and no cookie is set" 'set-cookie'
+
+# Every other name under the sites host answers for itself rather than falling
+# through, so the forge is reachable only on the forge's hostname.
+check "the bare sites host names no site" 404 "$BASE/" -H 'Host: sites.localhost'
+body_lacks "and does not render forge chrome" 'assets/style.css'
+check "a deeper name under the sites host names no site" 404 "$BASE/" -H 'Host: a.b.sites.localhost'
+check "a hostname naming no repository is a 404" 404 "$BASE/" -H "Host: nosuchrepo--pushed.sites.localhost"
+# Sites are files, so nothing on this hostname needs a method that writes.
+check "a write method on a site host is refused" 405 -X POST -H "Host: $SITE_HOST" "$BASE/"
+
+# A name that is not a legal hostname label is refused rather than mangled:
+# lowercasing My.Repo would collide with a my-repo beside it, and hostnames are
+# case-insensitive while names on disk are not. Such a repository keeps being
+# served on the forge host, sandboxed.
+mkdir -p "$VAULT/demo/my.site.thing.site"
+echo '<h1>dotted site</h1>' > "$VAULT/demo/my.site.thing.site/index.html"
+check "an ineligible repository is served on the forge host" 200 -D "$TMP/headers" "$BASE/demo/my.site.thing/site/"
+body_has "with its content" 'dotted site'
+header_has "sandboxed, as before" 'content-security-policy: sandbox'
+header_lacks "and not redirected anywhere" 'location:'
+
+# Back to a vault with no sites host, so the checks after this see the default.
+printf '{\n  "theme": "paper"\n}\n' > "$VAULT/config.json"
+check "removing the setting takes effect on the next request" 200 -D "$TMP/headers" "$BASE/pushed/created/site/"
+body_has "and the site is served on the forge host again" 'site ok'
+header_has "sandboxed again" 'content-security-policy: sandbox'
+
 # ---- session cookie naming ----
 
 # Cookies are not scoped by origin, so a sibling subdomain of a shared parent

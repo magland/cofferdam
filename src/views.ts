@@ -17,6 +17,8 @@ export interface RepoCtx {
   tags: RefInfo[];
   cloneUrl: string;
   hasSite: boolean;
+  /** Where the Site tab points: the site's own origin when it has one. */
+  siteUrl: string;
   hasCi: boolean;
   /** Tags that have release notes in the vault. */
   releases: string[];
@@ -354,7 +356,7 @@ ${tab('pulls', 'Pull requests', `${base}/pulls`, 'git-pull-request', ctx.openPul
 ${ctx.hasCi || active === 'actions' ? tab('actions', 'Actions', `${base}/actions`, 'play') : ''}
 ${tab('branches', 'Branches', `${base}/branches`, 'git-branch', ctx.branches.length)}
 ${tab('tags', 'Tags', `${base}/tags`, 'tag', ctx.tags.length)}
-${ctx.hasSite ? tab('site', 'Site', `${base}/site/`, 'globe') : ''}
+${ctx.hasSite ? tab('site', 'Site', ctx.siteUrl, 'globe') : ''}
 ${ctx.canPush || ctx.canAdmin ? tab('settings', 'Settings', `${base}/settings`, 'sliders') : ''}
 </nav>`;
 }
@@ -567,7 +569,7 @@ function aboutPanel(ctx: RepoCtx, view: TreeView): string {
   const links: string[] = [];
   if (view.readmeName) links.push(`<a href="#readme">${icon('book')}<span>Readme</span></a>`);
   if (license) links.push(`<a href="${blob(license.name)}">${icon('law')}<span>${esc(license.name)}</span></a>`);
-  if (ctx.hasSite) links.push(`<a href="${base}/site/">${icon('globe')}<span>Site</span></a>`);
+  if (ctx.hasSite) links.push(`<a href="${ctx.siteUrl}">${icon('globe')}<span>Site</span></a>`);
   if (ctx.releases.length)
     links.push(
       `<a href="${base}/releases">${icon('rocket')}<span>${count(ctx.releases.length)} release${

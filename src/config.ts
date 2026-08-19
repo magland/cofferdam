@@ -18,16 +18,39 @@ export interface CiConfig {
   artifactMb: number;
 }
 
+export interface SitesConfig {
+  /**
+   * Hostname whose subdomains serve repository sites, e.g.
+   * "vault1-sites.magland.org". Empty means sites are served on the forge
+   * host, sandboxed.
+   */
+  host: string;
+}
+
 export interface VaultConfig {
   theme: string;
   ci: CiConfig;
+  sites: SitesConfig;
 }
+
+// A hostname of at least two labels, each of letters, digits, and interior
+// hyphens. A value carrying a scheme, a port, or a single label is not one, and
+// is treated as a typo rather than obeyed.
+const HOSTNAME_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 
 export function configFilePath(root: string): string {
   return path.join(root, CONFIG_FILE);
 }
 
-const DEFAULTS: VaultConfig = { theme: DEFAULT_THEME, ci: { runs: 100, days: 0, artifactMb: 500 } };
+const DEFAULTS: VaultConfig = {
+  theme: DEFAULT_THEME,
+  ci: { runs: 100, days: 0, artifactMb: 500 },
+  sites: { host: '' },
+};
+
+function defaults(): VaultConfig {
+  return { ...DEFAULTS, ci: { ...DEFAULTS.ci }, sites: { ...DEFAULTS.sites } };
+}
 
 let cache: { file: string; mtimeMs: number; size: number; config: VaultConfig } | null = null;
 
@@ -38,12 +61,12 @@ export function loadConfig(root: string): VaultConfig {
     st = fs.statSync(file);
   } catch {
     cache = null;
-    return { ...DEFAULTS };
+    return defaults();
   }
   if (cache && cache.file === file && cache.mtimeMs === st.mtimeMs && cache.size === st.size) {
     return cache.config;
   }
-  let config: VaultConfig = { ...DEFAULTS, ci: { ...DEFAULTS.ci } };
+  let config: VaultConfig = defaults();
   try {
     const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
     // An unknown theme name falls back to the default rather than failing the
@@ -59,8 +82,18 @@ export function loadConfig(root: string): VaultConfig {
         typeof ci.artifactMb === 'number' && ci.artifactMb > 0 ? Math.floor(ci.artifactMb) : DEFAULTS.ci.artifactMb;
       config.ci = { runs, days, artifactMb };
     }
+    // A site host lets each repository's site have an origin of its own. A
+    // value that is not a plausible hostname is ignored the way an unknown
+    // theme name is: a typo here would otherwise stop sites being served at
+    // all, or worse, serve them from a name that is not the one the
+    // certificate covers.
+    if (typeof parsed.sites === 'object' && parsed.sites !== null) {
+      const sites = parsed.sites as Record<string, unknown>;
+      const raw = typeof sites.host === 'string' ? sites.host.trim().toLowerCase().replace(/\.$/, '') : '';
+      config.sites = { host: HOSTNAME_RE.test(raw) ? raw : DEFAULTS.sites.host };
+    }
   } catch {
-    config = { ...DEFAULTS, ci: { ...DEFAULTS.ci } };
+    config = defaults();
   }
   cache = { file, mtimeMs: st.mtimeMs, size: st.size, config };
   return config;

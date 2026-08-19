@@ -2,6 +2,8 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Request, Response } from 'express';
+import { loadConfig } from './config';
+import { isUnderSitesHost } from './siteshost';
 import { AuthResult, TokenRecord, canAdmin, loadVault } from './vault';
 
 // Stateless signed-cookie sessions on top of the token model. The payload is
@@ -65,7 +67,18 @@ function sign(root: string, data: string): string {
   return b64url(crypto.createHmac('sha256', getSecret(root)).update(data).digest());
 }
 
+/**
+ * Whether this request arrived on a hostname that serves sites. No session is
+ * resolved and none is minted there. The sites middleware never asks for a
+ * viewer, so this is defence in depth: it makes structurally true what would
+ * otherwise be true only by inspection.
+ */
+function onSitesHost(req: Request, root: string): boolean {
+  return isUnderSitesHost(loadConfig(root).sites.host, req.hostname);
+}
+
 export function setSessionCookie(req: Request, res: Response, root: string, auth: AuthResult): void {
+  if (onSitesHost(req, root)) return;
   const payload: SessionPayload = {
     u: auth.username,
     exp: Date.now() + SESSION_MS,
@@ -147,6 +160,7 @@ export interface Viewer {
 }
 
 export function getViewer(req: Request, root: string): Viewer | null {
+  if (onSitesHost(req, root)) return null;
   const session = readSession(req, root);
   if (!session) return null;
   const state = loadVault(root);

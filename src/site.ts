@@ -1,8 +1,10 @@
-import { Request, Response } from 'express';
+import { Express, Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
+import { loadConfig } from './config';
 import { containedIn } from './ops';
 import { findRepo, siteDir } from './scan';
+import { isUnderSitesHost, parseSiteHost, siteHostFor } from './siteshost';
 import { send404, wildcard } from './web';
 
 // Serving a repository's static site. This is the only place in cofferdam where
@@ -146,4 +148,73 @@ export function serveSite(
   }
   setSiteHeaders(res, mode);
   res.sendFile(target);
+}
+
+
+// ---- serving a site from its own hostname ----
+
+/**
+ * A self-contained page, for the responses a sites hostname gives that are not
+ * site content. views.errorPage is wrong here: it renders forge chrome and links
+ * a stylesheet that is not reachable on this hostname, so it would arrive
+ * unstyled and mention a vault this origin knows nothing about.
+ */
+function minimalPage(status: number, title: string, body: string): string {
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${status} ${title}</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;margin:4rem auto;max-width:34rem;padding:0 1rem}</style>
+</head><body><h1>${status} ${title}</h1><p>${body}</p></body></html>
+`;
+}
+
+/**
+ * The site's own URL for a repository, when it has an origin of its own, or null
+ * when it is served on the forge host. The scheme mirrors the request, so a
+ * local http vault redirects to http and stays usable.
+ */
+export function siteHostUrl(root: string, req: Request, collection: string, repo: string): string | null {
+  const sitesHost = loadConfig(root).sites.host;
+  const host = siteHostFor(sitesHost, collection, repo);
+  return host ? `${req.protocol}://${host}` : null;
+}
+
+/**
+ * The site handler for requests that arrive on a sites hostname. It must run
+ * before every other route, the /assets/* and /favicon.svg routes included, or
+ * the forge's stylesheet would shadow a site's own assets/style.css and the
+ * favicon route would shadow a site's icon.
+ *
+ * Host-based gating is safe in this direction. A request arriving with a forged
+ * Host reaches only the less privileged surface, and forging the forge's own
+ * hostname gains an attacker nothing they would not get by visiting it, because
+ * the session is resolved only there and only from a cookie the browser sends to
+ * the real host.
+ */
+export function registerSiteHost(app: Express, root: string): void {
+  app.use((req, res, next) => {
+    const sitesHost = loadConfig(root).sites.host;
+    if (!sitesHost) return next();
+    if (!isUnderSitesHost(sitesHost, req.hostname)) return next();
+    // Sites are files. Nothing on this hostname writes anything, so nothing
+    // needs a method that would.
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.status(405).set('Allow', 'GET, HEAD').type('html').send(
+        minimalPage(405, 'Method not allowed', 'This hostname serves static files, so it answers only GET and HEAD.')
+      );
+      return;
+    }
+    const named = parseSiteHost(sitesHost, req.hostname);
+    if (!named) {
+      // A request to the bare sites host, or to a deeper name under it, gets a
+      // minimal 404 rather than falling through to the forge, so the forge is
+      // reachable only on its own hostname.
+      setSiteHeaders(res, 'sandbox');
+      res.status(404).type('html').send(
+        minimalPage(404, 'No site here', 'This hostname does not name a repository site in this vault.')
+      );
+      return;
+    }
+    serveSite(root, named.collection, named.repo, req, res, 'host');
+  });
 }

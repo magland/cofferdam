@@ -11,7 +11,7 @@ import { atomFeed } from './atom';
 import { renderDiff } from './diff';
 import { displayName, isValidName, listCollections, listRepoDirs, repoDescription } from './scan';
 import { getViewer } from './session';
-import { serveSite } from './site';
+import { serveSite, siteHostUrl } from './site';
 import * as views from './views';
 import { encPath, repoUrl } from './views';
 import { LoadedRepo, ah, baseUrlOf, loadRepo, makeCtx, send404, wildcard } from './web';
@@ -511,11 +511,29 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
   // per-site hostname share. The mode is what differs: on the forge's own
   // origin a site is sandboxed, because its script would otherwise run as the
   // visitor.
+  //
+  // When the vault has a sites host and this repository is eligible for one,
+  // the site lives at its own origin and this path only points there. 302 and
+  // not 301: a permanent redirect would be cached hard, and removing
+  // sites.host from config.json must take effect on the next request.
   app.get('/:collection/:repo/site/*', (req, res) => {
+    const origin = siteHostUrl(root, req, req.params.collection, displayName(req.params.repo));
+    if (origin) {
+      const query = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+      res.redirect(302, `${origin}/${wildcard(req)}${query}`);
+      return;
+    }
     serveSite(root, req.params.collection, req.params.repo, req, res, 'sandbox');
   });
 
+  // The missing-slash redirect lands on the site origin in one hop rather than
+  // two when there is one.
   app.get('/:collection/:repo/site', (req, res) => {
+    const origin = siteHostUrl(root, req, req.params.collection, displayName(req.params.repo));
+    if (origin) {
+      res.redirect(302, `${origin}/`);
+      return;
+    }
     res.redirect(
       `/${encodeURIComponent(req.params.collection)}/${encodeURIComponent(displayName(req.params.repo))}/site/`
     );

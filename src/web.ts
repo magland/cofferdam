@@ -7,6 +7,7 @@ import { pullCounts } from './pulls';
 import { listReleases } from './releases';
 import { findRepo, forkParent, siteDir } from './scan';
 import { Viewer, checkCsrf, getViewer } from './session';
+import { siteHostUrl } from './site';
 import { canAdmin, canPush } from './vault';
 import { RepoCtx } from './views';
 import * as views from './views';
@@ -119,6 +120,9 @@ export async function makeCtx(
   const cloneUrl = `${req.protocol}://${req.get('host')}/${encodeURIComponent(loaded.repo.collection)}/${encodeURIComponent(
     loaded.repo.name
   )}`;
+  // Where the Site tab points. A site with an origin of its own is linked there
+  // directly rather than through the forge path that would only redirect.
+  const siteOrigin = siteHostUrl(root, req, loaded.repo.collection, loaded.repo.name);
   return {
     collection: loaded.repo.collection,
     repo: loaded.repo.name,
@@ -129,6 +133,9 @@ export async function makeCtx(
     tags: loaded.tags,
     cloneUrl,
     hasSite: siteDir(root, loaded.repo.collection, loaded.repo.name) !== null,
+    siteUrl: siteOrigin
+      ? `${siteOrigin}/`
+      : `/${encodeURIComponent(loaded.repo.collection)}/${encodeURIComponent(loaded.repo.name)}/site/`,
     releases: listReleases(root, loaded.repo.collection, loaded.repo.name).map((r) => r.tag),
     hasCi: await hasCiState(root, loaded.repo, loaded.defaultBranch, loaded.branches),
     openIssues: issueCounts(root, loaded.repo.collection, loaded.repo.name).open,

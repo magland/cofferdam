@@ -17,6 +17,7 @@ import { registerReleases } from './releases';
 import { createLfsStore } from './lfsstore';
 import { faviconSvg } from './logo';
 import { getViewer } from './session';
+import { registerSiteHost } from './site';
 import { CSS } from './style';
 import { activeTheme, setActiveTheme, themeVarsCss } from './themes';
 import * as views from './views';
@@ -35,6 +36,12 @@ export function createApp(root: string) {
     setActiveTheme(loadConfig(root).theme);
     next();
   });
+
+  // Sites served from their own hostname are answered before every other route,
+  // the asset routes included: otherwise /assets/style.css would give a site the
+  // forge's stylesheet instead of its own, and /favicon.svg the forge's icon.
+  // Nothing here runs unless a sites host is configured.
+  registerSiteHost(app, root);
 
   // ---- static assets ----
 
