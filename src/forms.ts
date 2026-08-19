@@ -1,3 +1,6 @@
+import { avatar } from './avatar';
+import { icon } from './icons';
+import { MARK } from './logo';
 import { esc } from './render';
 import { Viewer } from './session';
 import { Theme } from './themes';
@@ -17,16 +20,21 @@ export function flashBanner(msg?: string): string {
 }
 
 export function loginPage(next: string, error?: string): string {
-  const content = `<div class="form-box">
-<h1>Sign in</h1>
+  // A narrow card under the mark, centred on the page: signing in is the one
+  // thing this page is for, so nothing else is on it.
+  const content = `<div class="signin">
+<div class="signin-mark">${MARK}</div>
+<h1>Sign in to hubbit</h1>
 ${errorBanner(error)}
+<div class="form-box">
 <form method="post" action="/login">
 <input type="hidden" name="next" value="${esc(next)}">
 <div class="field"><label for="username">Username</label><input type="text" id="username" name="username" autocomplete="username" autofocus required></div>
-<div class="field"><label for="token">Token</label><input type="password" id="token" name="token" autocomplete="current-password" required>
-<p class="muted small">The same token git uses for pushing. Tokens are minted by an administrator; there are no passwords.</p></div>
+<div class="field"><label for="token">Token</label><input type="password" id="token" name="token" autocomplete="current-password" required></div>
 <button type="submit" class="btn btn-primary">Sign in</button>
 </form>
+</div>
+<p class="muted small signin-note">A token is what git uses for pushing. Tokens are minted by an administrator; there are no passwords.</p>
 </div>`;
   return layout('Sign in', content, { path: '/login' });
 }
@@ -38,23 +46,30 @@ export function newRepoPage(
   error?: string
 ): string {
   const datalist = collectionNames.map((o) => `<option value="${esc(o)}">`).join('');
-  const content = `<div class="form-box">
-<h1>New repository</h1>
+  const content = `<div class="form-box wide">
+<h1>Create a new repository</h1>
+<p class="muted">A repository is a directory in the vault holding a bare git repository. Its name and the collection it sits in are its address.</p>
+<hr class="rule">
 ${errorBanner(error)}
 <form method="post" action="/new">
 ${csrfField(viewer)}
-<div class="field"><label for="collection">Collection</label><input type="text" id="collection" name="collection" list="collections" value="${esc(
+<div class="name-row">
+  <div class="field"><label for="collection">Collection</label><input type="text" id="collection" name="collection" list="collections" value="${esc(
     preset.collection ?? ''
-  )}" required><datalist id="collections">${datalist}</datalist>
-<p class="muted small">An existing collection, or a new one to create with the repository.</p></div>
-<div class="field"><label for="name">Repository name</label><input type="text" id="name" name="name" value="${esc(
+  )}" required><datalist id="collections">${datalist}</datalist></div>
+  <div class="name-slash">/</div>
+  <div class="field"><label for="name">Repository name</label><input type="text" id="name" name="name" value="${esc(
     preset.name ?? ''
   )}" required></div>
+</div>
+<p class="muted small">The collection may be one that exists or a new one to create along with the repository.</p>
 <div class="field"><label for="description">Description <span class="muted">(optional)</span></label><input type="text" id="description" name="description" value="${esc(
     preset.description ?? ''
   )}"></div>
-<div class="field"><label class="checkbox"><input type="checkbox" name="init" value="1" checked> Initialize with a README</label></div>
-<button type="submit" class="btn btn-primary">Create repository</button>
+<hr class="rule">
+<div class="field"><label class="checkbox"><input type="checkbox" name="init" value="1" checked> Initialize with a README</label>
+<p class="muted small">Gives the repository a first commit on <span class="mono">main</span>, so it can be browsed and cloned straight away.</p></div>
+<button type="submit" class="btn btn-primary">${icon('repo')}<span>Create repository</span></button>
 </form>
 </div>`;
   return layout('New repository', content, { viewer, path: '/new' });
@@ -96,12 +111,19 @@ ${command}
   return layout('Import a repository', content, { viewer, path: '/import' });
 }
 
+/**
+ * The commit box: a summary and an optional extended description, which is
+ * GitHub's shape and git's own (the two are joined by a blank line before the
+ * commit is made). The face beside the heading is whose commit it will be.
+ */
 function commitFields(viewer: Viewer, expectedHead: string | null, messagePlaceholder: string): string {
   return `${csrfField(viewer)}
 <input type="hidden" name="expected" value="${esc(expectedHead ?? '')}">
-<div class="field"><label for="message">Commit message</label><input type="text" id="message" name="message" placeholder="${esc(
+<div class="commit-box-head">${avatar(viewer.auth.username, 28)}<b>Commit changes</b></div>
+<div class="field"><label class="sr-only" for="message">Commit message</label><input type="text" id="message" name="message" placeholder="${esc(
     messagePlaceholder
-  )}"></div>`;
+  )}"></div>
+<div class="field"><label class="sr-only" for="description">Extended description</label><textarea id="description" name="description" rows="3" placeholder="Add an optional extended description"></textarea></div>`;
 }
 
 export function editFilePage(
@@ -203,16 +225,16 @@ export function settingsPage(ctx: RepoCtx, description: string, msg?: string, er
       ? `<div class="field"><label for="defaultBranch">Default branch</label><select id="defaultBranch" name="defaultBranch">${branchOptions}</select></div>`
       : '';
   const settingsForm = ctx.canPush
-    ? `<div class="form-box">
+    ? `<div class="box settings-box"><div class="box-header">${icon('gear')}General</div><div class="box-body">
 <form method="post" action="${base}/settings">
 ${csrfField(ctx.viewer!)}
 <div class="field"><label for="description">Description</label><input type="text" id="description" name="description" value="${esc(
         description
-      )}"></div>
+      )}"><p class="muted small">Shown beside the repository in listings and in the About panel.</p></div>
 ${defaultBranchField}
-<button type="submit" class="btn btn-primary">Save</button>
+<button type="submit" class="btn btn-primary">${icon('check')}<span>Save</span></button>
 </form>
-</div>`
+</div></div>`
     : '';
   const dangerZone = ctx.canAdmin
     ? `<div class="danger-zone">
@@ -221,7 +243,7 @@ ${defaultBranchField}
 <form method="post" action="${base}/settings/delete">
 ${csrfField(ctx.viewer!)}
 <div class="field"><label for="confirm">Type <b class="mono">${esc(ctx.collection)}/${esc(ctx.repo)}</b> to confirm</label><input type="text" id="confirm" name="confirm" autocomplete="off"></div>
-<button type="submit" class="btn btn-danger">Delete this repository</button>
+<button type="submit" class="btn btn-danger">${icon('trash')}<span>Delete this repository</span></button>
 </form>
 </div>`
     : '';
@@ -242,7 +264,9 @@ export function adminUsersPage(
 ): string {
   const rows = users
     .map(({ name, user }) => {
-      const actions = `<details><summary>Manage</summary><div class="user-actions">
+      const actions = `<details class="dropdown"><summary class="btn">${icon(
+        'kebab-horizontal'
+      )}<span>Manage</span></summary><div class="dropdown-menu dd-right user-actions">
 <form method="post" action="/admin/users/${encodeURIComponent(name)}/grant" class="inline-form">
 ${csrfField(viewer)}
 <input type="text" name="scope" placeholder="push globs, e.g. mycollection/*">
@@ -255,7 +279,7 @@ ${csrfField(viewer)}
 <button type="submit" class="btn">Mint token</button>
 </form>
 </div></details>`;
-      return `<tr><td><b>${esc(name)}</b></td><td class="mono small">${esc(user.scope.join(' ') || '(none)')}</td><td class="mono small">${esc(
+      return `<tr><td class="with-avatar">${avatar(name, 24)}<b>${esc(name)}</b></td><td class="mono small">${esc(user.scope.join(' ') || '(none)')}</td><td class="mono small">${esc(
         user.admin.join(' ')
       )}</td><td class="right muted small">${user.tokens.length} token${user.tokens.length === 1 ? '' : 's'}</td><td>${actions}</td></tr>`;
     })

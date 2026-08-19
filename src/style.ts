@@ -342,6 +342,25 @@ table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
 .error-page { text-align: center; padding: 64px 0; color: var(--fg-muted); }
 .error-page .code { font-family: var(--font-head); font-size: 48px; font-weight: 700; color: var(--fg); }
 
+/* Sign-in: the mark, a heading, and one narrow card, centred. */
+.signin { max-width: 340px; margin: 40px auto; }
+.signin-mark svg { display: block; width: 44px; height: 44px; margin: 0 auto 16px; color: var(--fg); }
+.signin h1 { font-size: 20px; text-align: center; }
+.signin .form-box { padding: 16px; }
+.signin .btn { width: 100%; justify-content: center; }
+.signin-note { margin: 16px 0 0; text-align: center; }
+
+/* Two fields reading as one address, "collection / name". */
+.name-row { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
+.name-row .field { flex: 1 1 200px; margin-bottom: 0; }
+.name-row .field input { width: 100%; }
+.name-slash { font-size: 20px; color: var(--fg-muted); padding-bottom: 4px; }
+hr.rule { border: none; border-top: 1px solid var(--border-soft); margin: 20px 0; }
+
+/* A label that only a screen reader needs, where the placeholder or the
+   surrounding heading already says what the field is. */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
 .form-box { border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; max-width: 620px; }
 .form-box.wide { max-width: 880px; }
 .form-box h1, .form-box h2 { margin-top: 0; }
@@ -362,6 +381,14 @@ textarea.code-editor {
 }
 .commit-box { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 12px 16px; margin-top: 12px; max-width: 620px; }
 .commit-box .field { margin-bottom: 10px; }
+.commit-box-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.commit-box input[type="text"], .commit-box textarea { max-width: 100%; }
+textarea {
+  width: 100%; max-width: 100%; padding: 6px 12px; font-size: 14px; font-family: inherit; line-height: 1.5;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--input-bg); color: var(--fg); resize: vertical;
+}
+.settings-box { max-width: 760px; }
+.settings-box .box-body { padding: 16px 20px; }
 .actions { display: flex; gap: 8px; align-items: center; }
 .file-head { font-weight: 400; }
 .file-head .mono { font-weight: 600; }
@@ -369,7 +396,9 @@ textarea.code-editor {
 .filename-row input { flex: 1; }
 .inline-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 4px 0; }
 .inline-form label { display: flex; align-items: center; gap: 6px; color: var(--fg-muted); font-size: 13px; }
-.user-actions { padding: 8px 0 4px; }
+.user-actions { padding: 12px; display: flex; flex-direction: column; gap: 10px; width: 380px; }
+.user-actions .inline-form { margin: 0; }
+.user-actions input[type="text"] { width: 100%; }
 .flash { background: var(--ok-bg); border: 1px solid var(--ok-border); border-radius: var(--radius); padding: 8px 12px; margin-bottom: 16px; max-width: 620px; }
 .form-error { background: var(--err-bg); border: 1px solid var(--err-border); border-radius: var(--radius); padding: 8px 12px; margin-bottom: 16px; max-width: 620px; }
 .danger-zone { border: 1px solid var(--danger); border-radius: var(--radius); padding: 16px 24px; margin-top: 24px; max-width: 620px; }

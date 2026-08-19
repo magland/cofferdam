@@ -55,6 +55,17 @@ function field(req: Request, name: string): string {
   return typeof v === 'string' ? v : '';
 }
 
+/**
+ * The commit box posts a summary and an optional extended description; git's
+ * convention joins them with a blank line. An empty summary falls back to the
+ * placeholder the form showed, so a commit is never made with no subject.
+ */
+function commitMessage(req: Request, fallback: string): string {
+  const summary = field(req, 'message').trim() || fallback;
+  const description = field(req, 'description').trim();
+  return description ? `${summary}\n\n${description}` : summary;
+}
+
 function safeNext(v: string): string {
   return v.startsWith('/') && !v.startsWith('//') ? v : '/';
 }
@@ -428,7 +439,7 @@ export function registerWebOps(
         return;
       }
       const content = normalizeContent(field(req, 'content'));
-      const message = field(req, 'message').trim() || `Update ${filePath.split('/').pop()}`;
+      const message = commitMessage(req, `Update ${filePath.split('/').pop()}`);
       const retryUrl = `${urlOf(loaded.repo)}/edit/${encPath(branch)}/${encPath(filePath)}`;
       try {
         const sha = await ops.commitFileChange(loaded.repo.dir, {
@@ -490,7 +501,7 @@ export function registerWebOps(
         return;
       }
       const content = normalizeContent(field(req, 'content'));
-      const message = field(req, 'message').trim() || `Create ${filename.split('/').pop()}`;
+      const message = commitMessage(req, `Create ${filename.split('/').pop()}`);
       try {
         const sha = await ops.commitFileChange(loaded.repo.dir, {
           branch,
@@ -541,7 +552,7 @@ export function registerWebOps(
         fail(res, 400, 'The form is missing its base commit; reload and try again.', viewer);
         return;
       }
-      const message = field(req, 'message').trim() || `Delete ${filePath.split('/').pop()}`;
+      const message = commitMessage(req, `Delete ${filePath.split('/').pop()}`);
       const retryUrl = `${urlOf(loaded.repo)}/delete/${encPath(branch)}/${encPath(filePath)}`;
       try {
         const sha = await ops.commitFileChange(loaded.repo.dir, {
