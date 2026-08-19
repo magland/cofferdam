@@ -69,7 +69,7 @@ h2 { font-family: var(--font-head); font-size: 18px; }
 /* Icons are inline SVG (see icons.ts). text-bottom is what sits a 16px glyph
    on the same baseline as the label beside it; flex:none keeps one from being
    squeezed when it sits in a flex row. */
-.octicon { display: inline-block; vertical-align: text-bottom; flex: none; overflow: visible; }
+.glyph { display: inline-block; vertical-align: text-bottom; flex: none; overflow: visible; }
 
 .repo-title { display: flex; align-items: center; gap: 8px; font-size: 18px; margin-bottom: 8px; }
 .repo-title .icon { color: var(--fg-muted); margin-right: 0; }
@@ -79,10 +79,10 @@ h2 { font-family: var(--font-head); font-size: 18px; }
   color: var(--fg); border-bottom: 2px solid transparent; margin-bottom: -1px;
   border-radius: var(--radius) var(--radius) 0 0;
 }
-.tab .octicon { color: var(--fg-muted); }
+.tab .glyph { color: var(--fg-muted); }
 .tab:hover { background: var(--surface); text-decoration: none; }
 .tab.active { font-weight: 600; border-bottom-color: var(--tab-marker); }
-.tab.active .octicon { color: var(--fg); }
+.tab.active .glyph { color: var(--fg); }
 .counter { display: inline-block; background: var(--chip-bg); border-radius: 2em; padding: 0 6px; font-size: 12px; color: var(--fg-muted); margin-left: 4px; }
 /* The outlined pill GitHub uses for a label on a name: Default, and its kin. */
 .badge { display: inline-block; border: 1px solid var(--accent); color: var(--accent); border-radius: 2em; padding: 0 7px; font-size: 12px; line-height: 18px; }
@@ -166,7 +166,7 @@ button.dd-item { width: 100%; background: none; font: inherit; font-size: 13px; 
 .side-links { display: flex; flex-direction: column; gap: 8px; }
 .side-links a { display: flex; align-items: center; gap: 8px; color: var(--fg); font-size: 13px; }
 .side-links a:hover { color: var(--accent); text-decoration: none; }
-.side-links .octicon { color: var(--fg-muted); }
+.side-links .glyph { color: var(--fg-muted); }
 @media (max-width: 1000px) {
   .repo-layout { flex-direction: column; }
   .repo-side { flex: 1 1 auto; width: 100%; }
@@ -205,14 +205,14 @@ table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
 .latest-commit .lc-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .lc-history { display: flex; align-items: center; gap: 6px; color: var(--fg); padding-left: 8px; border-left: 1px solid var(--border); }
 .lc-history:hover { color: var(--accent); text-decoration: none; }
-.lc-history .octicon { color: var(--fg-muted); }
+.lc-history .glyph { color: var(--fg-muted); }
 
 .box { border: 1px solid var(--border); border-radius: var(--radius); margin-top: 24px; }
 .box-header {
   display: flex; align-items: center; gap: 8px; background: var(--surface); border-bottom: 1px solid var(--border);
   padding: 8px 12px; font-weight: 600; border-radius: var(--radius) var(--radius) 0 0;
 }
-.box-header .octicon { color: var(--fg-muted); }
+.box-header .glyph { color: var(--fg-muted); }
 .box-body { padding: 16px 24px; }
 .box-header a { color: var(--fg); }
 .box-header a:hover { color: var(--accent); text-decoration: none; }
@@ -258,7 +258,7 @@ table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
 .commit-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; border: 1px solid var(--border); border-top: none; padding: 8px 12px; }
 /* A day's commits are one bordered group under the day's heading. */
 .commit-day { display: flex; align-items: center; gap: 8px; font-weight: 600; margin: 20px 0 8px; }
-.commit-day .octicon { color: var(--fg-muted); }
+.commit-day .glyph { color: var(--fg-muted); }
 .commit-group { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .commit-group .commit-row { border: none; border-top: 1px solid var(--border-soft); }
 .commit-group .commit-row:first-child { border-top: none; }
@@ -477,9 +477,9 @@ textarea {
 /* A run in progress turns, as it does on GitHub; a reader who has motion
    turned off gets the same amber ring, still. */
 .run-status.running { color: var(--alert-warning); }
-.run-status.running .octicon { animation: spin 1.4s linear infinite; }
+.run-status.running .glyph { animation: spin 1.4s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .run-status.running .octicon { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .run-status.running .glyph { animation: none; } }
 .run-status.queued { color: var(--fg-subtle); }
 .run-status.cancelled, .run-status.skipped { color: var(--fg-subtle); }
 .listing.runs td.run-cell { display: flex; align-items: flex-start; gap: 10px; }
@@ -497,7 +497,7 @@ textarea {
   .wf-side { flex: 1 1 auto; width: 100%; }
 }
 .run-sub { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-.chip .octicon { vertical-align: text-bottom; margin-right: 2px; }
+.chip .glyph { vertical-align: text-bottom; margin-right: 2px; }
 .dispatch-body { padding: 16px; }
 .run-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .run-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -658,7 +658,7 @@ details.diff-file:not([open]) > summary.diff-file-header { border-bottom: none; 
   display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; font-size: 12px;
   border: 1px solid var(--border); border-radius: 2em; background: var(--surface); color: var(--fg);
 }
-.filter-chip .octicon { color: var(--fg-muted); }
+.filter-chip .glyph { color: var(--fg-muted); }
 .filter-chip a { display: inline-flex; color: var(--fg-muted); }
 .filter-chip a:hover { color: var(--danger); }
 
@@ -667,10 +667,10 @@ details.diff-file:not([open]) > summary.diff-file-header { border-bottom: none; 
 .state-tab { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: var(--radius); color: var(--fg-muted); font-size: 13px; }
 .state-tab:hover { background: var(--surface); text-decoration: none; }
 .state-tab.current { color: var(--fg); font-weight: 600; }
-.state-tab .octicon { color: var(--fg-muted); }
+.state-tab .glyph { color: var(--fg-muted); }
 /* Open is green and closed is purple, the colours GitHub taught for these. */
-.octicon.issue-open { color: var(--alert-tip); }
-.octicon.issue-closed { color: var(--alert-important); }
+.glyph.issue-open { color: var(--alert-tip); }
+.glyph.issue-closed { color: var(--alert-important); }
 table.listing.issues td.issue-cell { display: flex; align-items: flex-start; gap: 10px; }
 table.listing.issues td.issue-cell > span { min-width: 0; }
 .issue-link { color: var(--fg); font-weight: 600; }
@@ -708,7 +708,7 @@ table.listing.issues td.issue-cell > span { min-width: 0; }
 .release:first-of-type { border-top: none; }
 .release-side { flex: 0 0 200px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .release-tag { display: inline-flex; align-items: center; gap: 6px; color: var(--fg); font-size: 15px; }
-.release-tag .octicon { color: var(--fg-muted); }
+.release-tag .glyph { color: var(--fg-muted); }
 .release-main { flex: 1 1 auto; min-width: 0; }
 .release-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .release-head h2 { margin: 0; }
@@ -720,7 +720,7 @@ table.listing.issues td.issue-cell > span { min-width: 0; }
 .release-downloads { display: flex; flex-direction: column; gap: 6px; max-width: 320px; }
 .release-download { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--fg); font-size: 13px; }
 .release-download:hover { background: var(--surface); text-decoration: none; }
-.release-download .octicon { color: var(--fg-muted); }
+.release-download .glyph { color: var(--fg-muted); }
 @media (max-width: 860px) {
   .release { flex-direction: column; gap: 8px; }
   .release-side { flex: 1 1 auto; flex-direction: row; align-items: center; }
@@ -728,7 +728,7 @@ table.listing.issues td.issue-cell > span { min-width: 0; }
 
 /* --- forks --- */
 .fork-note { display: flex; align-items: center; gap: 6px; margin: -4px 0 8px 24px; }
-.fork-note .octicon { color: var(--fg-subtle); }
+.fork-note .glyph { color: var(--fg-subtle); }
 
 /* --- the commit box's branch choice --- */
 .commit-target { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px; }
@@ -745,14 +745,14 @@ table.listing.issues td.issue-cell > span { min-width: 0; }
   display: flex; align-items: flex-start; gap: 12px; margin: 16px 0;
   border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; background: var(--surface);
 }
-.merge-box > .octicon { margin-top: 2px; }
+.merge-box > .glyph { margin-top: 2px; }
 .merge-box form { margin-left: auto; }
 .merge-do { display: flex; align-items: center; gap: 8px; }
 .merge-method select { width: auto; padding: 4px 8px; font-size: 13px; }
-.merge-box.clean > .octicon { color: var(--alert-tip); }
-.merge-box.conflict > .octicon { color: var(--danger); }
-.merge-box.merged > .octicon { color: var(--alert-important); }
-.merge-box.closed > .octicon, .merge-box.unknown > .octicon { color: var(--fg-muted); }
+.merge-box.clean > .glyph { color: var(--alert-tip); }
+.merge-box.conflict > .glyph { color: var(--danger); }
+.merge-box.merged > .glyph { color: var(--alert-important); }
+.merge-box.closed > .glyph, .merge-box.unknown > .glyph { color: var(--fg-muted); }
 .merge-conflicts { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--fg-muted); }
 .pull-commits { display: flex; flex-direction: column; }
 .pull-commits .commit-row { border: none; border-top: 1px solid var(--border-soft); padding: 8px 0; }

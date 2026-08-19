@@ -32,9 +32,9 @@ interface LanguageDef {
 }
 
 // Names and colours are Linguist's (github-linguist/linguist, MIT), copied in
-// rather than depended on, as the Octicons in icons.ts are. A language absent
-// from this table is simply not counted, which is the same treatment Linguist
-// gives a file it cannot classify.
+// rather than depended on, since cofferdam ships no static files. A language
+// absent from this table is simply not counted, which is the same treatment
+// Linguist gives a file it cannot classify.
 const LANGUAGES: LanguageDef[] = [
   { name: 'TypeScript', color: '#3178c6', type: 'programming', ext: ['ts', 'mts', 'cts'] },
   { name: 'TSX', color: '#3178c6', type: 'programming', ext: ['tsx'] },

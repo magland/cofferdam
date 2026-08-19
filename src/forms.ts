@@ -320,7 +320,7 @@ export function settingsPage(ctx: RepoCtx, description: string, msg?: string, er
       ? `<div class="field"><label for="defaultBranch">Default branch</label><select id="defaultBranch" name="defaultBranch">${branchOptions}</select></div>`
       : '';
   const settingsForm = ctx.canPush
-    ? `<div class="box settings-box"><div class="box-header">${icon('gear')}General</div><div class="box-body">
+    ? `<div class="box settings-box"><div class="box-header">${icon('sliders')}General</div><div class="box-body">
 <form method="post" action="${base}/settings">
 ${csrfField(ctx.viewer!)}
 <div class="field"><label for="description">Description</label><input type="text" id="description" name="description" value="${esc(
@@ -378,7 +378,7 @@ export function adminUsersPage(
   const rows = users
     .map(({ name, user }) => {
       const actions = `<details class="dropdown"><summary class="btn">${icon(
-        'kebab-horizontal'
+        'kebab'
       )}<span>Manage</span></summary><div class="dropdown-menu dd-right user-actions">
 <form method="post" action="/admin/users/${encodeURIComponent(name)}/grant" class="inline-form">
 ${csrfField(viewer)}
@@ -433,10 +433,10 @@ export function adminShell(
   // Appearance is vault-wide, so it is offered only to an administrator whose
   // scope covers the whole vault; the same check the route makes.
   const canTheme = canAdmin(viewer.auth, ['*']);
-  const nav = `<aside class="admin-side"><div class="side-block"><h3>${icon('gear')}Administration</h3><div class="side-links">
+  const nav = `<aside class="admin-side"><div class="side-block"><h3>${icon('sliders')}Administration</h3><div class="side-links">
 ${item('users', '/admin/users', 'Users', 'people')}
 ${item('runners', '/admin/runners', 'Runners', 'server')}
-${canTheme ? item('appearance', '/admin/appearance', 'Appearance', 'paintbrush') : ''}
+${canTheme ? item('appearance', '/admin/appearance', 'Appearance', 'appearance') : ''}
 </div></div></aside>`;
   return layout(title, `<div class="admin-layout">${nav}<div class="admin-main">${body}</div></div>`, {
     viewer,

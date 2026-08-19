@@ -37,8 +37,8 @@ const STATUS_LABEL: Record<Status, string> = {
 const STATUS_ICON: Record<Status, IconName> = {
   queued: 'clock',
   running: 'sync',
-  success: 'check-circle-fill',
-  failure: 'x-circle-fill',
+  success: 'check-circle',
+  failure: 'x-circle',
   cancelled: 'stop',
   skipped: 'skip',
 };

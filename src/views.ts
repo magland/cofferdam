@@ -53,7 +53,7 @@ export function csrfField(viewer: Viewer): string {
   return `<input type="hidden" name="csrf" value="${esc(viewer.csrf)}">`;
 }
 
-const FOLDER_ICON = icon('file-directory-fill', 'icon');
+const FOLDER_ICON = icon('folder', 'icon');
 const FILE_ICON = icon('file', 'icon file');
 const REPO_ICON = icon('repo', 'icon');
 
@@ -68,7 +68,7 @@ function userBox(opts: PageOpts): string {
   // spread across the bar.
   const name = viewer.auth.username;
   const admin = viewerIsAdmin(viewer)
-    ? `<a class="dd-item" href="/admin">${icon('gear')}<span>Admin</span></a>`
+    ? `<a class="dd-item" href="/admin">${icon('sliders')}<span>Admin</span></a>`
     : '';
   return `<details class="dropdown user-menu">
 <summary aria-label="Account menu">${avatar(name, 24)}${icon('chevron-down', 'caret')}</summary>
@@ -355,7 +355,7 @@ ${ctx.hasCi || active === 'actions' ? tab('actions', 'Actions', `${base}/actions
 ${tab('branches', 'Branches', `${base}/branches`, 'git-branch', ctx.branches.length)}
 ${tab('tags', 'Tags', `${base}/tags`, 'tag', ctx.tags.length)}
 ${ctx.hasSite ? tab('site', 'Site', `${base}/site/`, 'globe') : ''}
-${ctx.canPush || ctx.canAdmin ? tab('settings', 'Settings', `${base}/settings`, 'gear') : ''}
+${ctx.canPush || ctx.canAdmin ? tab('settings', 'Settings', `${base}/settings`, 'sliders') : ''}
 </nav>`;
 }
 
@@ -571,7 +571,7 @@ function aboutPanel(ctx: RepoCtx, view: TreeView): string {
   const settings =
     ctx.canPush || ctx.canAdmin
       ? `<a class="side-edit" href="${base}/settings" title="Edit repository details" aria-label="Edit repository details">${icon(
-          'gear'
+          'sliders'
         )}</a>`
       : '';
   const description = view.description
