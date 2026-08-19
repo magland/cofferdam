@@ -100,6 +100,7 @@ Read routes (anonymous):
 | `GET /:collection/:repo` | Repo home: tree at default branch, README, clone box |
 | `GET /:collection/:repo/tree/:ref/*` `blob` `raw` | Browsing; ref may contain `/`, resolved by longest match against real ref names. Markdown blobs render as documents; `?plain=1` shows the source |
 | `GET /:collection/:repo/commits/:ref` `commit/:sha` | History (paginated) and diff view |
+| `GET /:collection/:repo/archive/:ref.{tar.gz,tgz,zip}` | Source download, streamed straight from `git archive`; the ref must be one the repository has, or a commit id |
 | `GET /:collection/:repo/branches` `tags` | Ref listings (with operation forms when the session allows) |
 | `GET /:collection/:repo/site/*` | Static site from the sibling `<repo>.site` directory (index.html, optional 404.html) |
 | `GET /:collection/:repo/info/refs` + POST endpoints | git smart HTTP; upload-pack anonymous, receive-pack behind HTTP Basic (401 + WWW-Authenticate), push-to-create |

@@ -1,4 +1,4 @@
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 
 const MAX_BUFFER = 256 * 1024 * 1024;
 
@@ -219,6 +219,48 @@ export class GitRepo {
 
   async commitPatch(sha: string): Promise<string> {
     return (await execGit(this.dir, ['show', '--format=', '--patch', '--no-color', sha, '--'])).toString('utf8');
+  }
+
+  /**
+   * Stream `git archive` for `ref` into `out`, as GitHub's source downloads
+   * do. Streamed rather than buffered because an archive of a large
+   * repository has no business sitting in memory, which also means the
+   * caller must satisfy itself that the ref exists before the first byte
+   * goes out: once the response has begun there is no status code left to
+   * change. `prefix` is the directory the archive unpacks into.
+   */
+  archiveTo(ref: string, format: 'tar.gz' | 'zip', prefix: string, out: NodeJS.WritableStream): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const child = spawn('git', ['-C', this.dir, 'archive', `--format=${format}`, `--prefix=${prefix}`, ref], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stderr = '';
+      child.stderr.on('data', (d: Buffer) => {
+        stderr += d.toString();
+      });
+      child.stdout.on('data', (chunk: Buffer) => {
+        if (!out.write(chunk)) {
+          child.stdout.pause();
+          out.once('drain', () => child.stdout.resume());
+        }
+      });
+      child.on('error', reject);
+      child.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new GitError(`git archive failed: ${stderr.trim() || `exit ${code}`}`));
+      });
+    });
+  }
+
+  /** The object a rev names, or null if git does not know it. */
+  async resolve(rev: string): Promise<string | null> {
+    try {
+      return (await execGit(this.dir, ['rev-parse', '--verify', '--end-of-options', `${rev}^{commit}`]))
+        .toString('utf8')
+        .trim();
+    } catch {
+      return null;
+    }
   }
 
   resolveRefAndPath(rest: string, refNames: string[]): { ref: string; path: string } {

@@ -47,6 +47,8 @@ export interface ThemeVars {
   errBorder: string;
   /** The drop shadow under a popover menu. */
   shadow: string;
+  /** The background of a file line someone linked to (#L12). */
+  lineMark: string;
   /** Backgrounds for file content, text inputs, and inline code. */
   codeBg: string;
   inputBg: string;
@@ -112,6 +114,7 @@ export const THEMES: Theme[] = [
       errBg: '#fbe6e2',
       errBorder: '#b3261e55',
       shadow: 'rgba(43,38,33,0.16)',
+      lineMark: '#f6ecd0',
       codeBg: '#fffdf9',
       inputBg: '#fffdf9',
       inlineCodeBg: 'rgba(140,127,110,0.18)',
@@ -159,6 +162,7 @@ export const THEMES: Theme[] = [
       errBg: '#ffebe9',
       errBorder: '#cf222e55',
       shadow: 'rgba(31,35,40,0.15)',
+      lineMark: '#fff8c5',
       codeBg: '#ffffff',
       inputBg: '#ffffff',
       inlineCodeBg: 'rgba(175,184,193,0.2)',
@@ -206,6 +210,7 @@ export const THEMES: Theme[] = [
       errBg: '#fdeaed',
       errBorder: '#c02a3f55',
       shadow: 'rgba(28,30,43,0.16)',
+      lineMark: '#eeecfb',
       codeBg: '#ffffff',
       inputBg: '#ffffff',
       inlineCodeBg: 'rgba(120,126,150,0.16)',
@@ -253,6 +258,7 @@ export const THEMES: Theme[] = [
       errBg: '#2d1417',
       errBorder: '#f8514966',
       shadow: 'rgba(1,4,9,0.85)',
+      lineMark: '#2b2512',
       codeBg: '#0d1117',
       inputBg: '#0d1117',
       inlineCodeBg: 'rgba(110,118,129,0.4)',
@@ -300,6 +306,7 @@ export const THEMES: Theme[] = [
       errBg: '#2a1113',
       errBorder: '#dc262655',
       shadow: 'rgba(0,0,0,0.8)',
+      lineMark: '#13251a',
       codeBg: '#0a0c0e',
       inputBg: '#0a0c0e',
       inlineCodeBg: 'rgba(120,140,128,0.24)',

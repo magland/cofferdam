@@ -181,17 +181,29 @@ table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
 .box-header a { color: var(--fg); }
 .box-header a:hover { color: var(--accent); text-decoration: none; }
 
-.code-wrap { display: flex; border: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius); overflow: hidden; background: var(--code-bg); }
 .code-meta {
   display: flex; justify-content: space-between; align-items: center; gap: 12px;
   border: 1px solid var(--border); border-bottom: none; border-radius: var(--radius) var(--radius) 0 0;
   background: var(--surface); padding: 6px 12px;
 }
-.gutter {
-  margin: 0; padding: 10px 4px 10px 10px; text-align: right; color: var(--fg-subtle);
-  user-select: none; font-size: 12px; line-height: 20px; background: var(--code-bg);
+/* The file view is one element per line, so a line can be linked to and
+   highlighted when linked to (#L12). The row is as wide as its content but
+   never narrower than the viewport, which is what lets the highlight run the
+   full width; the number stays put while the code scrolls under it. */
+.code-lines {
+  border: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--code-bg); overflow-x: auto; padding: 8px 0;
+  font-family: var(--font-mono); font-size: 12px; line-height: 20px;
 }
-pre.codeview { margin: 0; padding: 10px 16px; overflow-x: auto; flex: 1; font-size: 12px; line-height: 20px; background: var(--code-bg); }
+.cline { display: flex; width: max-content; min-width: 100%; }
+.cline:target { background: var(--line-mark); }
+.lnum {
+  position: sticky; left: 0; z-index: 1; flex: none; width: 56px; padding: 0 12px 0 8px;
+  text-align: right; color: var(--fg-subtle); background: var(--code-bg); user-select: none;
+}
+.lnum:hover { color: var(--fg-muted); text-decoration: none; }
+.cline:target .lnum { background: var(--line-mark); color: var(--fg-muted); }
+.ltext { white-space: pre; padding: 0 16px 0 4px; }
 .blob-image { border: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius); padding: 16px; text-align: center; background: var(--code-bg); }
 .blob-image img { max-width: 100%; }
 .blob-binary { border: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius); padding: 32px; text-align: center; color: var(--fg-muted); }
@@ -202,7 +214,7 @@ pre.codeview { margin: 0; padding: 10px 16px; overflow-x: auto; flex: 1; font-si
 
 /* Segmented Preview/Code switch on rendered files. */
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-.seg a { padding: 4px 12px; font-size: 13px; line-height: 1.5; color: var(--fg-muted); background: var(--surface); }
+.seg a { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: 13px; line-height: 1.5; color: var(--fg-muted); background: var(--surface); }
 .seg a + a { border-left: 1px solid var(--border); }
 .seg a:hover { background: var(--surface-hover); text-decoration: none; }
 .seg a.current { background: var(--chip-bg); color: var(--fg); font-weight: 600; }

@@ -1,5 +1,5 @@
 import { CommitDetail, CommitSummary, RefInfo, TreeEntry } from './git';
-import { esc, formatSize, timeTag } from './render';
+import { esc, formatSize, highlightedLines, timeTag } from './render';
 import { Viewer, viewerIsAdmin } from './session';
 import { activeTheme } from './themes';
 import { WORDMARK } from './logo';
@@ -82,9 +82,7 @@ export function layout(title: string, content: string, opts: PageOpts = {}): str
 ${content}
 </main>
 <script>
-function copyCmd(btn) {
-  var el = btn.previousElementSibling;
-  var text = el && el.tagName === 'INPUT' ? el.value : el.textContent;
+function copyText(btn, text) {
   function done() { btn.classList.add('copied'); setTimeout(function () { btn.classList.remove('copied'); }, 1400); }
   function fallback() {
     var ta = document.createElement('textarea');
@@ -97,6 +95,20 @@ function copyCmd(btn) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(done, function () { fallback(); done(); });
   } else { fallback(); done(); }
+}
+// The text to copy is whatever sits just before the button: a <code>, or an
+// <input> holding a URL.
+function copyCmd(btn) {
+  var el = btn.previousElementSibling;
+  copyText(btn, el && el.tagName === 'INPUT' ? el.value : el.textContent);
+}
+// A file view is one element per line, so its text is gathered rather than
+// read off one node; the line numbers are separate elements and stay out.
+function copyLines(btn) {
+  var lines = document.querySelectorAll('.code-lines .ltext');
+  var out = [];
+  for (var i = 0; i < lines.length; i++) out.push(lines[i].textContent);
+  copyText(btn, out.join('\n'));
 }
 // Menus are <details> elements. These two handlers give them the rest of what
 // a menu is expected to do: close when the reader clicks elsewhere or presses
@@ -187,14 +199,20 @@ function refPicker(ctx: RepoCtx, urlForRef: (ref: string) => string): string {
 </details>`;
 }
 
-/** The green Code button, with the clone URL behind it. */
+/** The green Code button: the clone URL, and the source as an archive. */
 function cloneMenu(ctx: RepoCtx): string {
+  const archive = (ext: string, label: string) =>
+    `<a class="dd-item" href="${repoUrl(ctx)}/archive/${encPath(ctx.ref)}.${ext}">${icon(
+      'file-zip'
+    )}<span class="dd-label">${label}</span></a>`;
   return `<details class="dropdown clone-menu">
 <summary class="btn btn-primary">${icon('code')}<span>Code</span>${icon('chevron-down', 'caret')}</summary>
 <div class="dropdown-menu dd-right">
   <div class="dd-section">Clone with HTTP</div>
   <div class="cmd-row"><input readonly value="${esc(ctx.cloneUrl)}" onclick="this.select()">${copyButton()}</div>
   <p class="muted small">Anyone can clone. Pushing asks for a username and a token.</p>
+  <div class="dd-group"><div class="dd-section">Download ${esc(ctx.ref)}</div>
+${archive('zip', 'Source as zip')}${archive('tar.gz', 'Source as tar.gz')}</div>
 </div>
 </details>`;
 }
@@ -454,27 +472,42 @@ export function blobPage(
   const rawUrl = `${base}/raw/${encPath(ctx.ref)}/${encPath(path)}`;
   const editable = (view.kind === 'code' || view.kind === 'markdown') && view.editable;
   const editBtns = editable
-    ? `<a class="btn" href="${base}/edit/${encPath(ctx.ref)}/${encPath(path)}">Edit</a><a class="btn btn-danger-outline" href="${base}/delete/${encPath(
-        ctx.ref
-      )}/${encPath(path)}">Delete</a>`
+    ? `<a class="btn" href="${base}/edit/${encPath(ctx.ref)}/${encPath(path)}" title="Edit this file">${icon(
+        'pencil'
+      )}<span>Edit</span></a><a class="btn btn-danger-outline" href="${base}/delete/${encPath(ctx.ref)}/${encPath(
+        path
+      )}" title="Delete this file">${icon('trash')}<span>Delete</span></a>`
     : '';
   // GitHub spells the source view of a rendered file ?plain=1; we follow that.
-  const seg = (label: string, href: string, current: boolean) =>
-    `<a${current ? ' class="current"' : ''} href="${href}">${label}</a>`;
+  const seg = (label: string, glyph: IconName, href: string, current: boolean) =>
+    `<a${current ? ' class="current"' : ''} href="${href}">${icon(glyph)}<span>${label}</span></a>`;
   const toggle = isMarkdown
-    ? `<span class="seg">${seg('Preview', blobUrl, view.kind === 'markdown')}${seg(
+    ? `<span class="seg">${seg('Preview', 'book', blobUrl, view.kind === 'markdown')}${seg(
         'Code',
+        'code',
         `${blobUrl}?plain=1`,
         view.kind !== 'markdown'
       )}</span>`
     : '';
   let body = '';
-  const meta = (left: string) =>
-    `<div class="code-meta"><span class="muted small">${left}</span><span class="right-group">${toggle}<a class="btn" href="${rawUrl}">Raw</a>${editBtns}</span></div>`;
+  const meta = (left: string, extra = '') =>
+    `<div class="code-meta"><span class="muted small">${left}</span><span class="right-group">${toggle}${extra}<a class="btn" href="${rawUrl}" title="View the file as it was committed">${icon(
+      'download'
+    )}<span>Raw</span></a>${editBtns}</span></div>`;
   if (view.kind === 'code') {
-    const gutter = Array.from({ length: view.lineCount }, (_, i) => i + 1).join('\n');
-    body = `${meta(`${view.lineCount} lines &middot; ${esc(formatSize(view.size))}`)}
-<div class="code-wrap"><pre class="gutter">${gutter}</pre><pre class="codeview"><code>${view.html}</code></pre></div>`;
+    // One element per line, each an anchor: linking to a line is how people
+    // point at code, and #L12 is the address GitHub taught them to expect.
+    const rows = highlightedLines(view.html)
+      .map((line, i) => {
+        const n = i + 1;
+        return `<div class="cline" id="L${n}"><a class="lnum" href="#L${n}" aria-label="Line ${n}">${n}</a><span class="ltext">${line}</span></div>`;
+      })
+      .join('');
+    const copyRaw = `<button class="btn" type="button" onclick="copyLines(this)" title="Copy the file's contents"><span class="copy-idle">${icon(
+      'copy'
+    )}<span>Copy</span></span><span class="copy-done">${icon('check')}<span>Copied</span></span></button>`;
+    body = `${meta(`${view.lineCount} line${view.lineCount === 1 ? '' : 's'} &middot; ${esc(formatSize(view.size))}`, copyRaw)}
+<div class="code-lines">${rows}</div>`;
   } else if (view.kind === 'markdown') {
     body = `${meta(esc(formatSize(view.size)))}
 <div class="rendered markdown-body">${view.html}</div>`;
@@ -489,7 +522,7 @@ export function blobPage(
 <p><b>Stored with Git LFS</b></p>
 <p>This file is ${esc(formatSize(view.size))}; the repository holds a pointer to it.</p>
 <p class="muted small mono">sha256:${esc(view.oid)}</p>
-<p><a class="btn btn-primary" href="${rawUrl}">Download</a></p>
+<p><a class="btn btn-primary" href="${rawUrl}">${icon('download')}<span>Download</span></a></p>
 </div>`;
   } else {
     body = `${meta(esc(formatSize(view.size)))}<div class="blob-binary">Binary file. <a href="${rawUrl}">View raw</a></div>`;

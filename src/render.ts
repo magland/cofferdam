@@ -85,6 +85,45 @@ export function highlightCode(text: string, filename: string): string {
   return esc(text);
 }
 
+/**
+ * Highlighted code split into one HTML string per line, so each line can be
+ * its own element and so carry an anchor. highlight.js emits spans that cross
+ * line boundaries (a block comment, a multi-line string), which is why this
+ * cannot be a split on newline: open spans are closed at the end of a line and
+ * reopened at the start of the next. The input is highlight.js output, whose
+ * only tags are <span class="..."> and </span> and whose text is escaped, so
+ * tokenizing on angle brackets is sound here and nowhere else.
+ */
+export function highlightedLines(html: string): string[] {
+  const lines: string[] = [];
+  const open: string[] = [];
+  let current = '';
+  for (const token of html.match(/<[^>]*>|[^<]+/g) ?? []) {
+    if (token.startsWith('</')) {
+      open.pop();
+      current += token;
+    } else if (token.startsWith('<')) {
+      open.push(token);
+      current += token;
+    } else {
+      const parts = token.split('\n');
+      parts.forEach((part, i) => {
+        if (i > 0) {
+          current += '</span>'.repeat(open.length);
+          lines.push(current);
+          current = open.join('');
+        }
+        current += part;
+      });
+    }
+  }
+  lines.push(current);
+  // A file that ends in a newline has no line after it, matching how the line
+  // count is taken elsewhere.
+  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+  return lines;
+}
+
 export function isBinary(buf: Buffer): boolean {
   const n = Math.min(buf.length, 8192);
   for (let i = 0; i < n; i++) {

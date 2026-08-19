@@ -18,6 +18,12 @@ const COMMITS_PER_PAGE = 35;
 const MAX_RENDER_SIZE = 1024 * 1024;
 const MAX_LISTED_COMMITS = 250;
 
+const ARCHIVE_FORMATS: Record<string, { format: 'tar.gz' | 'zip'; type: string }> = {
+  'tar.gz': { format: 'tar.gz', type: 'application/gzip' },
+  tgz: { format: 'tar.gz', type: 'application/gzip' },
+  zip: { format: 'zip', type: 'application/zip' },
+};
+
 export const IMAGE_TYPES: Record<string, string> = {
   png: 'image/png',
   jpg: 'image/jpeg',
@@ -301,6 +307,42 @@ export function registerBrowse(app: Express, root: string, lfs: LfsContext | nul
         res.type('text/plain; charset=utf-8');
       }
       res.send(buf);
+    })
+  );
+
+  // Source downloads, as GitHub's Code button offers them: the extension on
+  // the URL picks the format and the rest of it is the ref.
+  app.get(
+    '/:collection/:repo/archive/*',
+    ah(async (req, res) => {
+      const viewer = getViewer(req, root);
+      const loaded = await loadRepo(root, req, res, viewer);
+      if (!loaded) return;
+      const m = wildcard(req).match(/^(.+)\.(tar\.gz|tgz|zip)$/);
+      if (!m) {
+        send404(res, 'Ask for an archive as <ref>.tar.gz or <ref>.zip', viewer);
+        return;
+      }
+      const [, ref, ext] = m;
+      const spec = ARCHIVE_FORMATS[ext];
+      // A ref this repository has, or a commit id: never an arbitrary
+      // revision expression out of a URL.
+      const known = loaded.refNames.includes(ref) || /^[0-9a-f]{7,40}$/.test(ref);
+      if (!isValidRefName(ref) || !known || !(await loaded.repo.resolve(ref))) {
+        send404(res, `Ref ${ref} not found`, viewer);
+        return;
+      }
+      const stem = `${loaded.repo.name}-${ref.replace(/\//g, '-')}`;
+      res.type(spec.type);
+      res.setHeader('Content-Disposition', `attachment; filename="${stem}.${ext}"`);
+      try {
+        await loaded.repo.archiveTo(ref, spec.format, `${stem}/`, res);
+        res.end();
+      } catch {
+        // The response is already streaming, so there is no status left to
+        // send: break the connection rather than finish a truncated archive.
+        res.destroy();
+      }
     })
   );
 

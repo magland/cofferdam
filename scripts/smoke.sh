@@ -206,9 +206,9 @@ body_has "relative link resolved against the file directory" 'href="/demo/proj/b
 body_has "anchor link left alone" 'href="#guide"'
 body_has "fenced code highlighted" 'hljs-keyword'
 body_has "source view offered" 'docs/guide.md?plain=1'
-body_lacks "no line gutter in the preview" 'class="gutter"'
+body_lacks "no numbered lines in the preview" 'class="lnum"'
 check "markdown source view" 200 -b "$JAR" "$BASE/demo/proj/blob/main/docs/guide.md?plain=1"
-body_has "source view has a line gutter" 'class="gutter"'
+body_has "source view numbers its lines" 'class="lnum"'
 body_has "source view shows the markup" '# Guide'
 body_lacks "source view is not rendered" 'class="rendered markdown-body"'
 check "repo home renders the readme" 200 "$BASE/demo/proj"
@@ -276,7 +276,7 @@ check "create docs/plain.txt" 302 -b "$JAR" "$BASE/demo/proj/new/main" \
   --data-urlencode filename=docs/plain.txt --data-urlencode "content=# not markdown" \
   --data-urlencode "message="
 check "text file shows source" 200 -b "$JAR" "$BASE/demo/proj/blob/main/docs/plain.txt"
-body_has "text file has a line gutter" 'class="gutter"'
+body_has "text file numbers its lines" 'class="lnum"'
 body_lacks "no preview toggle on a text file" 'plain=1'
 
 # ---- branches and tags ----
@@ -420,6 +420,20 @@ check "raw file" 200 -D "$TMP/headers" "$BASE/demo/proj/raw/main/README.md"
 grep -qi 'content-security-policy: sandbox' "$TMP/headers" || { echo "FAIL: raw CSP header missing"; exit 1; }
 grep -qi 'content-type: text/plain' "$TMP/headers" || { echo "FAIL: raw content-type not text/plain"; exit 1; }
 PASS=$((PASS+2)); echo "ok: raw CSP and content-type"
+
+# ---- source archives ----
+
+check "source archive as tar.gz" 200 -D "$TMP/headers" "$BASE/demo/proj/archive/main.tar.gz"
+grep -qi 'content-type: application/gzip' "$TMP/headers" || { echo "FAIL: archive content-type not gzip"; exit 1; }
+grep -qi 'content-disposition: attachment; filename="proj-main.tar.gz"' "$TMP/headers" || { echo "FAIL: archive filename header missing"; exit 1; }
+PASS=$((PASS+2)); echo "ok: archive content-type and filename"
+tar tzf "$BODY" | grep -q '^proj-main/README.md$' || { echo "FAIL: archive does not unpack under proj-main/"; exit 1; }
+PASS=$((PASS+1)); echo "ok: archive unpacks under a named directory"
+check "source archive as zip" 200 "$BASE/demo/proj/archive/main.zip"
+[ "$(head -c 2 "$BODY")" = "PK" ] || { echo "FAIL: zip archive is not a zip"; exit 1; }
+PASS=$((PASS+1)); echo "ok: zip archive is a zip"
+check "archive of an unknown ref 404s" 404 "$BASE/demo/proj/archive/nope.zip"
+check "archive in an unknown format 404s" 404 "$BASE/demo/proj/archive/main.rar"
 
 # ---- JSON API ----
 
@@ -660,7 +674,7 @@ check "blob page shows the download card" 200 "$BASE/demo/lfsdemo/blob/main/data
 body_has "card names Git LFS" 'Stored with Git LFS'
 body_has "card shows the true size" "$LFS_SIZE B"
 body_has "card shows the object id" "sha256:$LFS_OID"
-body_lacks "pointer text not rendered as content" 'class="gutter"'
+body_lacks "pointer text not rendered as content" 'class="lnum"'
 check "plain view shows the pointer source" 200 "$BASE/demo/lfsdemo/blob/main/data.bin?plain=1"
 body_has "pointer source visible" 'version https://git-lfs.github.com/spec/v1'
 
