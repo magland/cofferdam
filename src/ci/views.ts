@@ -2,6 +2,7 @@ import { avatar } from '../avatar';
 import { IconName, icon } from '../icons';
 import { esc, formatSize, timeTag } from '../render';
 import { Viewer } from '../session';
+import { adminShell } from '../forms';
 import { RepoCtx, copyButton, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from '../views';
 import { ArtifactInfo } from './artifacts';
 import { DispatchableWorkflow } from './engine';
@@ -382,19 +383,21 @@ export function runnersPage(
   const rows = runners
     .map(
       (r) =>
-        `<tr><td><b>${esc(r.name)}</b><div class="muted small">registered by ${esc(r.createdBy)}${
+        `<tr><td class="with-avatar-row">${icon('server', 'icon')}<span><b>${esc(r.name)}</b><div class="muted small">registered by ${esc(r.createdBy)}${
           r.createdAt ? ` ${timeTag(r.createdAt, '')}` : ''
-        }</div></td>
+        }</div></span></td>
 <td class="small">${r.labels.map((l) => `<span class="chip">${esc(l)}</span>`).join(' ')}</td>
 <td class="small mono">${esc(r.allow.join(' '))}</td>
 <td class="right"><form method="post" action="/admin/runners/${encodeURIComponent(
           r.name
         )}/remove" onsubmit="return confirm('Remove runner ${esc(r.name)}? It will stop being able to take jobs.')">${csrfField(
           viewer
-        )}<button type="submit" class="btn btn-danger-outline">Remove</button></form></td></tr>`
+        )}<button type="submit" class="btn btn-danger-outline" title="Remove this runner">${icon(
+          'trash'
+        )}<span>Remove</span></button></form></td></tr>`
     )
     .join('');
-  const content = `<div class="page-head"><h1>Runners</h1><a class="btn" href="/admin">Back to admin</a></div>
+  const content = `<div class="page-head"><h1>Runners</h1></div>
 ${flash ? `<div class="flash">${esc(flash)}</div>` : ''}
 ${error ? `<div class="form-error">${esc(error)}</div>` : ''}
 <p class="muted">A runner is a machine that executes workflow jobs. Jobs never run on the vault's own machine: register a runner, then start it with <code>hubbit runner run</code> somewhere with Docker.</p>
@@ -416,7 +419,7 @@ ${csrfField(viewer)}
 <button type="submit" class="btn btn-primary">Register runner</button>
 </form>
 </div>`;
-  return layout('Runners', content, { viewer, path: '/admin/runners' });
+  return adminShell(viewer, 'runners', 'Runners', '/admin/runners', content);
 }
 
 export function runnerTokenPage(viewer: Viewer, name: string, token: string, host: string): string {

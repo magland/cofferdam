@@ -1,10 +1,10 @@
 import { avatar } from './avatar';
-import { icon } from './icons';
+import { IconName, icon } from './icons';
 import { MARK } from './logo';
 import { esc } from './render';
 import { Viewer } from './session';
 import { Theme } from './themes';
-import { UserRecord } from './vault';
+import { UserRecord, canAdmin } from './vault';
 import { PageOpts, RepoCtx, copyButton, copyRow, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from './views';
 
 // Form pages for the UI operations. Every mutating form embeds the session's
@@ -300,7 +300,35 @@ ${csrfField(viewer)}
 </form>
 <p class="muted small">Your admin scope must cover every glob you assign. The new token is shown once on the next page.</p>
 </div>`;
-  return layout('Users', content, { viewer, path: '/admin/users' });
+  return adminShell(viewer, 'users', 'Users', '/admin/users', content);
+}
+
+/**
+ * The shell every administration page sits in: the sections down the left, as
+ * GitHub's settings pages have. It saves each page a "Back" link and makes it
+ * plain what else there is to administer.
+ */
+export function adminShell(
+  viewer: Viewer,
+  active: 'index' | 'users' | 'runners' | 'appearance',
+  title: string,
+  path: string,
+  body: string
+): string {
+  const item = (id: string, href: string, label: string, glyph: IconName) =>
+    `<a class="${active === id ? 'current' : ''}" href="${href}">${icon(glyph)}<span>${label}</span></a>`;
+  // Appearance is vault-wide, so it is offered only to an administrator whose
+  // scope covers the whole vault; the same check the route makes.
+  const canTheme = canAdmin(viewer.auth, ['*']);
+  const nav = `<aside class="admin-side"><div class="side-block"><h3>${icon('gear')}Administration</h3><div class="side-links">
+${item('users', '/admin/users', 'Users', 'people')}
+${item('runners', '/admin/runners', 'Runners', 'server')}
+${canTheme ? item('appearance', '/admin/appearance', 'Appearance', 'paintbrush') : ''}
+</div></div></aside>`;
+  return layout(title, `<div class="admin-layout">${nav}<div class="admin-main">${body}</div></div>`, {
+    viewer,
+    path,
+  });
 }
 
 export function adminIndexPage(viewer: Viewer, canTheme: boolean): string {
@@ -321,7 +349,7 @@ ${
     ? ''
     : `<p class="muted small">Appearance is a vault-wide setting, so it is limited to administrators whose admin scope covers everything.</p>`
 }`;
-  return layout('Administration', content, { viewer, path: '/admin' });
+  return adminShell(viewer, 'index', 'Administration', '/admin', content);
 }
 
 export function appearancePage(
@@ -356,10 +384,9 @@ ${flashBanner(msg)}
 <form method="post" action="/admin/appearance">
 ${csrfField(viewer)}
 <div class="theme-grid">${cards}</div>
-<button type="submit" class="btn btn-primary">Save theme</button>
-<a class="btn" href="/admin">Back</a>
+<button type="submit" class="btn btn-primary">${icon('check')}<span>Save theme</span></button>
 </form>`;
-  return layout('Appearance', content, { viewer, path: '/admin/appearance' });
+  return adminShell(viewer, 'appearance', 'Appearance', '/admin/appearance', content);
 }
 
 export function tokenPage(viewer: Viewer, username: string, token: string, created: boolean): string {
