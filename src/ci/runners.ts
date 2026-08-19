@@ -1,6 +1,7 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { writeFileAtomic } from '../atomic';
 import { globMatch } from '../vault';
 
 // The runner registry, in <vault>/runners.json. A runner is not a user: it
@@ -85,10 +86,7 @@ export function loadRunners(root: string): RunnerRegistry {
 }
 
 function write(root: string, registry: RunnerRegistry): void {
-  const file = runnersFilePath(root);
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(registry, null, 2) + '\n', { mode: 0o600 });
-  fs.renameSync(tmp, file);
+  writeFileAtomic(runnersFilePath(root), JSON.stringify(registry, null, 2) + '\n', { mode: 0o600 });
   cache = null;
 }
 

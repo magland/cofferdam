@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { writeFileAtomic } from './atomic';
 import { DEFAULT_THEME, findTheme } from './themes';
 
 // Vault-level settings, kept in <vault>/config.json next to vault.json. Like
@@ -67,10 +68,7 @@ export function loadConfig(root: string): VaultConfig {
 
 export function saveConfig(root: string, changes: Partial<VaultConfig>): VaultConfig {
   const next: VaultConfig = { ...loadConfig(root), ...changes };
-  const file = configFilePath(root);
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n');
-  fs.renameSync(tmp, file);
+  writeFileAtomic(configFilePath(root), JSON.stringify(next, null, 2) + '\n');
   cache = null;
   return next;
 }

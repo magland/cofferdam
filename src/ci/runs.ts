@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { writeFileAtomic } from '../atomic';
 import { displayName, isValidName } from '../scan';
 
 // Run state on disk. A repository's workflow runs live in a sibling
@@ -98,9 +99,7 @@ function runDir(root: string, collection: string, repoName: string, n: number): 
 }
 
 function writeJson(file: string, value: unknown): void {
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(value, null, 1) + '\n');
-  fs.renameSync(tmp, file);
+  writeFileAtomic(file, JSON.stringify(value, null, 1) + '\n');
 }
 
 function readJson<T>(file: string): T | null {

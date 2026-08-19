@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
+import { writeFileAtomic } from './atomic';
 import { OpError } from './ops';
 import { displayName, isValidName } from './scan';
 
@@ -108,10 +109,7 @@ function readDoc(file: string): { meta: Record<string, unknown>; body: string } 
 
 function writeDoc(file: string, meta: Record<string, unknown>, body: string): void {
   const text = `---\n${YAML.stringify(meta).trimEnd()}\n---\n${body.replace(/\s+$/, '')}\n`;
-  // Written beside the target and renamed, so a reader never sees half a file.
-  const tmp = `${file}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, text, { encoding: 'utf8', mode: 0o600 });
-  fs.renameSync(tmp, file);
+  writeFileAtomic(file, text, { mode: 0o600 });
 }
 
 function str(v: unknown, fallback = ''): string {

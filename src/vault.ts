@@ -1,6 +1,7 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { writeFileAtomic } from './atomic';
 
 export const VAULT_FILE = 'vault.json';
 
@@ -188,9 +189,7 @@ export function canAdmin(auth: AuthResult, globs: string[]): boolean {
 }
 
 function writeVault(file: string, vault: Vault): void {
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(vault, null, 2) + '\n', { mode: 0o600 });
-  fs.renameSync(tmp, file);
+  writeFileAtomic(file, JSON.stringify(vault, null, 2) + '\n', { mode: 0o600 });
 }
 
 export function addUserToken(
