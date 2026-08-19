@@ -171,7 +171,7 @@ export function registerWebOps(
       res.status(401).type('html').send(forms.loginPage(next, 'Invalid username or token.'));
       return;
     }
-    setSessionCookie(req, res, root, auth.username, auth.token.scope);
+    setSessionCookie(req, res, root, auth);
     res.redirect(next);
   });
 

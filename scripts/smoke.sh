@@ -711,6 +711,63 @@ check "mint token for alice" 200 -b "$JAR" "$BASE/admin/users/alice/token" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "tokenScope="
 body_has "minted token shown" 'cofferdam_'
 
+# ---- revoking one token ends the sessions it started, and no others ----
+
+# A session is bound to the token it was signed in with, so deleting that token
+# from vault.json ends it. The interesting half is the other one: deleting a
+# different token of the same user must leave the session alone, which is what
+# a fix that simply counted the user's tokens would get wrong. This uses a user
+# of its own, since it ends by taking all of that user's tokens away.
+
+REV_JAR="$TMP/revoked.jar"
+check "create user revoked" 200 -b "$JAR" "$BASE/admin/users" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode username=revoked --data-urlencode "scope=demo/*" \
+  --data-urlencode "admin="
+REV_ONE="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+# Three tokens, because the interesting deletion has to leave one behind: a
+# user down to no tokens at all was already cut off before sessions were bound
+# to a token, so a test that deletes them all proves nothing.
+check "mint a second token for revoked" 200 -b "$JAR" "$BASE/admin/users/revoked/token" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "tokenScope="
+REV_TWO="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+check "mint a third token for revoked" 200 -b "$JAR" "$BASE/admin/users/revoked/token" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "tokenScope="
+REV_THREE="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+[ -n "$REV_ONE" ] && [ -n "$REV_TWO" ] && [ -n "$REV_THREE" ] &&
+  [ "$REV_ONE" != "$REV_TWO" ] && [ "$REV_TWO" != "$REV_THREE" ] && [ "$REV_ONE" != "$REV_THREE" ] || {
+  echo "FAIL: expected three distinct tokens for the revoked user"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the user holds three distinct tokens"
+
+# Deletes one token by its hash, which is how vault.json stores it.
+drop_token() {
+  node -e '
+    const fs = require("fs"), crypto = require("crypto");
+    const [file, user, token] = process.argv.slice(1);
+    const hash = crypto.createHash("sha256").update(token).digest("hex");
+    const v = JSON.parse(fs.readFileSync(file, "utf8"));
+    const before = v.users[user].tokens.length;
+    v.users[user].tokens = v.users[user].tokens.filter((t) => (t.hash ?? t) !== hash);
+    if (v.users[user].tokens.length !== before - 1) { console.error("no such token"); process.exit(1); }
+    fs.writeFileSync(file, JSON.stringify(v, null, 2) + "\n");
+  ' "$VAULT/vault.json" "$1" "$2" || { echo "FAIL: could not delete the token"; exit 1; }
+}
+
+check "sign in with the first token" 302 -c "$REV_JAR" "$BASE/login" \
+  --data-urlencode username=revoked --data-urlencode "token=$REV_ONE" --data-urlencode next=/
+check "the session works" 200 -b "$REV_JAR" "$BASE/demo/proj/edit/main/README.md"
+
+drop_token revoked "$REV_TWO"
+check "deleting another token leaves the session alone" 200 -b "$REV_JAR" "$BASE/demo/proj/edit/main/README.md"
+
+# REV_THREE survives this, so the user still holds a token and the session ends
+# because the token behind it went, not because the user ran out.
+drop_token revoked "$REV_ONE"
+check "deleting its own token ends the session" 302 -b "$REV_JAR" "$BASE/demo/proj/edit/main/README.md"
+check "and the token no longer authenticates the API" 401 \
+  -H "authorization: Bearer $REV_ONE" "$BASE/api/whoami"
+check "the user's surviving token still works" 200 \
+  -H "authorization: Bearer $REV_THREE" "$BASE/api/whoami"
+
 # ---- themes ----
 
 check "default theme is not github" 200 "$BASE/"

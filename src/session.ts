@@ -9,6 +9,14 @@ import { AuthResult, TokenRecord, canAdmin, loadVault } from './vault';
 // session store: permissions are re-derived from live vault.json on every
 // request, so deleting a user's tokens cuts them off, and rotating .secret
 // invalidates every session at once.
+//
+// A session is bound to the single token it was minted from, by recording that
+// token's SHA-256 hash (the same value vault.json stores, so no new secret is
+// put in the cookie, and the hash is useless as a credential). Resolving a
+// session looks that token up in live vault.json, so deleting one token ends
+// the sessions it started and leaves the user's other sessions alone. The
+// token record found this way is the real one, which is why the session carries
+// no copy of the token's scope: canPush and canAdmin read it from the vault.
 
 const COOKIE_NAME = 'cofferdam_session';
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -17,7 +25,7 @@ interface SessionPayload {
   u: string;
   exp: number;
   csrf: string;
-  ts?: string[];
+  t: string;
 }
 
 let secretCache: { root: string; secret: Buffer } | null = null;
@@ -45,18 +53,12 @@ function sign(root: string, data: string): string {
   return b64url(crypto.createHmac('sha256', getSecret(root)).update(data).digest());
 }
 
-export function setSessionCookie(
-  req: Request,
-  res: Response,
-  root: string,
-  username: string,
-  tokenScope?: string[]
-): void {
+export function setSessionCookie(req: Request, res: Response, root: string, auth: AuthResult): void {
   const payload: SessionPayload = {
-    u: username,
+    u: auth.username,
     exp: Date.now() + SESSION_MS,
     csrf: crypto.randomBytes(16).toString('hex'),
-    ...(tokenScope !== undefined ? { ts: tokenScope } : {}),
+    t: auth.token.hash,
   };
   const body = b64url(Buffer.from(JSON.stringify(payload), 'utf8'));
   res.cookie(COOKIE_NAME, `${body}.${sign(root, body)}`, {
@@ -108,14 +110,18 @@ function readSession(req: Request, root: string): SessionPayload | null {
   const p = payload as Record<string, unknown>;
   if (typeof p.u !== 'string' || typeof p.exp !== 'number' || typeof p.csrf !== 'string') return null;
   if (p.exp < Date.now()) return null;
-  if (p.ts !== undefined && !(Array.isArray(p.ts) && p.ts.every((x) => typeof x === 'string'))) return null;
-  return { u: p.u, exp: p.exp, csrf: p.csrf, ...(p.ts !== undefined ? { ts: p.ts as string[] } : {}) };
+  // A cookie from before sessions were bound to a token has no `t`, and is
+  // rejected rather than accepted unbound: the holder is simply signed out and
+  // signs in again, which is a smaller cost than leaving unrevocable sessions
+  // alive for the rest of their thirty days.
+  if (typeof p.t !== 'string' || p.t === '') return null;
+  return { u: p.u, exp: p.exp, csrf: p.csrf, t: p.t };
 }
 
 // A Viewer is a signed-in browser session resolved against live vault.json.
-// Its auth is shaped like a token AuthResult so canPush/canAdmin apply
-// unchanged; a session minted from a restricted token carries that token's
-// scope and therefore no admin rights.
+// Its auth is the AuthResult that the session's own token would produce now, so
+// canPush/canAdmin apply unchanged; a session minted from a restricted token
+// resolves to that restricted token record and therefore has no admin rights.
 export interface Viewer {
   auth: AuthResult;
   csrf: string;
@@ -127,8 +133,9 @@ export function getViewer(req: Request, root: string): Viewer | null {
   const state = loadVault(root);
   if (state.status !== 'ok') return null;
   const user = state.vault.users[session.u];
-  if (!user || user.tokens.length === 0) return null;
-  const token: TokenRecord = session.ts !== undefined ? { hash: '', scope: session.ts } : { hash: '' };
+  if (!user) return null;
+  const token: TokenRecord | undefined = user.tokens.find((t) => t.hash === session.t);
+  if (!token) return null;
   return { auth: { username: session.u, user, token }, csrf: session.csrf };
 }
 
