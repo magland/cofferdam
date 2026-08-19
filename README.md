@@ -52,7 +52,7 @@ Sign in with a username and token; the operations available mirror what that tok
 - Anonymous `git clone http://host:port/collection/repo` over smart HTTP
 - Authenticated `git push`, including push-to-create for new repositories
 - Git LFS, with objects in an S3-compatible bucket or inside the vault (see [Git LFS](#git-lfs))
-- A JSON API and a `cofferdam` CLI for user management, including `cofferdam login` to hand the token to git so pushing stops asking for it
+- A JSON API and a `cofferdam` CLI for user management, configured entirely by `cofferdam login`, which hands the token to git so pushing stops asking for it too
 
 The frontend has no build step and no client framework: the server renders plain HTML, with small amounts of vanilla JavaScript where a control needs it.
 
@@ -128,18 +128,19 @@ npm link          # then: cofferdam --help
 
 Use `npm unlink -g cofferdam` to remove it. Note that with a version manager such as fnm or nvm the link belongs to the active Node version, so switching versions hides it until you link again.
 
-`cofferdam serve` is the only command that touches the vault directory (set it positionally or with `COFFERDAM_VAULT`). Every other command talks to a running server, so it works the same whether the vault is on your machine or across the network:
+`cofferdam serve` is the only command that touches the vault directory (set it positionally or with `COFFERDAM_VAULT`). Every other command talks to a running server, so it works the same whether the vault is on your machine or across the network. Say which vault and with which token once, by logging in:
 
 ```bash
-export COFFERDAM_HOST=http://127.0.0.1:3000
-export COFFERDAM_TOKEN=<a token with admin scope>
+cofferdam login http://127.0.0.1:3000    # asks for the token, without echo
 cofferdam whoami
 cofferdam user list
 ```
 
-`cofferdam login` and `cofferdam logout` are the exception to that: they call the server once to check who the token belongs to, then write to git's credential store on the machine they run on (see [Not typing the token every time](#not-typing-the-token-every-time)). `cofferdam runner run` is the other exception, and the larger one: it is a long-running process that takes workflow jobs from a vault and executes them locally in Docker (see [Workflows](#workflows)).
+There is one way to configure the CLI and it is `cofferdam login`: no environment variables, and no token to re-supply per command. The vault URL is remembered in `~/.config/cofferdam/login.json` (mode 0600) and the token goes to git's own credential store, which is where git needs it anyway for pushing, so a token is kept in one place rather than two (see [Not typing the token every time](#not-typing-the-token-every-time)). `cofferdam logout` undoes both.
 
-`--host <url>` and `--token <t>` override the environment per command. By default the server binds 127.0.0.1. Use `--host 0.0.0.0` on `serve` to expose it on the network; note that this exposes read access to every repository in the vault, and that tokens then travel over plain HTTP unless you put TLS in front. The first line of the `description` file inside a bare repository is shown in listings, as with classic git hosting.
+Note that login is a client-side arrangement only: it calls the server once to check who the token belongs to, and writes nothing but local files. `cofferdam runner run` is the one command that reads a configuration of its own, since a runner holds a token that is not any user's: it is a long-running process that takes workflow jobs from a vault and executes them locally in Docker (see [Workflows](#workflows)).
+
+`--host <url>` and `--token <t>` override the login per command, which is how you reach a second vault without logging out of the first. By default the server binds 127.0.0.1. Use `--host 0.0.0.0` on `serve` to expose it on the network; note that this exposes read access to every repository in the vault, and that tokens then travel over plain HTTP unless you put TLS in front. The first line of the `description` file inside a bare repository is shown in listings, as with classic git hosting.
 
 ## Pushing
 
@@ -163,11 +164,10 @@ Pushing to a repository that does not exist yet creates it, provided the target 
 Being asked for the token on every push is the wrong default for a vault you use daily. A token is the password git sends over Basic auth, so the place to keep it is git's own credential store, which `git clone`, `git fetch`, `git push`, and `git lfs` all consult through the same plumbing. `cofferdam login` puts it there:
 
 ```bash
-export COFFERDAM_HOST=https://vault.example.com
-cofferdam login --helper store        # asks for the token, without echo
+cofferdam login https://vault.example.com --helper store   # asks for the token, without echo
 ```
 
-Afterwards nothing about this vault prompts again. `cofferdam logout` removes the credential.
+Afterwards nothing about this vault prompts again, and `cofferdam` commands aimed at it need no arguments either. `cofferdam logout` removes the credential and forgets the vault.
 
 `--helper` says where the token lives, and is recorded for this vault's host alone, so other remotes keep whatever they already use:
 
@@ -182,14 +182,14 @@ Pass `--helper` once; later runs of `cofferdam login` reuse whatever is already 
 
 Note that this is a client-side arrangement: the vault has no notion of a login, holds no session for git, and is unaware that a credential was stored. Revoking access is still a matter of removing the token from `vault.json`.
 
-If you already export `COFFERDAM_TOKEN` for the CLI, a credential helper reading it directly is a reasonable alternative, and keeps the token out of any file git writes:
+Because the token lives in git's store rather than in a cofferdam file, any helper git can use will do, including one of your own that fetches the token from elsewhere:
 
 ```bash
 git config --global 'credential.https://vault.example.com.helper' \
-  '!f(){ echo username=jeremy; echo "password=$COFFERDAM_TOKEN"; }; f'
+  '!f(){ echo username=jeremy; echo "password=$(my-secret-tool get cofferdam)"; }; f'
 ```
 
-The trade-off is that this works only where the variable is exported, so editors, GUI git clients, and cron jobs see no credential at all.
+Such a helper stores nothing, so `cofferdam login` against it does no more than record the vault and confirm that reading the credential back yields the token it just checked, which is all it needs to do. The trade-off is that this works only where whatever the helper calls works, so editors, GUI git clients, and cron jobs may see no credential at all.
 
 ### Importing an existing repository
 
@@ -378,8 +378,6 @@ JavaScript actions need a node interpreter inside the job's container. If the im
 A runner is registered against the vault and holds a token of its own, distinct from any user's:
 
 ```bash
-export COFFERDAM_HOST=https://vault.example.com
-export COFFERDAM_TOKEN=<a token with admin scope>
 cofferdam runner add laptop --allow 'mycollection/*' --labels ubuntu-latest
 ```
 
@@ -512,7 +510,7 @@ Each theme is a set of semantic CSS custom properties (background, surface, bord
 
 ## Making a remote vault
 
-A remote vault is the same server with a persistent disk and TLS in front; there is nothing else to it, since the vault directory is the entire state. The repository ships a container recipe with git included. On first start the server initializes the vault and prints the owner token to the logs; from then on all administration happens from your own machine, on the web or through `COFFERDAM_HOST` and `COFFERDAM_TOKEN`.
+A remote vault is the same server with a persistent disk and TLS in front; there is nothing else to it, since the vault directory is the entire state. The repository ships a container recipe with git included. On first start the server initializes the vault and prints the owner token to the logs; from then on all administration happens from your own machine, on the web or through the CLI after `cofferdam login`.
 
 On any machine with Docker:
 
@@ -529,8 +527,7 @@ With a domain name pointed at the machine, the included `docker-compose.yml` add
 ```bash
 DOMAIN=cofferdam.example.org docker compose up -d
 docker compose logs cofferdam            # the owner token
-export COFFERDAM_HOST=https://cofferdam.example.org
-export COFFERDAM_TOKEN=<owner token>
+cofferdam login https://cofferdam.example.org
 cofferdam user add alice --scope 'alice/*'
 git clone https://cofferdam.example.org/alice/some-repo
 ```
@@ -541,7 +538,7 @@ Without a server of your own, the same container runs on Fly.io. After `fly auth
 ./scripts/deploy-fly.sh my-vault-name
 ```
 
-That creates the app and a volume, deploys a single machine, and prints the one-time owner token together with the `COFFERDAM_HOST` and `COFFERDAM_TOKEN` lines to export. Pick your own name, since Fly app names are globally unique. Re-running it deploys an update, reusing the existing app and volume.
+That creates the app and a volume, deploys a single machine, and prints the one-time owner token together with the `cofferdam login` line to run with it. Pick your own name, since Fly app names are globally unique. Re-running it deploys an update, reusing the existing app and volume.
 
 By hand, the same thing is:
 

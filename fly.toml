@@ -14,8 +14,7 @@
 #   fly logs --app my-vault-name           # one-time owner token on first start
 #
 # Then, from anywhere:
-#   export COFFERDAM_HOST=https://my-vault-name.fly.dev
-#   export COFFERDAM_TOKEN=<owner token>
+#   cofferdam login https://my-vault-name.fly.dev    # paste the owner token
 #
 # Use --ha=false: a vault is a directory on one disk, so this app must run as a
 # single machine. Two machines would mean two volumes and two divergent vaults.

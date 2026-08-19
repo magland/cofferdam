@@ -35,7 +35,7 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine): voi
     }
     const m = (req.get('authorization') ?? '').match(/^bearer\s+(.+)$/i);
     if (!m) {
-      apiError(res, 401, 'missing bearer token; set COFFERDAM_TOKEN');
+      apiError(res, 401, 'missing bearer token: send Authorization: Bearer <token>');
       return null;
     }
     const auth = authenticateToken(state.vault, m[1].trim());

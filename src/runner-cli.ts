@@ -1,3 +1,4 @@
+import { loadLogin, vaultTarget } from './credentials';
 import { DEFAULT_IMAGES, Runner, RunnerConfig, configPath, loadRunnerConfig, saveRunnerConfig } from './runner/client';
 
 // The `cofferdam runner ...` subcommands. Registration talks to the server with
@@ -72,18 +73,15 @@ function parseArgs(args: string[], usage: () => never): RunnerArgs {
   return out;
 }
 
-function adminTarget(a: RunnerArgs): { host: string; token: string } {
-  const host = (a.host ?? process.env.COFFERDAM_HOST ?? '').replace(/\/+$/, '');
-  const token = a.token ?? process.env.COFFERDAM_TOKEN ?? '';
-  if (!host) {
-    console.error('No server configured. Set COFFERDAM_HOST (e.g. http://127.0.0.1:3000) or pass --host <url>.');
+// Registration is an ordinary admin operation, so it uses the same login as
+// `cofferdam user add` rather than any arrangement of its own.
+async function adminTarget(a: RunnerArgs): Promise<{ host: string; token: string }> {
+  try {
+    return await vaultTarget(a);
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
     process.exit(1);
   }
-  if (!token) {
-    console.error('No token configured. Set COFFERDAM_TOKEN or pass --token <token>.');
-    process.exit(1);
-  }
-  return { host, token };
 }
 
 async function api(
@@ -132,7 +130,7 @@ export async function runnerAddCmd(args: string[], usage: () => never): Promise<
     );
     process.exit(1);
   }
-  const target = adminTarget(a);
+  const target = await adminTarget(a);
   const labels = a.labels.length ? a.labels : ['ubuntu-latest'];
   const data = await api(target, 'POST', '/api/runners', { name: a.name, labels, allow: a.allow });
   console.log(`Registered runner ${data.name}`);
@@ -162,7 +160,7 @@ export async function runnerAddCmd(args: string[], usage: () => never): Promise<
 
 export async function runnerListCmd(args: string[], usage: () => never): Promise<void> {
   const a = parseArgs(args, usage);
-  const target = adminTarget(a);
+  const target = await adminTarget(a);
   const data = await api(target, 'GET', '/api/runners');
   const runners = (data.runners ?? []) as {
     name: string;
@@ -190,7 +188,7 @@ export async function runnerRemoveCmd(args: string[], usage: () => never): Promi
     console.error('A runner name is required: cofferdam runner remove <name>');
     process.exit(1);
   }
-  const target = adminTarget(a);
+  const target = await adminTarget(a);
   await api(target, 'DELETE', `/api/runners/${encodeURIComponent(a.name)}`);
   console.log(`Removed runner ${a.name}`);
 }
@@ -198,7 +196,9 @@ export async function runnerRemoveCmd(args: string[], usage: () => never): Promi
 export async function runnerRunCmd(args: string[], usage: () => never): Promise<void> {
   const a = parseArgs(args, usage);
   const saved = loadRunnerConfig();
-  const host = (a.host ?? saved?.host ?? process.env.COFFERDAM_HOST ?? '').replace(/\/+$/, '');
+  // A runner's token is its own, not a user's, so it is not something login
+  // stored; only the vault URL can be borrowed from a login on this machine.
+  const host = (a.host ?? saved?.host ?? loadLogin()?.host ?? '').replace(/\/+$/, '');
   const token = a.runnerToken ?? process.env.COFFERDAM_RUNNER_TOKEN ?? saved?.token ?? '';
   if (!host || !token) {
     console.error(

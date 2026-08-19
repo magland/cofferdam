@@ -4,11 +4,16 @@ import * as path from 'path';
 import {
   CredentialTarget,
   approveCredential,
+  clearLogin,
   configuredHelper,
   credentialTarget,
+  loadLogin,
+  loginPath,
   readCredential,
   rejectCredential,
+  saveLogin,
   setHelper,
+  vaultTarget,
 } from './credentials';
 import { runnerAddCmd, runnerListCmd, runnerRemoveCmd, runnerRunCmd } from './runner-cli';
 import { createApp } from './server';
@@ -42,17 +47,20 @@ function usage(code = 0): never {
   cofferdam whoami
       Show the user, scopes, and token restriction for the current token.
 
-  cofferdam login [--helper <name>]
-      Hand the token to git's credential store, so that clone, fetch, push,
-      and git lfs against this vault stop asking for a password. The token is
-      verified first, and read back afterwards to confirm it was really kept.
-      --helper picks where it lives (store, cache, libsecret, osxkeychain)
-      and is recorded for this vault's host alone; without it, whatever git
-      is already configured to use for that host is used, and login refuses
-      rather than storing nothing when that is nothing.
+  cofferdam login [<vault-url>] [--helper <name>]
+      Log in to a vault: ask for a token, check it, and hand it to git's
+      credential store, so that clone, fetch, push, git lfs, and every other
+      cofferdam command stop asking for it. The vault URL is remembered, so
+      later commands need no arguments. The token is read back after storing
+      to confirm it was really kept. --helper picks where it lives (store,
+      cache, libsecret, osxkeychain) and is recorded for this vault's host
+      alone; without it, whatever git is already configured to use for that
+      host is used, and login refuses rather than storing nothing when that
+      is nothing.
 
-  cofferdam logout
-      Remove this vault's stored credential again.
+  cofferdam logout [<vault-url>]
+      Remove this vault's stored credential again, and forget it as the
+      vault later commands talk to.
 
   cofferdam runner add <name> --allow <glob>... [--labels <l,...>] [--save]
       Register a machine that will execute workflow jobs, and print its
@@ -75,9 +83,13 @@ function usage(code = 0): never {
   cofferdam runner remove <name>
       Show or remove registered runners (admin token, as with users).
 
-User commands talk to a running cofferdam server:
-  COFFERDAM_HOST    server URL, e.g. http://127.0.0.1:3000   (or --host <url>)
-  COFFERDAM_TOKEN   a token with admin scope                  (or --token <t>)
+User commands talk to a running cofferdam server, as the user you logged in as:
+
+  cofferdam login https://vault.example.com   once, then the rest just work
+
+The vault URL is kept in ~/.config/cofferdam/login.json and the token in git's
+own credential store. --host <url> and --token <t> override either one for a
+single command.
 
 Vault layout:
   <vault>/<collection>/<repo>.git    bare repositories (the .git suffix is optional)
@@ -130,8 +142,7 @@ function serveCmd(args: string[]) {
       console.log(`  ${boot.token}`);
       console.log('');
       console.log('Sign in on the web with it, or manage users from anywhere:');
-      console.log(`  export COFFERDAM_HOST=${url}`);
-      console.log(`  export COFFERDAM_TOKEN=${boot.token}`);
+      console.log(`  cofferdam login ${url}`);
       console.log('');
     }
     console.log(`cofferdam serving vault ${vault}`);
@@ -164,7 +175,7 @@ function parseUserArgs(args: string[]): UserArgs {
     else if (a === '--admin') out.admin.push(args[++i]);
     else if (a === '--token-scope') out.tokenScope.push(args[++i]);
     else if (a === '--vault') {
-      console.error('--vault is gone: user commands talk to a running server. Set COFFERDAM_HOST and COFFERDAM_TOKEN.');
+      console.error('--vault is gone: user commands talk to a running server. Run `cofferdam login <url>` first.');
       process.exit(1);
     } else if (a.startsWith('-')) {
       console.error(`Unknown option: ${a}`);
@@ -178,18 +189,15 @@ function parseUserArgs(args: string[]): UserArgs {
   return out;
 }
 
-function remoteTarget(args: { host: string | null; token: string | null }): RemoteTarget {
-  const host = (args.host ?? process.env.COFFERDAM_HOST ?? '').replace(/\/+$/, '');
-  const token = args.token ?? process.env.COFFERDAM_TOKEN ?? '';
-  if (!host) {
-    console.error('No server configured. Set COFFERDAM_HOST (e.g. http://127.0.0.1:3000) or pass --host <url>.');
+// The vault and token every user command works against: whatever `cofferdam
+// login` left behind, unless --host or --token says otherwise.
+async function remoteTarget(args: { host: string | null; token: string | null }): Promise<RemoteTarget> {
+  try {
+    return await vaultTarget(args);
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
     process.exit(1);
   }
-  if (!token) {
-    console.error('No token configured. Set COFFERDAM_TOKEN or pass --token <token>.');
-    process.exit(1);
-  }
-  return { host, token };
 }
 
 async function api(
@@ -237,7 +245,7 @@ async function userAddCmd(args: string[]) {
     console.error('A valid username is required (letters, digits, dot, underscore, dash)');
     process.exit(1);
   }
-  const target = remoteTarget(a);
+  const target = await remoteTarget(a);
   const data = await api(target, 'POST', '/api/users', {
     username: a.username,
     scope: a.scope.length ? a.scope : undefined,
@@ -268,7 +276,7 @@ async function userGrantCmd(args: string[]) {
     console.error(`Nothing to grant. Example: cofferdam user grant ${a.username} --scope 'mycollection/*'`);
     process.exit(1);
   }
-  const target = remoteTarget(a);
+  const target = await remoteTarget(a);
   const data = await api(target, 'POST', `/api/users/${encodeURIComponent(a.username)}/grant`, {
     scope: a.scope.length ? a.scope : undefined,
     admin: a.admin.length ? a.admin : undefined,
@@ -283,7 +291,7 @@ async function userListCmd(args: string[]) {
     console.error(`Unexpected argument: ${a.username}`);
     process.exit(1);
   }
-  const target = remoteTarget(a);
+  const target = await remoteTarget(a);
   const data = await api(target, 'GET', '/api/users');
   const users = (data.users ?? []) as { name: string; scope: string[]; admin: string[]; tokens: number }[];
   if (users.length === 0) {
@@ -299,7 +307,7 @@ async function userListCmd(args: string[]) {
 
 async function whoamiCmd(args: string[]) {
   const a = parseUserArgs(args);
-  const target = remoteTarget(a);
+  const target = await remoteTarget(a);
   const data = await api(target, 'GET', '/api/whoami');
   console.log(`${data.username} @ ${target.host}`);
   console.log(`  ${formatScopes(data as { scope: string[]; admin: string[] })}`);
@@ -320,6 +328,7 @@ function parseLoginArgs(args: string[]): LoginArgs {
     else if (a === '--host') out.host = args[++i];
     else if (a === '--token') out.token = args[++i];
     else if (a === '--helper') out.helper = args[++i];
+    else if (!a.startsWith('-') && !out.host) out.host = a;
     else {
       console.error(`Unexpected argument: ${a}`);
       process.exit(1);
@@ -328,10 +337,12 @@ function parseLoginArgs(args: string[]): LoginArgs {
   return out;
 }
 
+// The vault being logged in to or out of: the URL given, or the one logged in
+// to last, which is what makes `cofferdam logout` need no arguments.
 function loginTarget(args: LoginArgs): { host: string; target: CredentialTarget } {
-  const host = (args.host ?? process.env.COFFERDAM_HOST ?? '').replace(/\/+$/, '');
+  const host = (args.host ?? loadLogin()?.host ?? '').replace(/\/+$/, '');
   if (!host) {
-    console.error('No server configured. Set COFFERDAM_HOST (e.g. https://vault.example.com) or pass --host <url>.');
+    console.error('Which vault? Give its URL, e.g. https://vault.example.com');
     process.exit(1);
   }
   try {
@@ -350,7 +361,7 @@ function promptToken(prompt: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const input = process.stdin;
     if (!input.isTTY) {
-      reject(new Error('No token given and no terminal to ask on. Set COFFERDAM_TOKEN or pass --token <t>.'));
+      reject(new Error('No token given and no terminal to ask on. Pass --token <t>.'));
       return;
     }
     process.stdout.write(prompt);
@@ -402,7 +413,7 @@ async function loginCmd(args: string[]) {
     process.exit(1);
   }
 
-  const token = a.token ?? process.env.COFFERDAM_TOKEN ?? (await promptToken(`Token for ${target.url}: `));
+  const token = a.token ?? (await promptToken(`Token for ${target.url}: `));
   if (!token) {
     console.error('No token given.');
     process.exit(1);
@@ -429,11 +440,17 @@ async function loginCmd(args: string[]) {
     process.exit(1);
   }
 
+  // Recorded only now: a login that could not keep its token is not a login,
+  // and pointing later commands at a vault they cannot reach would be worse
+  // than pointing them nowhere.
+  saveLogin(host);
+
   console.log(`Stored the token for '${username}' at ${target.url} (helper: ${helper}).`);
   console.log(`  ${formatScopes(who as { scope: string[]; admin: string[] })}`);
   if (who.tokenScope) console.log(`  this token is restricted to: ${(who.tokenScope as string[]).join(', ')}`);
   console.log('');
-  console.log('git clone, fetch, push, and git lfs against this vault will no longer ask for a password.');
+  console.log('git clone, fetch, push, and git lfs against this vault will no longer ask for a password,');
+  console.log(`and cofferdam commands talk to it by default (${loginPath()}).`);
   console.log('Run `cofferdam logout` to remove it again.');
 }
 
@@ -443,9 +460,10 @@ async function logoutCmd(args: string[]) {
     console.error('logout takes only --host: it removes a stored credential rather than making one.');
     process.exit(1);
   }
-  const { target } = loginTarget(a);
+  const { host, target } = loginTarget(a);
   const stored = await readCredential(target);
   if (!stored) {
+    clearLogin(host);
     console.log(`No stored credential for ${target.url}.`);
     return;
   }
@@ -455,6 +473,7 @@ async function logoutCmd(args: string[]) {
     console.error(`The credential for '${after.username}' at ${target.url} is still there: the helper did not erase it.`);
     process.exit(1);
   }
+  clearLogin(host);
   console.log(`Removed the stored credential for '${stored.username}' at ${target.url}.`);
 }
 

@@ -943,7 +943,9 @@ chmod +x "$TMP/askpass"
 # The global config goes with the isolated HOME, so that what `cofferdam login`
 # writes lands there and starts out empty: the first check needs no helper to
 # be configured anywhere git will look.
-cred_env() { env HOME="$CRED_HOME" GIT_CONFIG_GLOBAL="$CRED_HOME/.gitconfig" GIT_ASKPASS="$TMP/askpass" SSH_ASKPASS="$TMP/askpass" "$@"; }
+# XDG_CONFIG_HOME goes with it, so the vault that `cofferdam login` records
+# lands here too rather than in the developer's own configuration.
+cred_env() { env HOME="$CRED_HOME" XDG_CONFIG_HOME="$CRED_HOME/.config" GIT_CONFIG_GLOBAL="$CRED_HOME/.gitconfig" GIT_ASKPASS="$TMP/askpass" SSH_ASKPASS="$TMP/askpass" "$@"; }
 cli() { cred_env node dist/index.js "$@"; }
 
 run_ok() {
@@ -983,6 +985,17 @@ if [ "$TMP_PRIVATE" = 1 ]; then
 else
   echo "skip: this filesystem forces file modes, so 0600 on the credential file cannot be checked here"
 fi
+# The vault is recorded as well, which is the whole of the CLI's configuration:
+# commands after a login take no arguments and read no environment.
+LOGIN_JSON="$CRED_HOME/.config/cofferdam/login.json"
+grep -q "\"$BASE\"" "$LOGIN_JSON" || { echo "FAIL: login did not record the vault URL"; exit 1; }
+PASS=$((PASS+1)); echo "ok: login recorded the vault URL"
+run_ok "whoami needs no arguments after login" cli whoami
+body_has "whoami names the logged-in user and vault" "owner @ $BASE"
+run_ok "user list needs no arguments after login" cli user list
+body_has "user list came from the vault" 'push: *'
+run_ok "runner list needs no arguments after login" cli runner list
+
 # Recorded for this host alone, so other remotes keep whatever they use now.
 cred_env git config --global --get-regexp '^credential\.' | grep -q "credential.$BASE.helper store" \
   || { echo "FAIL: helper not recorded for this host alone"; exit 1; }
@@ -996,9 +1009,14 @@ git -C "$TMP/credclone" commit -q --allow-empty -m "pushed with a stored credent
 run_ok "push with only a stored credential" cred_env git -C "$TMP/credclone" push -q origin HEAD:main
 no_prompt "neither clone nor push asked for a credential"
 
-run_ok "logout removes it" cli logout --host "$BASE"
+# logout with no arguments, since the vault it removes is the one login recorded.
+run_ok "logout removes it" cli logout
 if [ -s "$CRED_HOME/.git-credentials" ]; then echo "FAIL: credential still stored after logout"; exit 1; fi
 PASS=$((PASS+1)); echo "ok: credential file is empty after logout"
+if [ -e "$LOGIN_JSON" ]; then echo "FAIL: logout left the vault recorded"; exit 1; fi
+PASS=$((PASS+1)); echo "ok: logout forgot the vault too"
+run_fails "commands stop working after logout" cli whoami
+body_has "and say to log in" 'cofferdam login'
 run_ok "logout again is not an error" cli logout --host "$BASE"
 body_has "logout says there was nothing stored" 'No stored credential'
 no_prompt "reading the store back never prompts"

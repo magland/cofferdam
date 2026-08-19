@@ -1,4 +1,7 @@
 import { execFile } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 // The client side of authentication. A token is the password git sends over
 // Basic auth, so the place to keep it is git's own credential store: clone,
@@ -140,4 +143,71 @@ export async function rejectCredential(target: CredentialTarget, username?: stri
   if (r.code !== 0) {
     throw new CredentialError(r.stderr.trim() || `git credential reject exited ${r.code}`);
   }
+}
+
+// Where the CLI remembers which vault it is talking to. The token itself is
+// never written here: it lives in git's credential store, put there by
+// `cofferdam login`, so there is one place a token is kept rather than two.
+// This file records only the vault URL of the most recent login, which is what
+// makes `cofferdam user list` work with no arguments and no environment.
+export function loginPath(): string {
+  const base = process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config');
+  return path.join(base, 'cofferdam', 'login.json');
+}
+
+export function loadLogin(file = loginPath()): { host: string } | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { host?: unknown };
+    return typeof parsed.host === 'string' && parsed.host ? { host: parsed.host } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLogin(host: string, file = loginPath()): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify({ host }, null, 2) + '\n', { mode: 0o600 });
+  fs.renameSync(tmp, file);
+}
+
+// Only forgets the vault named, so logging out of one vault does not silently
+// redirect commands that were aimed at another.
+export function clearLogin(host: string, file = loginPath()): void {
+  const saved = loadLogin(file);
+  if (!saved || saved.host !== host) return;
+  try {
+    fs.rmSync(file);
+  } catch {
+    /* nothing to remove */
+  }
+}
+
+// The vault a command should talk to, and the token to talk with: the URL from
+// --host or from the last login, the token from --token or from git's
+// credential store for that URL. Both failures are the same instruction, so
+// this reports which vault it looked at and says to log in.
+export async function vaultTarget(args: {
+  host?: string | null;
+  token?: string | null;
+}): Promise<{ host: string; token: string }> {
+  const host = (args.host ?? loadLogin()?.host ?? '').replace(/\/+$/, '');
+  if (!host) {
+    throw new CredentialError(
+      'No vault. Log in to one first:\n\n' +
+        '  cofferdam login https://vault.example.com\n\n' +
+        'or pass --host <url> to a single command.'
+    );
+  }
+  if (args.token) return { host, token: args.token };
+  const target = credentialTarget(host);
+  const stored = await readCredential(target);
+  if (!stored) {
+    throw new CredentialError(
+      `No stored token for ${target.url}. Log in again:\n\n` +
+        `  cofferdam login ${target.url}\n\n` +
+        'or pass --token <token> to a single command.'
+    );
+  }
+  return { host, token: stored.password };
 }

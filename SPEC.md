@@ -34,7 +34,7 @@ node dist/index.js serve /path/to/vault --port 3000
 npm link               # optional: puts `cofferdam` on PATH
 ```
 
-First start against a directory with no `vault.json` initializes one and prints a one-time owner token (user `owner`, push scope `*`, admin scope `*`). CLI user commands are remote only: they talk to a running server via `COFFERDAM_HOST` and `COFFERDAM_TOKEN` (or `--host`/`--token`); there is intentionally no `--vault` flag and no config file. Deployment: `Dockerfile` (node:24-alpine plus git, runs as the node user, volume at `/vault`), `docker-compose.yml` with Caddy for automatic HTTPS given a `DOMAIN`, `fly.toml` plus `scripts/deploy-fly.sh` for Fly.io. The server sets `trust proxy`, so URLs and Secure cookies honor `X-Forwarded-*` behind TLS proxies.
+First start against a directory with no `vault.json` initializes one and prints a one-time owner token (user `owner`, push scope `*`, admin scope `*`). CLI user commands are remote only: they talk to a running server, and the server and token come from `cofferdam login` (or `--host`/`--token` per command); there are intentionally no environment variables and no `--vault` flag. Login records the vault URL in `~/.config/cofferdam/login.json` and hands the token to git's credential store, so the token is kept in one place, the one git already reads for pushing. Deployment: `Dockerfile` (node:24-alpine plus git, runs as the node user, volume at `/vault`), `docker-compose.yml` with Caddy for automatic HTTPS given a `DOMAIN`, `fly.toml` plus `scripts/deploy-fly.sh` for Fly.io. The server sets `trust proxy`, so URLs and Secure cookies honor `X-Forwarded-*` behind TLS proxies.
 
 ### 3.2 Source layout
 
