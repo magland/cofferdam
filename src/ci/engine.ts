@@ -189,8 +189,13 @@ export class CiEngine {
   private emitter = new EventEmitter();
   private retention: () => CiRetention;
 
-  constructor(private root: string, retention?: () => CiRetention) {
-    this.retention = retention ?? (() => ({ runs: 200, days: 0, artifactMb: 500 }));
+  // Retention arrives as a getter rather than a value so that an edit to
+  // config.json takes effect without a restart, and required rather than
+  // optional so that the vault's defaults in config.ts are the only answer to
+  // what the limits are. A fallback here would be a second answer, free to
+  // drift from the first, which is what it had done.
+  constructor(private root: string, retention: () => CiRetention) {
+    this.retention = retention;
     this.emitter.setMaxListeners(100);
     this.loadActiveRuns();
     const t = setInterval(() => this.sweepLeases(), 30 * 1000);
