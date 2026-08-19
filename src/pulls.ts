@@ -458,7 +458,9 @@ export async function mergePull(
 ): Promise<MergeResult> {
   const pull = readPull(root, repo.collection, repo.name, n);
   if (!pull) throw new OpError(`Pull request ${n} does not exist.`, 'notfound');
-  if (pull.state !== 'open') throw new OpError('This pull request is not open.');
+  // 'conflict', because to a caller deciding whether to retry this is the same
+  // answer as "someone got there first" rather than "your request was malformed".
+  if (pull.state !== 'open') throw new OpError('This pull request is not open.', 'conflict');
   const message = request.message?.trim() || defaultMergeMessage(pull, request.method, pull.body);
   const outcome = await mergeBranch(repo.dir, pull.base, pull.head, message, {
     name: actor.username,
@@ -466,7 +468,10 @@ export async function mergePull(
   }, request.method);
   if (outcome.status === 'conflict') throw new MergeConflict(outcome.paths);
   if (outcome.status === 'up-to-date') {
-    throw new OpError(`${pull.base} already contains everything on ${pull.head}.`, 'nochange');
+    // 'conflict' rather than 'nochange': to a caller deciding whether to retry,
+    // "someone already merged this" is the same answer as "someone got there
+    // first", and a 200 saying nothing changed would read as success.
+    throw new OpError(`${pull.base} already contains everything on ${pull.head}.`, 'conflict');
   }
   recordMerge(root, repo.collection, repo.name, n, { actor: actor.username, sha: outcome.sha });
   let branchDeleted = false;
@@ -496,7 +501,9 @@ export async function deletePullBranch(
 ): Promise<string> {
   const pull = readPull(root, repo.collection, repo.name, n);
   if (!pull) throw new OpError(`Pull request ${n} does not exist.`, 'notfound');
-  if (pull.state !== 'merged') throw new OpError('The branch can be deleted once this pull request is merged.');
+  if (pull.state !== 'merged') {
+    throw new OpError('The branch can be deleted once this pull request is merged.', 'conflict');
+  }
   if (pull.head === opts.defaultBranch) throw new OpError('The default branch cannot be deleted.');
   await deleteBranch(repo.dir, pull.head);
   return pull.head;

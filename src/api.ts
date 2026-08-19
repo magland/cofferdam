@@ -6,13 +6,33 @@ import { OpError } from './ops';
 import { displayName, isValidName, listCollections, listRepoDirs } from './scan';
 import { addUserToken, canAdmin, canCreateCollection, grantScope, loadVault } from './vault';
 import { apiError, requireApiAuth as authenticateRequest } from './api/auth';
-import { AuthLimiter } from './limit';
+import { AuthLimiter, Gates } from './limit';
+import { CiEngine } from './ci/engine';
+import { registerContentsApi } from './api/contents';
+import { registerIssueApi } from './api/issues';
+import { registerPullApi } from './api/pulls';
+import { registerRepoApi } from './api/repos';
 
 // The bearer-token JSON API used by the cofferdam CLI. Only Bearer tokens are
 // accepted; session cookies never authorize API calls.
 
-export function registerApi(app: Express, root: string, authLimiter: AuthLimiter): void {
+export function registerApi(
+  app: Express,
+  root: string,
+  authLimiter: AuthLimiter,
+  gates: Gates,
+  engine?: CiEngine
+): void {
   app.use('/api', express.json());
+
+  // The routes are split by subject, mirroring the split the HTML modules
+  // already have, so that no one file grows unmanageable. Each of them calls the
+  // same domain functions the web handlers call and the same authorization
+  // helpers, so the duplication between the two transports is transport only.
+  registerRepoApi(app, root, authLimiter);
+  registerContentsApi(app, root, authLimiter, gates);
+  registerIssueApi(app, root, authLimiter);
+  registerPullApi(app, root, authLimiter, engine);
 
   // Both helpers live in src/api/auth.ts now that more than one file of routes
   // uses them; this closure only saves passing root at every call site.

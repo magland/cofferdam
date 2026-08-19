@@ -16,6 +16,9 @@ import {
 } from './credentials';
 import { api } from './cli-api';
 import { apiCommand } from './cli/api-cmd';
+import { issueCommands } from './cli/issue-cmd';
+import { prCommands } from './cli/pr-cmd';
+import { repoCommands } from './cli/repo-cmd';
 import { CliError, EXIT_FAIL, EXIT_USAGE, jsonErrorsWanted } from './cli/exit';
 import { readStdin } from './cli/input';
 import { JSON_OPTION, jsonMode, pickFields, pickObject, printJson } from './cli/output';
@@ -568,6 +571,9 @@ and COFFERDAM_RUNNER_TOKEN supplies the token instead of --runner-token.`,
   ),
   raw(['runner', 'list'], 'Show registered runners (admin token, as with users)', '', runnerListCmd),
   raw(['runner', 'remove'], 'Remove a registered runner', '', runnerRemoveCmd),
+  ...repoCommands,
+  ...issueCommands,
+  ...prCommands,
   apiCommand,
   {
     path: ['commands'],
@@ -589,6 +595,13 @@ command set without reading any documentation.`,
 const cli: Cli = {
   name: 'cofferdam',
   groups: [
+    { name: 'repo', summary: 'Repositories: what the vault holds' },
+    { name: 'branch', summary: 'Branches' },
+    { name: 'tag', summary: 'Tags' },
+    { name: 'file', summary: 'Files in a repository, at a ref' },
+    { name: 'commit', summary: 'Commits and their patches' },
+    { name: 'issue', summary: 'Issues' },
+    { name: 'pr', summary: 'Pull requests' },
     { name: 'collection', summary: 'Collections: the directories a vault holds repositories in' },
     { name: 'user', summary: 'Users, their scopes, and their tokens' },
     { name: 'deploy', summary: 'Put a vault on Fly.io and manage it there' },

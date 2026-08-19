@@ -75,6 +75,55 @@ Failures are also JSON when `--json` was asked for: `{"error": "..."}` on stderr
 
 4 and 5 are the two worth branching on, since "does this exist" and "did someone else get there first" are the questions a retrying caller asks.
 
+### Working on a repository
+
+The repository commands read and write a repository over the API, so they need no clone:
+
+```bash
+cofferdam repo list                        # every repository in the vault
+cofferdam repo view demo/proj
+cofferdam branch list --repo demo/proj
+cofferdam file list --repo demo/proj       # one directory
+cofferdam file list --all                  # every path in the tree
+cofferdam file view README.md
+cofferdam commit list --limit 10
+cofferdam commit view <sha> --patch
+cofferdam diff main...topic
+cofferdam search 'needle'
+```
+
+Which repository a command is about is resolved in this order: the positional argument or `--repo <collection>/<repo>`, then `COFFERDAM_REPO`, then the git remote in the current directory that points at the vault you are logged in to, preferring `origin`. A remote for some other host is not an answer, so a clone of a GitHub repository is never read as naming something here. Failing all three, the command says so and names all three.
+
+### Issues and pull requests
+
+```bash
+cofferdam issue list --state all
+cofferdam issue view 12 --comments
+cofferdam issue create --title 'It broke' --body-file report.md --label bug
+cofferdam issue edit 12 --add-label urgent
+cofferdam issue comment 12 --body-file -        # from stdin
+cofferdam issue close 12
+
+cofferdam pr list
+cofferdam pr create --base main --head topic --title 'Add a thing'
+cofferdam pr diff 4
+cofferdam pr merge 4 --squash --delete-branch
+cofferdam pr checks 4
+cofferdam pr close 4
+```
+
+`--body-file` exists alongside `--body` on every command that takes a body, and `-` reads stdin: an issue body is frequently longer than a shell argument should be. Asking for both is an error rather than a precedence question.
+
+Two things are worth knowing about merging. Whether a merge would apply can be asked without merging anything, which is the read to make first:
+
+```bash
+cofferdam api repos/demo/proj/pulls/4/merge
+```
+
+And a merge that does not apply exits 5 and names the conflicting paths, so a caller can tell "it does not apply" from "it went wrong".
+
+`cofferdam pr checks` deserves its own note: cofferdam has no equivalent of a check suite or a commit status, so there is nothing behind that command but the workflow runs whose commit is the pull request's head. That is what it reports, and that is all it means.
+
 ### Reaching any route: `cofferdam api`
 
 `cofferdam api` sends a request to any route of the JSON API and prints what comes back, so a capability with no typed command of its own is still one line away:

@@ -67,3 +67,29 @@ export function pickFields<T extends Record<string, unknown>>(rows: T[], fields:
 export function pickObject(row: Record<string, unknown>, fields: string[] | null): unknown {
   return pickFields([row], fields)[0];
 }
+
+/**
+ * A plain table for a human reader: columns padded to the widest cell, two
+ * spaces between. Nothing here is for a program, which asks for --json instead,
+ * so there is no colour, no box drawing, and no terminal width detection.
+ */
+export function printTable(rows: (string | number)[][]): void {
+  if (rows.length === 0) return;
+  const cells = rows.map((r) => r.map((c) => String(c)));
+  const widths: number[] = [];
+  for (const row of cells) {
+    row.forEach((c, i) => {
+      widths[i] = Math.max(widths[i] ?? 0, c.length);
+    });
+  }
+  for (const row of cells) {
+    // The last column is not padded, so a table does not carry trailing spaces.
+    const line = row.map((c, i) => (i === row.length - 1 ? c : c.padEnd(widths[i]))).join('  ');
+    process.stdout.write(line.replace(/\s+$/, '') + '\n');
+  }
+}
+
+/** An ISO timestamp as a date, which is what a table column has room for. */
+export function shortDate(iso: string | null | undefined): string {
+  return typeof iso === 'string' && iso.length >= 10 ? iso.slice(0, 10) : '';
+}

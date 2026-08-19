@@ -1141,6 +1141,153 @@ check "api collection needs a token" 401 -H 'Content-Type: application/json' \
 check "api collection refuses out of scope" 403 -H "Authorization: Bearer $ALICE_TOKEN" \
   -H 'Content-Type: application/json' --data '{"name":"otherplace"}' "$BASE/api/collections"
 
+# ---- the JSON API over repositories, issues, and pull requests ----
+
+# Everything below sends a bearer token, because that is the only credential the
+# API accepts. A repository of its own, pushed in, so these checks own their
+# branches and their issue and pull request numbers rather than sharing demo/proj
+# with the web checks above.
+api() { local d="$1" w="$2"; shift 2; check "$d" "$w" -H "authorization: Bearer $OWNER_TOKEN" "$@"; }
+api_as() { local d="$1" w="$2" t="$3"; shift 3; check "$d" "$w" -H "authorization: Bearer $t" "$@"; }
+JSON_CT='content-type: application/json'
+
+rm -rf "$TMP/apisrc"
+git init -q "$TMP/apisrc"
+# Three branches, arranged so that one of them merges and one of them cannot:
+# topic touches a file main never touched, while conflicting edits the same line
+# of README.md that main went on to edit.
+( cd "$TMP/apisrc"
+  echo "# Api demo" > README.md
+  mkdir -p lib && echo "print('hi')" > lib/a.py
+  git add -A && git commit -qm "first commit"
+  git checkout -qb conflicting && echo "conflicting line" >> README.md && git commit -qam "conflicting commit"
+  git checkout -q main && echo "main line" >> README.md && git commit -qam "main commit"
+  git checkout -qb topic && echo "print('b')" > lib/b.py && git add -A && git commit -qm "topic commit"
+) > /dev/null 2>&1
+git -C "$TMP/apisrc" push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/apis/repo" main topic conflicting 2>/dev/null
+check "the api test repository is there" 200 "$BASE/apis/repo"
+
+# Reads. A token is required for all of them: anonymous reading lives on the web,
+# and one rule for the whole API surface is easier to reason about than two.
+api "api lists every repository" 200 "$BASE/api/repos"
+body_has "including the one just pushed" '"collection":"apis","name":"repo"'
+api "api reads one repository" 200 "$BASE/api/repos/apis/repo"
+body_has "with its default branch" '"defaultBranch":"main"'
+body_has "and what this token may do with it" '"canPush":true'
+api "the .git suffix is accepted too" 200 "$BASE/api/repos/apis/repo.git"
+api "api branches" 200 "$BASE/api/repos/apis/repo/branches"
+body_has "listing the pushed branches" '"name":"topic"'
+api "api tags" 200 "$BASE/api/repos/apis/repo/tags"
+api "api tree at the root" 200 "$BASE/api/repos/apis/repo/tree"
+body_has "with the entries" '"name":"README.md"'
+api "api tree with the last commit per entry" 200 "$BASE/api/repos/apis/repo/tree/lib?commits=1"
+body_has "which is what costs a git log each" '"lastCommit"'
+api "api one file" 200 "$BASE/api/repos/apis/repo/contents/README.md"
+body_has "as text" '"encoding":"utf-8"'
+body_has "with the commit to hand back as expectedSha" '"commit":"'
+api "api raw bytes" 200 -D "$TMP/headers" "$BASE/api/repos/apis/repo/raw/README.md"
+header_has "sandboxed, as the web raw route is" 'content-security-policy: sandbox'
+api "api commits" 200 "$BASE/api/repos/apis/repo/commits?limit=2"
+body_has "newest first" '"subject":"main commit"'
+api "api one commit" 200 "$BASE/api/repos/apis/repo/commits/$(git -C "$TMP/apisrc" rev-parse main)"
+api "api a commit patch" 200 "$BASE/api/repos/apis/repo/commits/$(git -C "$TMP/apisrc" rev-parse main)/patch"
+body_has "as a patch" 'diff --git'
+api "api the file list" 200 "$BASE/api/repos/apis/repo/paths"
+body_has "with every path in the tree" '"lib/a.py"'
+api "api search" 200 "$BASE/api/repos/apis/repo/search?q=Api%20demo"
+body_has "finding the line" '"line":1'
+api "api compare" 200 "$BASE/api/repos/apis/repo/compare/main...topic"
+body_has "with ahead and behind counts" '"ahead":'
+api "api languages" 200 "$BASE/api/repos/apis/repo/languages"
+api "api contributors" 200 "$BASE/api/repos/apis/repo/contributors"
+api "api site says there is none" 200 "$BASE/api/repos/apis/repo/site"
+body_has "plainly" '"exists":false'
+api "an unknown repository is a 404" 404 "$BASE/api/repos/apis/nosuchrepo"
+api "an unknown file is a 404" 404 "$BASE/api/repos/apis/repo/contents/nosuchfile"
+api "an unusable ref is a 400" 400 "$BASE/api/repos/apis/repo/tree?ref=..evil"
+
+# The whole authorization story rests on these two, in both directions.
+check "the api refuses a request with no token" 401 "$BASE/api/repos/apis/repo"
+check "the api refuses a session cookie" 401 -b "$JAR" "$BASE/api/repos/apis/repo/issues"
+check "an html post refuses a bearer token" 403 -X POST -H "authorization: Bearer $OWNER_TOKEN" "$BASE/new"
+
+# Writes, and the scope matrix, which is where a mistake in a new transport is
+# most likely and least visible. alice has demo/* and nothing else.
+api "api opens an issue" 201 -H "$JSON_CT" \
+  --data '{"title":"It broke","body":"badly","labels":["bug"]}' "$BASE/api/repos/apis/repo/issues"
+body_has "numbered from one" '"number":1'
+body_has "and attributed to the token's user" '"author":"owner"'
+api "api lists issues" 200 "$BASE/api/repos/apis/repo/issues"
+body_has "as a named array rather than a bare one" '{"issues":\['
+body_has "carrying a total" '"total":1'
+api "api reads one issue with its comments" 200 "$BASE/api/repos/apis/repo/issues/1"
+body_has "including the body" '"body":"badly'
+api "api comments on an issue" 201 -H "$JSON_CT" \
+  --data '{"body":"looking into it"}' "$BASE/api/repos/apis/repo/issues/1/comments"
+api "api closes an issue" 200 -H "$JSON_CT" \
+  --data '{"state":"closed"}' "$BASE/api/repos/apis/repo/issues/1/state"
+body_has "recording who closed it" '"closedBy":"owner"'
+api "api edits an issue" 200 -X PATCH -H "$JSON_CT" \
+  --data '{"title":"It broke badly","labels":["bug","urgent"]}' "$BASE/api/repos/apis/repo/issues/1"
+body_has "with the new title" '"title":"It broke badly"'
+api "api reports the labels in use" 200 "$BASE/api/repos/apis/repo/issues/labels"
+body_has "with counts" '"label":"urgent","count":1'
+api "an unusable label is a 400, not a 500" 400 -H "$JSON_CT" \
+  --data '{"title":"x","labels":["!!"]}' "$BASE/api/repos/apis/repo/issues"
+api "no author may be supplied in the body" 201 -H "$JSON_CT" \
+  --data '{"title":"who wrote this","author":"someone-else"}' "$BASE/api/repos/apis/repo/issues"
+body_has "the token's user is the author regardless" '"author":"owner"'
+
+api_as "a token without scope may still read" 200 "$ALICE_TOKEN" "$BASE/api/repos/apis/repo/issues"
+api_as "but not write" 403 "$ALICE_TOKEN" -H "$JSON_CT" \
+  --data '{"title":"not mine"}' "$BASE/api/repos/apis/repo/issues"
+body_has "saying which repository it does not cover" 'push scope does not cover apis/repo'
+api_as "and may write where its scope does reach" 201 "$ALICE_TOKEN" -H "$JSON_CT" \
+  --data '{"title":"alice was here"}' "$BASE/api/repos/demo/proj/issues"
+body_has "as herself" '"author":"alice"'
+
+# Pull requests, including the two routes that are the point of the exercise:
+# asking whether a merge would apply, and then making it.
+api "api opens a pull request" 201 -H "$JSON_CT" \
+  --data '{"title":"Add a thing","body":"please","base":"main","head":"topic"}' "$BASE/api/repos/apis/repo/pulls"
+body_has "numbered from one" '"number":1'
+api "a pull request between refs that are not branches is refused" 400 -H "$JSON_CT" \
+  --data '{"title":"nope","base":"main","head":"nosuchbranch"}' "$BASE/api/repos/apis/repo/pulls"
+api "api lists pull requests" 200 "$BASE/api/repos/apis/repo/pulls"
+body_has "as a named array" '{"pulls":\['
+api "api reads one" 200 "$BASE/api/repos/apis/repo/pulls/1"
+api "api gives the commits it proposes" 200 "$BASE/api/repos/apis/repo/pulls/1/commits"
+body_has "which is what git says now" '"subject":"topic commit"'
+api "api gives the diff" 200 "$BASE/api/repos/apis/repo/pulls/1/diff"
+body_has "as a patch" 'diff --git'
+api "api answers whether it would merge, without merging" 200 "$BASE/api/repos/apis/repo/pulls/1/merge"
+body_has "plainly" '"mergeable":true'
+api_as "merging needs push scope, not authorship" 403 "$ALICE_TOKEN" -H "$JSON_CT" \
+  --data '{}' "$BASE/api/repos/apis/repo/pulls/1/merge"
+api "api merges it" 200 -H "$JSON_CT" \
+  --data '{"method":"merge","deleteBranch":true}' "$BASE/api/repos/apis/repo/pulls/1/merge"
+body_has "reporting the commit" '"sha":"'
+body_has "and that the branch went with it" '"branchDeleted":true'
+api "the pull request is merged now" 200 "$BASE/api/repos/apis/repo/pulls/1"
+body_has "and says who merged it" '"mergedBy":"owner"'
+api "merging it again is a conflict, not a bad request" 409 -H "$JSON_CT" \
+  --data '{}' "$BASE/api/repos/apis/repo/pulls/1/merge"
+api "the deleted branch is gone" 200 "$BASE/api/repos/apis/repo/branches"
+body_lacks "from the branch list" '"name":"topic"'
+
+# A merge that does not apply names the paths, since that is the part a caller
+# can act on.
+api "a pull request that conflicts" 201 -H "$JSON_CT" \
+  --data '{"title":"Conflicting","base":"main","head":"conflicting"}' "$BASE/api/repos/apis/repo/pulls"
+api "is reported as unmergeable before anything is written" 200 "$BASE/api/repos/apis/repo/pulls/2/merge"
+body_has "with the conflicting paths" '"status":"conflict"'
+body_has "naming the file" 'README.md'
+api "and merging it is a 409" 409 -H "$JSON_CT" --data '{}' "$BASE/api/repos/apis/repo/pulls/2/merge"
+body_has "carrying the conflicts" '"conflicts":\["README.md"\]'
+api "closing it instead works" 200 -H "$JSON_CT" \
+  --data '{"state":"closed"}' "$BASE/api/repos/apis/repo/pulls/2/state"
+body_has "and records who closed it" '"closedBy":"owner"'
+
 # ---- cofferdam login: the token in git's credential store ----
 
 # An isolated HOME so this never touches the developer's own git configuration,
@@ -1289,6 +1436,54 @@ PASS=$((PASS+1)); echo "ok: nothing on stdout when a --json command fails"
 run_ok "--token-stdin reads the token from stdin" sh -c "echo '$OWNER_TOKEN' | $(printf '%s ' env HOME="$CRED_HOME" XDG_CONFIG_HOME="$CRED_HOME/.config" GIT_CONFIG_GLOBAL="$CRED_HOME/.gitconfig" GIT_ASKPASS="$TMP/askpass") node dist/index.js whoami --host '$BASE' --token-stdin"
 body_has "and it worked" "owner @ $BASE"
 
+# ---- the repository, issue, and pull request commands ----
+
+# The API above is checked route by route; these check the layer over it: that a
+# command reaches the right route, prints a table by default, and prints one JSON
+# value on stdout when asked.
+run_ok "repo list" cli repo list
+body_has "naming a repository" 'apis/repo'
+run_ok "repo view" cli repo view apis/repo
+body_has "with its default branch" 'default branch *main'
+run_ok "repo view --json with a field list" cli repo view apis/repo --json=name,defaultBranch
+stdout_is_json "which is one JSON value"
+body_lacks "and only those fields" 'openIssues'
+run_ok "branch list" cli branch list --repo apis/repo
+body_has "marking the default branch" '\* main'
+run_ok "file list" cli file list --repo apis/repo
+body_has "with the entries" 'README.md'
+run_ok "file list --all" cli file list --all --repo apis/repo
+body_has "listing paths in the tree" 'lib/a.py'
+run_ok "file view" cli file view README.md --repo apis/repo
+body_has "printing the file" '# Api demo'
+run_ok "commit list" cli commit list --repo apis/repo --limit 2
+run_ok "search" cli search 'Api demo' --repo apis/repo
+body_has "as path:line: text" 'README.md:1:'
+run_ok "diff --stat" cli diff main...conflicting --repo apis/repo --stat
+body_has "with the counts" 'ahead'
+
+run_ok "issue create" cli issue create --repo apis/repo --title "From the cli" --body "a body"
+body_has "printing the issue url" "$BASE/apis/repo/issues/"
+run_ok "issue list" cli issue list --repo apis/repo
+body_has "including the new one" 'From the cli'
+run_ok "issue list --json" cli issue list --repo apis/repo --json=number,title
+stdout_is_json "as one JSON value"
+run_ok "issue comment with a body file" sh -c "printf 'from a file\n' > '$TMP/body.md'; $(printf '%s ' env HOME="$CRED_HOME" XDG_CONFIG_HOME="$CRED_HOME/.config" GIT_CONFIG_GLOBAL="$CRED_HOME/.gitconfig" GIT_ASKPASS="$TMP/askpass") node dist/index.js issue comment 3 --repo apis/repo --body-file '$TMP/body.md'"
+run_ok "issue view --comments" cli issue view 3 --repo apis/repo --comments
+body_has "showing the comment" 'from a file'
+run_ok "issue close" cli issue close 3 --repo apis/repo
+body_has "reporting the new state" 'closed'
+run_code "--body and --body-file together is a usage error" 2 \
+  cli issue comment 3 --repo apis/repo --body x --body-file "$TMP/body.md"
+
+run_ok "pr list" cli pr list --repo apis/repo --state all
+body_has "including the merged one" 'Add a thing'
+run_ok "pr view" cli pr view 1 --repo apis/repo
+body_has "saying it was merged" 'merged'
+run_code "pr merge on a closed pull request exits 5" 5 cli pr merge 2 --repo apis/repo
+run_code "and a conflict is reported with its paths" 5 cli pr merge 2 --repo apis/repo
+err_has "naming the file that conflicts" 'This pull request is not open'
+
 # Recorded for this host alone, so other remotes keep whatever they use now.
 cred_env git config --global --get-regexp '^credential\.' | grep -q "credential.$BASE.helper store" \
   || { echo "FAIL: helper not recorded for this host alone"; exit 1; }
@@ -1301,6 +1496,20 @@ run_ok "clone with only a stored credential" cred_env git clone -q "$BASE/demo/p
 git -C "$TMP/credclone" commit -q --allow-empty -m "pushed with a stored credential"
 run_ok "push with only a stored credential" cred_env git -C "$TMP/credclone" push -q origin HEAD:main
 no_prompt "neither clone nor push asked for a credential"
+
+# A caller standing in a clone should not have to say where it is. The remote has
+# to point at this vault: a clone of somewhere else must not be read as naming a
+# repository here.
+run_ok "the repository comes from the git remote here" \
+  sh -c "cd '$TMP/credclone' && $(printf '%s ' env HOME="$CRED_HOME" XDG_CONFIG_HOME="$CRED_HOME/.config" GIT_CONFIG_GLOBAL="$CRED_HOME/.gitconfig" GIT_ASKPASS="$TMP/askpass") node '$PWD/dist/index.js' repo view --json=collection,name"
+body_has "which is the repository it was cloned from" '"name": "proj"'
+run_ok "a remote for somewhere else is not an answer" \
+  sh -c "cd '$TMP/credclone' && git remote set-url origin https://github.com/owner/other.git && $(printf '%s ' env HOME="$CRED_HOME" XDG_CONFIG_HOME="$CRED_HOME/.config" GIT_CONFIG_GLOBAL="$CRED_HOME/.gitconfig" GIT_ASKPASS="$TMP/askpass") node '$PWD/dist/index.js' repo view --repo apis/repo --json=name; git -C '$TMP/credclone' remote set-url origin '$BASE/demo/proj'"
+# The restore has to happen whatever the command did, and the command's own exit
+# code is what is being asserted, so it is captured rather than shadowed.
+run_code "and with no remote for this vault it is a usage error" 2 \
+  sh -c "cd '$TMP/credclone' && git remote set-url origin https://github.com/owner/other.git && { $(printf '%s ' env HOME="$CRED_HOME" XDG_CONFIG_HOME="$CRED_HOME/.config" GIT_CONFIG_GLOBAL="$CRED_HOME/.gitconfig" GIT_ASKPASS="$TMP/askpass") node '$PWD/dist/index.js' repo view; code=\$?; git remote set-url origin '$BASE/demo/proj'; exit \$code; }"
+err_has "naming all three ways to say" 'COFFERDAM_REPO'
 
 # ---- cofferdam import and collections, from the CLI ----
 
