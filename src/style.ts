@@ -1,6 +1,26 @@
 // The structural stylesheet. Every color, radius, and font here comes from a
 // custom property defined by the active theme (see themes.ts); nothing in
 // this file names a color directly, so a new theme needs no changes here.
+//
+// The page is built from rules rather than from cards. A section is a 2px
+// rule the width of the column, a caption under it, and then the content,
+// and not a bordered panel with a filled strip across its top. The rule runs
+// edge to edge while everything under it is inset by 12px, so the rule reads
+// as the thing the section hangs from. A border on all four sides is reserved
+// for what the reader can operate: buttons, inputs, menus, and list items that
+// are themselves links. So a border means "this is a control" and a rule means
+// "a section starts here". Fills are for code, which needs an edge of its own,
+// and for the one row a menu or a form uses to separate itself from the page.
+//
+// When something must be flagged rather than merely divided, a merge state or
+// a flash or an error, it takes a 3px rule down its left side in the colour of
+// the news it carries. Nothing is a stadium: a pill that reports a state is a
+// rectangle with the sheet's own corner radius, so the shape of a badge is the
+// shape of a button and a reader learns one vocabulary rather than two.
+//
+// Two shapes come back from the mark in logo.ts. The square marks the active
+// tab and stands in for a language's colour in the share list, and the
+// monoline is why every rule on the page is one of two weights and no more.
 
 export const CSS = `
 * { box-sizing: border-box; }
@@ -32,7 +52,8 @@ code, pre, .mono { font-family: var(--font-mono); }
 .user-menu form { margin: 0; }
 
 /* An identicon in its frame (see avatar.ts): a circle for a person, a rounded
-   square for a collection, as GitHub distinguishes people from organizations. */
+   square for a collection, so the two kinds of owner are told apart without
+   reading the name under them. */
 .avatar { display: inline-flex; flex: none; border-radius: 50%; overflow: hidden; background: var(--surface); }
 .avatar.square { border-radius: var(--radius); }
 .avatar svg { display: block; width: 100%; height: 100%; }
@@ -73,19 +94,30 @@ h2 { font-family: var(--font-head); font-size: 18px; }
 
 .repo-title { display: flex; align-items: center; gap: 8px; font-size: 18px; margin-bottom: 8px; }
 .repo-title .icon { color: var(--fg-muted); margin-right: 0; }
-.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 16px; overflow-x: auto; }
+/* The repository's sections. The active one is marked by the square from the
+   mark in logo.ts, set under the middle of the label and clear of the rule,
+   rather than by a bar drawn under the tab's whole width. The marker is
+   inside the tab's padding box because .tabs scrolls sideways on a narrow
+   screen, and anything hanging below it would be clipped. */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; overflow-x: auto; }
 .tab {
-  display: flex; align-items: center; gap: 8px; white-space: nowrap; padding: 8px 12px;
-  color: var(--fg); border-bottom: 2px solid transparent; margin-bottom: -1px;
-  border-radius: var(--radius) var(--radius) 0 0;
+  position: relative; display: flex; align-items: center; gap: 8px; white-space: nowrap;
+  padding: 8px 12px 14px; color: var(--fg);
 }
 .tab .glyph { color: var(--fg-muted); }
-.tab:hover { background: var(--surface); text-decoration: none; }
-.tab.active { font-weight: 600; border-bottom-color: var(--tab-marker); }
+.tab:hover { color: var(--accent); text-decoration: none; }
+.tab:hover .glyph { color: var(--accent); }
+.tab.active { font-weight: 600; }
 .tab.active .glyph { color: var(--fg); }
-.counter { display: inline-block; background: var(--chip-bg); border-radius: 2em; padding: 0 6px; font-size: 12px; color: var(--fg-muted); margin-left: 4px; }
-/* The outlined pill GitHub uses for a label on a name: Default, and its kin. */
-.badge { display: inline-block; border: 1px solid var(--accent); color: var(--accent); border-radius: 2em; padding: 0 7px; font-size: 12px; line-height: 18px; }
+.tab.active::after {
+  content: ''; position: absolute; left: 50%; bottom: 4px; margin-left: -3px;
+  width: 6px; height: 6px; background: var(--tab-marker);
+}
+/* A count beside a label is data, not decoration: it is set in the mono face
+   and left unenclosed. */
+.counter { font-family: var(--font-mono); font-size: 12px; color: var(--fg-subtle); margin-left: 6px; }
+/* A word set against a name: Default, and its kin. */
+.badge { display: inline-block; border: 1px solid var(--accent); color: var(--accent); border-radius: var(--radius); padding: 0 6px; font-size: 12px; line-height: 18px; }
 .ref-name { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .ref-name .icon { color: var(--fg-muted); margin-right: 0; }
 .ref-name div { flex-basis: 100%; }
@@ -172,8 +204,14 @@ button.dd-item { width: 100%; background: none; font: inherit; font-size: 13px; 
   .repo-side { flex: 1 1 auto; width: 100%; }
 }
 
-table.listing { width: 100%; border-collapse: collapse; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-table.listing th { text-align: left; font-weight: 600; background: var(--surface); padding: 8px 12px; border-bottom: 1px solid var(--border); }
+/* A listing is a rule, a caption row where there is one, and then the rows.
+   It has no frame: the page's column is its left and right edge. */
+table.listing { width: 100%; border-collapse: collapse; border-top: 2px solid var(--border); }
+table.listing th {
+  text-align: left; font-family: var(--font-head); font-size: 12px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted);
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+}
 table.listing td { padding: 7px 12px; border-top: 1px solid var(--border-soft); }
 table.listing tr:first-child td { border-top: none; }
 table.listing tr:hover td { background: var(--surface); }
@@ -193,12 +231,14 @@ table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
   table.listing.tree td.tree-message { display: none; }
 }
 
+/* The last commit to touch the tree sits on the listing's own rule and is
+   divided from the rows by a hairline, so the two read as one section. */
 .latest-commit {
   display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap;
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius) var(--radius) 0 0;
-  padding: 8px 12px; border-bottom: none;
+  border-top: 2px solid var(--border); border-bottom: 1px solid var(--border);
+  padding: 8px 12px;
 }
-.latest-commit + table.listing { border-radius: 0 0 var(--radius) var(--radius); }
+.latest-commit + table.listing { border-top: none; }
 .latest-commit .lc-main { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .latest-commit .lc-main a { color: var(--fg-muted); }
 .latest-commit .lc-main a:hover { color: var(--accent); }
@@ -207,27 +247,31 @@ table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
 .lc-history:hover { color: var(--accent); text-decoration: none; }
 .lc-history .glyph { color: var(--fg-muted); }
 
-.box { border: 1px solid var(--border); border-radius: var(--radius); margin-top: 24px; }
+/* A section of the page: the rule, the caption on it, and the content under
+   it, running the full width of the column rather than sitting inside a
+   frame. The caption is in the display face so that it reads as a title and
+   not as a row of the content. */
+.box { border-top: 2px solid var(--border); margin-top: 24px; }
 .box-header {
-  display: flex; align-items: center; gap: 8px; background: var(--surface); border-bottom: 1px solid var(--border);
-  padding: 8px 12px; font-weight: 600; border-radius: var(--radius) var(--radius) 0 0;
+  display: flex; align-items: center; gap: 8px; padding: 9px 12px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  font-family: var(--font-head); font-size: 14px; letter-spacing: 0.02em; color: var(--fg-muted);
 }
-.box-header .glyph { color: var(--fg-muted); }
-.box-body { padding: 16px 24px; }
+.box-header .glyph { color: var(--fg-subtle); }
+.box-body { padding: 16px 12px 4px; }
 .box-header a { color: var(--fg); }
 .box-header a:hover { color: var(--accent); text-decoration: none; }
 
 .code-meta {
   display: flex; justify-content: space-between; align-items: center; gap: 12px;
-  border: 1px solid var(--border); border-bottom: none; border-radius: var(--radius) var(--radius) 0 0;
-  background: var(--surface); padding: 6px 12px;
+  border-top: 2px solid var(--border); border-bottom: 1px solid var(--border);
+  padding: 7px 12px;
 }
 /* The file view is one element per line, so a line can be linked to and
    highlighted when linked to (#L12). The row is as wide as its content but
    never narrower than the viewport, which is what lets the highlight run the
    full width; the number stays put while the code scrolls under it. */
 .code-lines {
-  border: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius);
   background: var(--code-bg); overflow-x: auto; padding: 8px 0;
   font-family: var(--font-mono); font-size: 12px; line-height: 20px;
 }
@@ -240,13 +284,10 @@ table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
 .lnum:hover { color: var(--fg-muted); text-decoration: none; }
 .cline:target .lnum { background: var(--line-mark); color: var(--fg-muted); }
 .ltext { white-space: pre; padding: 0 16px 0 4px; }
-.blob-image { border: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius); padding: 16px; text-align: center; background: var(--code-bg); }
+.blob-image { padding: 24px; text-align: center; background: var(--code-bg); }
 .blob-image img { max-width: 100%; }
-.blob-binary { border: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius); padding: 32px; text-align: center; color: var(--fg-muted); }
-.rendered {
-  border: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius);
-  padding: 20px 32px 28px; background: var(--bg);
-}
+.blob-binary { padding: 32px; text-align: center; color: var(--fg-muted); }
+.rendered { padding: 24px 12px 28px; background: var(--bg); }
 
 /* Segmented Preview/Code switch on rendered files. */
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
@@ -255,12 +296,15 @@ table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
 .seg a:hover { background: var(--surface-hover); text-decoration: none; }
 .seg a.current { background: var(--chip-bg); color: var(--fg); font-weight: 600; }
 
-.commit-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; border: 1px solid var(--border); border-top: none; padding: 8px 12px; }
-/* A day's commits are one bordered group under the day's heading. */
-.commit-day { display: flex; align-items: center; gap: 8px; font-weight: 600; margin: 20px 0 8px; }
-.commit-day .glyph { color: var(--fg-muted); }
-.commit-group { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-.commit-group .commit-row { border: none; border-top: 1px solid var(--border-soft); }
+.commit-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 8px 12px; }
+/* A day's commits hang under the day, which is a caption on its own rule. */
+.commit-day {
+  display: flex; align-items: center; gap: 8px; margin: 24px 0 0; padding: 9px 12px 8px;
+  border-top: 2px solid var(--border); border-bottom: 1px solid var(--border-soft);
+  font-family: var(--font-head); font-size: 14px; letter-spacing: 0.02em; color: var(--fg-muted);
+}
+.commit-day .glyph { color: var(--fg-subtle); }
+.commit-group .commit-row { border-top: 1px solid var(--border-soft); }
 .commit-group .commit-row:first-child { border-top: none; }
 .commit-main { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
 .commit-main > span { min-width: 0; }
@@ -268,18 +312,18 @@ table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
 .commit-row .title:hover { color: var(--accent); }
 .sha {
   font-family: var(--font-mono); font-size: 12px;
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 2px 6px; color: var(--accent);
+  background: var(--inline-code-bg); border-radius: var(--radius); padding: 2px 6px; color: var(--accent);
 }
 .pagination { display: flex; gap: 8px; justify-content: center; margin-top: 16px; }
 
-.commit-head { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 16px; }
-.commit-head .subject { font-size: 16px; font-weight: 600; padding: 12px 16px 4px; }
-.commit-head .body { padding: 0 16px; white-space: pre-wrap; color: var(--fg-muted); font-size: 13px; }
-.commit-head .meta { display: flex; flex-wrap: wrap; gap: 16px; padding: 8px 16px 12px; color: var(--fg-muted); font-size: 12px; align-items: center; }
+.commit-head { border-top: 2px solid var(--border); border-bottom: 1px solid var(--border-soft); margin-bottom: 16px; }
+.commit-head .subject { font-family: var(--font-head); font-size: 17px; padding: 12px 12px 4px; }
+.commit-head .body { padding: 0 12px; white-space: pre-wrap; color: var(--fg-muted); font-size: 13px; }
+.commit-head .meta { display: flex; flex-wrap: wrap; gap: 16px; padding: 8px 12px 12px; color: var(--fg-muted); font-size: 12px; align-items: center; }
 
-.diff-file { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 16px; overflow: hidden; }
+.diff-file { border-top: 2px solid var(--border); margin-bottom: 20px; }
 .diff-file-header {
-  background: var(--surface); border-bottom: 1px solid var(--border); padding: 8px 12px; font-weight: 600;
+  border-bottom: 1px solid var(--border-soft); padding: 8px 12px;
   font-family: var(--font-mono); font-size: 12px;
 }
 .diff-body { overflow-x: auto; font-family: var(--font-mono); font-size: 12px; line-height: 20px; background: var(--code-bg); }
@@ -300,7 +344,8 @@ table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
 .markdown-body pre { margin: 0; background: var(--surface); padding: 16px; border-radius: var(--radius); overflow-x: auto; }
 .markdown-body pre code { background: none; padding: 0; font-size: 12px; }
 
-/* Fenced code: the copy button appears on hover, as on GitHub. */
+/* Fenced code: the copy button keeps out of the way until the pointer is
+   over the block it belongs to. */
 .markdown-body .code-block { position: relative; margin: 1em 0; }
 .markdown-body .code-block .copy-btn { position: absolute; top: 8px; right: 8px; opacity: 0; transition: opacity 0.1s; }
 .markdown-body .code-block:hover .copy-btn, .markdown-body .code-block .copy-btn:focus { opacity: 1; }
@@ -314,7 +359,9 @@ table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
 .markdown-body li.task-item { list-style: none; margin-left: -1.3em; }
 .markdown-body li.task-item input[type="checkbox"] { margin-right: 6px; }
 
-/* GitHub-style alert callouts: > [!NOTE] and friends. */
+/* Alert callouts: > [!NOTE] and friends. The syntax is the one authors
+   already write; the drawing is this sheet's, a left rule in the colour of
+   the notice, which is what every other flagged thing here gets. */
 .markdown-body blockquote.alert { border-left-color: var(--alert); color: var(--fg); }
 .markdown-body .alert-title { font-weight: 600; color: var(--alert); margin: 0 0 4px; }
 .markdown-body .alert-note { --alert: var(--accent); }
@@ -358,11 +405,13 @@ table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
   white-space: nowrap; font-family: inherit; line-height: 1.5;
 }
 .copy-btn:hover { background: var(--surface-hover); }
-/* Both faces of the button are in the page; copying swaps which one shows. */
-.copy-btn span { display: inline-flex; align-items: center; gap: 6px; }
-.copy-btn .copy-done { display: none; color: var(--alert-tip); }
-.copy-btn.copied .copy-idle { display: none; }
-.copy-btn.copied .copy-done { display: inline-flex; }
+/* Both faces of the button are in the page; copying swaps which one shows.
+   The faces are matched on their own class rather than through .copy-btn,
+   because the same pair also sits inside a plain .btn on the file view. */
+.copy-idle, .copy-done { display: inline-flex; align-items: center; gap: 6px; }
+.copy-done { display: none; color: var(--alert-tip); }
+.copied .copy-idle { display: none; }
+.copied .copy-done { display: inline-flex; }
 /* The command blocks on the empty-repository page: several lines with one
    button, where .cmd-row is one line with one button. */
 .cmd-block { display: flex; align-items: flex-start; gap: 8px; margin: 4px 0 20px; }
@@ -422,7 +471,7 @@ textarea {
   border: 1px solid var(--border); border-radius: var(--radius); background: var(--input-bg); color: var(--fg); resize: vertical;
 }
 .settings-box { max-width: 760px; }
-.settings-box .box-body { padding: 16px 20px; }
+.settings-box .box-body { padding: 16px 12px 8px; }
 .actions { display: flex; gap: 8px; align-items: center; }
 .file-head { font-weight: 400; }
 .file-head .mono { font-weight: 600; }
@@ -433,9 +482,10 @@ textarea {
 .user-actions { padding: 12px; display: flex; flex-direction: column; gap: 10px; width: 380px; }
 .user-actions .inline-form { margin: 0; }
 .user-actions input[type="text"] { width: 100%; }
-.flash { background: var(--ok-bg); border: 1px solid var(--ok-border); border-radius: var(--radius); padding: 8px 12px; margin-bottom: 16px; max-width: 620px; }
-.form-error { background: var(--err-bg); border: 1px solid var(--err-border); border-radius: var(--radius); padding: 8px 12px; margin-bottom: 16px; max-width: 620px; }
-.danger-zone { border: 1px solid var(--danger); border-radius: var(--radius); padding: 16px 24px; margin-top: 24px; max-width: 620px; }
+/* News, of either kind: the tint, and a rule down the side it is read from. */
+.flash { background: var(--ok-bg); border-left: 3px solid var(--ok-border); padding: 8px 12px; margin-bottom: 16px; max-width: 620px; }
+.form-error { background: var(--err-bg); border-left: 3px solid var(--err-border); padding: 8px 12px; margin-bottom: 16px; max-width: 620px; }
+.danger-zone { border-left: 3px solid var(--danger); padding: 4px 0 4px 16px; margin-top: 24px; max-width: 620px; }
 .danger-zone h3 { margin-top: 0; color: var(--danger); }
 
 /* Administration: the sections down the left, the page beside them. */
@@ -470,12 +520,12 @@ textarea {
 .theme-meta p { margin: 4px 0 0; }
 
 /* --- Actions: runs, jobs, logs --- */
-.chip { display: inline-block; background: var(--chip-bg); border-radius: 2em; padding: 1px 8px; font-size: 12px; color: var(--fg-muted); }
+.chip { display: inline-block; background: var(--chip-bg); border-radius: var(--radius); padding: 1px 7px; font-size: 12px; color: var(--fg-muted); }
 .run-status { display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .run-status.success { color: var(--alert-tip); }
 .run-status.failure { color: var(--danger); }
-/* A run in progress turns, as it does on GitHub; a reader who has motion
-   turned off gets the same amber ring, still. */
+/* A run in progress turns; a reader who has motion turned off gets the same
+   amber ring, still. */
 .run-status.running { color: var(--alert-warning); }
 .run-status.running .glyph { animation: spin 1.4s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -512,12 +562,16 @@ textarea {
 .job-item > span:first-of-type { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .job-detail { flex: 1; min-width: 0; }
 .job-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-.step { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 6px; overflow: hidden; }
-.step > summary { display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; background: var(--surface); }
+/* The steps of a job: a stack of foldables divided by hairlines, with the
+   first carrying the section's own rule. */
+.step { border-top: 1px solid var(--border-soft); }
+.step:first-of-type { border-top: 2px solid var(--border); }
+.step > summary { display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; }
+.step > summary:hover { background: var(--surface); }
 .step > summary .step-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .joblog { background: var(--code-bg); color: var(--fg); font-family: var(--font-mono); font-size: 12px; line-height: 1.5; padding: 10px 12px; margin: 0; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
 .step .joblog { border-top: 1px solid var(--border); }
-.joblog.live { border: 1px solid var(--border); border-radius: var(--radius); max-height: 70vh; overflow-y: auto; }
+.joblog.live { border-top: 2px solid var(--border); max-height: 70vh; overflow-y: auto; }
 @media (max-width: 700px) {
   .run-body { flex-direction: column; }
   .job-list { flex: 1 1 auto; width: 100%; }
@@ -536,7 +590,6 @@ textarea {
 
 /* --- blame: the file view with a commit column down its left --- */
 .blame {
-  border: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius);
   background: var(--code-bg); overflow-x: auto;
   font-family: var(--font-mono); font-size: 12px; line-height: 20px;
 }
@@ -571,11 +624,12 @@ textarea {
 .diff-summary { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .stat-add { color: var(--alert-tip); font-weight: 600; font-size: 12px; }
 .stat-del { color: var(--danger); font-weight: 600; font-size: 12px; margin-left: 6px; }
-/* Five squares in the proportion of the change, as on GitHub. */
-.statbar { display: inline-flex; gap: 2px; margin-left: 8px; }
-.statbar .sq { width: 8px; height: 8px; border-radius: 2px; background: var(--chip-bg); }
-.statbar .sq.add { background: var(--alert-tip); }
-.statbar .sq.del { background: var(--danger); }
+/* One bar in the proportion of the change, drawn at the weight of a rule
+   rather than as a row of counters: the added share, then the removed. */
+.statbar { display: inline-flex; width: 44px; height: 3px; margin-left: 10px; background: var(--chip-bg); }
+.statbar span { display: block; height: 100%; }
+.statbar .add { background: var(--alert-tip); }
+.statbar .del { background: var(--danger); }
 details.diff-file > summary.diff-file-header {
   display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; font-family: var(--font-ui);
 }
@@ -605,11 +659,12 @@ details.diff-file:not([open]) > summary.diff-file-header { border-bottom: none; 
    inline rather than here, because a language's colour belongs to the language
    (it is Linguist's) and not to the theme; the table in languages.ts is where
    they live. Only the shape is this file's business. --- */
-.lang-bar { display: flex; height: 8px; border-radius: 6px; overflow: hidden; background: var(--border-soft); margin-bottom: 12px; }
+.lang-bar { display: flex; height: 6px; overflow: hidden; background: var(--border-soft); margin-bottom: 12px; }
 .lang-seg { display: block; height: 100%; }
 .lang-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .lang-list li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.lang-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; }
+/* The square from the mark, at the size of a bullet. */
+.lang-dot { flex: none; width: 9px; height: 9px; }
 .lang-name { font-weight: 600; }
 .lang-pct { margin-left: auto; }
 
@@ -625,7 +680,7 @@ details.diff-file:not([open]) > summary.diff-file-header { border-bottom: none; 
 .search-glyph { position: absolute; left: 8px; top: 50%; margin-top: -8px; color: var(--fg-muted); pointer-events: none; }
 .search-file { margin-top: 16px; }
 .search-file .box-header a { font-family: var(--font-mono); font-size: 12px; }
-.search-hits { background: var(--code-bg); border-radius: 0 0 var(--radius) var(--radius); overflow-x: auto; }
+.search-hits { background: var(--code-bg); overflow-x: auto; }
 .search-hit {
   display: flex; gap: 12px; padding: 2px 12px; color: var(--fg);
   font-family: var(--font-mono); font-size: 12px; line-height: 20px;
@@ -644,10 +699,7 @@ details.diff-file:not([open]) > summary.diff-file-header { border-bottom: none; 
 .cmp-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
 .cmp-picker { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--fg-muted); }
 .cmp-picker select { width: auto; max-width: 220px; padding: 4px 8px; font-size: 13px; }
-.cmp-status {
-  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
-  padding: 10px 12px; margin-bottom: 16px;
-}
+.cmp-status { border-left: 3px solid var(--border); padding: 4px 0 4px 14px; margin-bottom: 16px; }
 .cmp-commits { margin-bottom: 20px; }
 
 /* --- contributors, and a filter the reader can take off --- */
@@ -656,7 +708,7 @@ details.diff-file:not([open]) > summary.diff-file-header { border-bottom: none; 
 .contributor:hover { text-decoration: none; opacity: 0.85; }
 .filter-chip {
   display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; font-size: 12px;
-  border: 1px solid var(--border); border-radius: 2em; background: var(--surface); color: var(--fg);
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--fg);
 }
 .filter-chip .glyph { color: var(--fg-muted); }
 .filter-chip a { display: inline-flex; color: var(--fg-muted); }
@@ -668,9 +720,15 @@ details.diff-file:not([open]) > summary.diff-file-header { border-bottom: none; 
 .state-tab:hover { background: var(--surface); text-decoration: none; }
 .state-tab.current { color: var(--fg); font-weight: 600; }
 .state-tab .glyph { color: var(--fg-muted); }
-/* Open is green and closed is purple, the colours GitHub taught for these. */
-.glyph.issue-open { color: var(--alert-tip); }
-.glyph.issue-closed { color: var(--alert-important); }
+/* The three states of a thread, in three colours the rest of the sheet
+   already uses for the same three meanings. Open takes the vault's accent,
+   which is what everything live and current is drawn in, so a vault's own
+   colour is what its open work is marked by. Merged takes the green a
+   passing run takes, because it is the same news: the thing landed. Closed
+   takes the muted grey, because a closed thread is over and should recede
+   rather than compete with the open ones beside it. */
+.glyph.issue-open { color: var(--accent); }
+.glyph.issue-closed { color: var(--fg-muted); }
 table.listing.issues td.issue-cell { display: flex; align-items: flex-start; gap: 10px; }
 table.listing.issues td.issue-cell > span { min-width: 0; }
 .issue-link { color: var(--fg); font-weight: 600; }
@@ -686,20 +744,22 @@ table.listing.issues td.issue-cell > span { min-width: 0; }
   padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 20px;
 }
 .state-badge {
-  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 2em;
-  font-size: 13px; font-weight: 600; color: var(--on-primary); background: var(--alert-tip);
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: var(--radius);
+  font-size: 13px; font-weight: 600; color: var(--on-primary); background: var(--accent);
 }
-.state-badge.closed { background: var(--alert-important); }
-.issue-thread { display: flex; flex-direction: column; gap: 16px; max-width: 880px; }
-.issue-comment { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.state-badge.closed { background: var(--fg-muted); }
+/* A thread is a run of entries, each opening on its own rule with who wrote
+   it and when, and the words under that. */
+.issue-thread { display: flex; flex-direction: column; gap: 20px; max-width: 880px; }
+.issue-comment { border-top: 2px solid var(--border); }
 .issue-comment-head {
-  display: flex; align-items: center; gap: 8px; background: var(--surface);
-  border-bottom: 1px solid var(--border); padding: 8px 12px;
+  display: flex; align-items: center; gap: 8px;
+  border-bottom: 1px solid var(--border-soft); padding: 8px 12px;
 }
-.issue-comment-body { padding: 16px 20px; }
+.issue-comment-body { padding: 16px 12px 4px; }
 .issue-event { display: flex; align-items: center; gap: 8px; color: var(--fg-muted); font-size: 13px; }
 .issue-reply { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-.issue-reply .issue-comment-head { border-bottom: 1px solid var(--border); }
+.issue-reply .issue-comment-head { border-bottom: 1px solid var(--border); padding: 8px 12px; }
 .issue-reply textarea { border: none; border-radius: 0; }
 .issue-reply .actions { padding: 10px 12px; justify-content: flex-end; border-top: 1px solid var(--border); }
 
@@ -735,23 +795,26 @@ table.listing.issues td.issue-cell > span { min-width: 0; }
 .commit-target .field { margin: 8px 0 4px; }
 .commit-target p { margin: 0; }
 
-/* --- pull requests: the merge box, and the branch pair. Merged is drawn in
-   the purple each theme already carries for an important callout, which is
-   the same purple GitHub uses for a merged pull request. --- */
+/* --- pull requests: the merge box, and the branch pair. The merge box is
+   the page's one piece of news, so it is drawn the way the sheet draws news:
+   a rule down the side it is read from, in the colour of what it says. --- */
 .cmp-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.state-badge.merged { background: var(--alert-important); border-color: var(--alert-important); color: var(--on-primary); }
-.pull-merged { color: var(--alert-important); }
+.state-badge.merged { background: var(--alert-tip); color: var(--on-primary); }
+.pull-merged { color: var(--alert-tip); }
 .merge-box {
-  display: flex; align-items: flex-start; gap: 12px; margin: 16px 0;
-  border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; background: var(--surface);
+  display: flex; align-items: flex-start; gap: 12px; margin: 20px 0;
+  border-left: 3px solid var(--border); padding: 6px 0 6px 14px;
 }
 .merge-box > .glyph { margin-top: 2px; }
 .merge-box form { margin-left: auto; }
 .merge-do { display: flex; align-items: center; gap: 8px; }
 .merge-method select { width: auto; padding: 4px 8px; font-size: 13px; }
+.merge-box.clean { border-left-color: var(--alert-tip); }
 .merge-box.clean > .glyph { color: var(--alert-tip); }
+.merge-box.conflict { border-left-color: var(--danger); }
 .merge-box.conflict > .glyph { color: var(--danger); }
-.merge-box.merged > .glyph { color: var(--alert-important); }
+.merge-box.merged { border-left-color: var(--alert-tip); }
+.merge-box.merged > .glyph { color: var(--alert-tip); }
 .merge-box.closed > .glyph, .merge-box.unknown > .glyph { color: var(--fg-muted); }
 .merge-conflicts { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--fg-muted); }
 .pull-commits { display: flex; flex-direction: column; }

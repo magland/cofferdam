@@ -31,9 +31,10 @@ const STATUS_LABEL: Record<Status, string> = {
   skipped: 'Skipped',
 };
 
-// The status glyphs are GitHub's: a filled tick for success, a filled cross
-// for failure, an amber ring while a job runs, and grey for the states where
-// nothing happened.
+// The status glyphs are the ringed ones from icons.ts: a tick in a ring for
+// success, a cross in a ring for failure, a turning arc while a job runs, and
+// grey for the states where nothing happened. Ringed rather than filled, so a
+// column of them reads at the weight of the text beside it.
 const STATUS_ICON: Record<Status, IconName> = {
   queued: 'clock',
   running: 'sync',

@@ -23,7 +23,7 @@ export interface ThemeVars {
   /** Folder icons and similar decorative accents. */
   accentSoft: string;
   focus: string;
-  /** The underline under the active repository tab. */
+  /** The square that marks the active repository tab. */
   tabMarker: string;
   chipBg: string;
   /** Affirmative buttons (create, commit, save). */

@@ -82,19 +82,25 @@ function parse(patch: string): DiffFile[] {
 }
 
 /**
- * The five-square bar GitHub puts beside a file's counts: green for the
- * share of the change that was additions, red for deletions, and grey for
- * the rest, so a glance separates a rewrite from a one-line fix.
+ * A bar beside a file's counts, in the proportion of the change: the share
+ * that was additions, then the share that was deletions, so a glance
+ * separates a rewrite from a one-line fix. A file that changed at all gets
+ * at least a tenth of the bar for each side it changed on, since a single
+ * deletion among four hundred additions should still be visible. The widths
+ * are inline because they are the datum; only the bar's shape is style.
  */
 function statBar(added: number, removed: number): string {
   const total = added + removed;
-  const green = total === 0 ? 0 : Math.max(added > 0 ? 1 : 0, Math.round((added / total) * 5));
-  const red = total === 0 ? 0 : Math.min(5 - green, Math.max(removed > 0 ? 1 : 0, 5 - green));
-  const square = (cls: string, n: number) => `<span class="sq ${cls}"></span>`.repeat(n);
-  return `<span class="statbar" aria-hidden="true">${square('add', green)}${square('del', red)}${square(
-    'none',
-    Math.max(0, 5 - green - red)
-  )}</span>`;
+  if (total === 0) return '';
+  const add =
+    added > 0 && removed > 0
+      ? Math.min(90, Math.max(10, Math.round((added / total) * 100)))
+      : added > 0
+        ? 100
+        : 0;
+  return `<span class="statbar" aria-hidden="true"><span class="add" style="width:${add}%"></span><span class="del" style="width:${
+    100 - add
+  }%"></span></span>`;
 }
 
 function counts(added: number, removed: number): string {
