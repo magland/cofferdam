@@ -44,6 +44,7 @@ The `.git` suffix on repository directory names is optional; it is stripped for 
 - Sign-in with username and token; operations happen directly in the web interface:
   - creating repositories (with an optional initial README)
   - editing, creating, renaming, and deleting files, committed straight to a branch or to a new one made from it
+  - uploading files, several in one commit, including binaries
   - creating and deleting branches and tags
   - repository settings: description, default branch, renaming or moving to another collection, and deletion
   - user administration: creating users, granting scopes, minting tokens

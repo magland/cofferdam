@@ -13,6 +13,7 @@ import {
   Viewer,
   checkCsrf,
   clearSessionCookie,
+  csrfMatches,
   getViewer,
   setSessionCookie,
   viewerIsAdmin,
@@ -21,8 +22,13 @@ import { authenticate, canAdmin, canPush, loadVault, addUserToken, grantScope } 
 import { encPath, repoUrl } from './views';
 import { LoadedRepo, ah, loadRepo, makeCtx, send404, wildcard } from './web';
 import { isBinary } from './render';
+import { boundaryOf, parseMultipart, partField, partFiles } from './multipart';
 
 const MAX_EDIT_SIZE = 1024 * 1024;
+// What one upload may carry in total. Big enough for the images and fixtures
+// people add through a browser, small enough that the body can be held whole
+// while it is parsed; anything larger belongs in a push, or in Git LFS.
+const MAX_UPLOAD_SIZE = 25 * 1024 * 1024;
 
 // The parsed source is pasted into a command the reader runs in their own
 // shell, so the accepted shapes are an allowlist of harmless characters rather
@@ -511,6 +517,121 @@ export function registerWebOps(
         return;
       }
       res.redirect(`${urlOf(loaded.repo)}/blob/${encPath(onto)}/${encPath(toPath ?? filePath)}`);
+    })
+  );
+
+  // ---- uploading files ----
+
+  // The body is multipart, which express does not parse, so it arrives raw and
+  // multipart.ts takes it apart. The cap is enforced twice: here, where a
+  // larger body is refused before it is read, and again on the sum of the
+  // parts.
+  const uploadBody = express.raw({ type: 'multipart/form-data', limit: MAX_UPLOAD_SIZE });
+
+  app.get(
+    '/:collection/:repo/upload/*',
+    ah(async (req, res) => {
+      const viewer = requireViewerPage(req, res);
+      if (!viewer) return;
+      const target = await loadFileTarget(req, res, viewer, { allowEmptyRepo: true });
+      if (!target) return;
+      const ctx = await makeCtx(root, req, target.loaded, target.branch, viewer);
+      res.type('html').send(forms.uploadPage(ctx, target.branch, target.filePath, target.tip, MAX_UPLOAD_SIZE));
+    })
+  );
+
+  app.post(
+    '/:collection/:repo/upload/*',
+    uploadBody,
+    ah(async (req, res) => {
+      const viewer = getViewer(req, root);
+      if (!viewer) {
+        fail(res, 403, 'You must be signed in to do that.', null, '/login');
+        return;
+      }
+      const boundary = boundaryOf(req.get('content-type'));
+      if (!boundary || !Buffer.isBuffer(req.body)) {
+        fail(res, 400, 'That upload did not arrive as a form; try again.', viewer);
+        return;
+      }
+      const parts = parseMultipart(req.body, boundary);
+      // The CSRF value rides in the same form, so it is compared from the
+      // parsed parts: express did not fill in req.body for a multipart post.
+      if (!csrfMatches(partField(parts, 'csrf'), viewer)) {
+        fail(res, 403, 'The form has expired; go back, reload the page, and try again.', viewer);
+        return;
+      }
+      const target = await loadFileTarget(req, res, viewer, { allowEmptyRepo: true });
+      if (!target) return;
+      const { loaded, branch, filePath: dir } = target;
+      const retryUrl = `${urlOf(loaded.repo)}/upload/${encPath(branch)}${dir === '' ? '' : `/${encPath(dir)}`}`;
+      const expectedField = partField(parts, 'expected');
+      const expected = expectedField === '' ? null : expectedField;
+      if (expected !== null && !isValidSha(expected)) {
+        fail(res, 400, 'The form is missing its base commit; reload and try again.', viewer, retryUrl);
+        return;
+      }
+      const uploads = partFiles(parts, 'files');
+      if (uploads.length === 0) {
+        fail(res, 400, 'Choose at least one file to upload.', viewer, retryUrl);
+        return;
+      }
+      const total = uploads.reduce((n, f) => n + f.data.length, 0);
+      if (total > MAX_UPLOAD_SIZE) {
+        fail(res, 413, 'That is more than one upload may carry; push it with git instead.', viewer, retryUrl);
+        return;
+      }
+      // Browsers send the name the file had on disk, and some send a whole
+      // path; only the last segment is ours to use, and it still has to be a
+      // path this repository would accept.
+      const files: ops.UploadedFile[] = [];
+      for (const upload of uploads) {
+        const name = (upload.filename ?? '').split(/[\\/]/).pop() ?? '';
+        const full = dir === '' ? name : `${dir}/${name}`;
+        if (name === '' || name === '.' || name === '..' || !isValidRepoPath(full)) {
+          fail(res, 400, `${name || 'That file'} does not have a usable name.`, viewer, retryUrl);
+          return;
+        }
+        files.push({ path: full, content: upload.data });
+      }
+      const summary = partField(parts, 'message').trim();
+      const description = partField(parts, 'description').trim();
+      const fallback = files.length === 1 ? `Add ${files[0].path.split('/').pop()}` : `Add ${files.length} files`;
+      const message = `${summary || fallback}${description ? `\n\n${description}` : ''}`;
+      let onto = branch;
+      if (partField(parts, 'newBranchWanted') === '1') {
+        const wanted = partField(parts, 'newBranch').trim();
+        if (wanted === '' || expected === null) {
+          fail(res, 400, 'Name the new branch, or untick the box to commit to this one.', viewer, retryUrl);
+          return;
+        }
+        try {
+          await ops.createBranch(loaded.repo.dir, wanted, expected);
+        } catch (e) {
+          const message2 = e instanceof OpError ? e.message : 'Could not create that branch.';
+          fail(res, e instanceof OpError && e.kind === 'exists' ? 409 : 400, message2, viewer, retryUrl);
+          return;
+        }
+        onto = wanted;
+      }
+      try {
+        const sha = await ops.commitFiles(loaded.repo.dir, {
+          branch: onto,
+          files,
+          message,
+          author: authorFor(viewer, req),
+          expectedHead: expected,
+        });
+        firePush(loaded.repo, onto, expected, sha, viewer.auth.username);
+      } catch (e) {
+        await handleOpError(e, req, res, viewer, target, retryUrl);
+        return;
+      }
+      if (onto !== branch) {
+        res.redirect(`${urlOf(loaded.repo)}/compare/${encPath(branch)}...${encPath(onto)}`);
+        return;
+      }
+      res.redirect(`${urlOf(loaded.repo)}/tree/${encPath(onto)}${dir === '' ? '' : `/${encPath(dir)}`}`);
     })
   );
 

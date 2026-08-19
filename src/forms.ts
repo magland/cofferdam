@@ -245,6 +245,41 @@ ${commitFields(ctx.viewer!, expectedHead, 'Create new file', expectedHead === nu
   return layout(`New file - ${ctx.collection}/${ctx.repo}`, body, repoOpts(ctx));
 }
 
+/**
+ * The upload form. A file input and the same commit box as the editor, so
+ * uploading is the same act as writing a file: a commit with a message, on
+ * this branch or on a new one.
+ */
+export function uploadPage(
+  ctx: RepoCtx,
+  branch: string,
+  dir: string,
+  expectedHead: string | null,
+  maxBytes: number,
+  error?: string
+): string {
+  const base = repoUrl(ctx);
+  const action = `${base}/upload/${encPath(branch)}${dir === '' ? '' : `/${encPath(dir)}`}`;
+  const cancel = `${base}/tree/${encPath(branch)}${dir === '' ? '' : `/${encPath(dir)}`}`;
+  const body = `${repoHeader(ctx, 'code')}
+<h2 class="file-head">Uploading to <span class="mono">${esc(dir === '' ? '/' : `${dir}/`)}</span> on <span class="mono">${esc(
+    branch
+  )}</span></h2>
+${errorBanner(error)}
+<form method="post" action="${action}" enctype="multipart/form-data">
+<div class="field"><label for="files">Files</label>
+<input type="file" id="files" name="files" multiple required>
+<p class="muted small">Up to ${Math.floor(maxBytes / (1024 * 1024))} MB in one commit. A file that is already there is replaced, keeping its mode. Large binaries are better pushed with Git LFS.</p></div>
+<div class="commit-box">
+${commitFields(ctx.viewer!, expectedHead, 'Add files via upload', branch)}
+<div class="actions"><button type="submit" class="btn btn-primary">${icon(
+    'upload'
+  )}<span>Commit changes</span></button><a class="btn" href="${cancel}">Cancel</a></div>
+</div>
+</form>`;
+  return layout(`Upload to ${ctx.collection}/${ctx.repo}`, body, repoOpts(ctx, action));
+}
+
 export function deleteFilePage(ctx: RepoCtx, filePath: string, expectedHead: string, error?: string): string {
   const base = repoUrl(ctx);
   const action = `${base}/delete/${encPath(ctx.ref)}/${encPath(filePath)}`;

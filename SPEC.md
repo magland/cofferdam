@@ -92,6 +92,7 @@ First start against a directory with no `vault.json` initializes one and prints 
 | `src/avatar.ts` | Identicons: the drawing a name gets in place of an uploaded picture |
 | `src/languages.ts` | The language breakdown: Linguist's names and colours by extension, and the byte shares the About panel's bar is drawn from |
 | `src/compare.ts` | Comparing two revisions: the route and its page |
+| `src/multipart.ts` | multipart/form-data parsing, for the upload form |
 | `src/issues.ts` | The issue store: `<repo>.issues/` on disk, and the validation over it |
 | `src/issueweb.ts` | The issue pages and their operations |
 | `scripts/create-example.sh` | Builds the example vault, including its `vault.json` with the fixed dev user |
@@ -146,6 +147,7 @@ UI operation routes (session + CSRF; all POSTs follow POST-redirect-GET):
 | `GET /import` (optional `?collection=`, `?src=`) | Writes the one-line command that imports an existing repository (section 3.10); performs nothing | session, push scope over the target |
 | `GET/POST /:collection/:repo/edit/:branch/*path` | Edit a text file (≤ 1 MB); a changed `path` renames or moves it in the same commit, and `newBranchWanted` commits to a branch created from the same base and lands on the comparison | push scope |
 | `GET/POST /:collection/:repo/new/:branch[/*dir]` | Create a file; on an empty repository this creates the branch | push scope |
+| `GET/POST /:collection/:repo/upload/:branch[/*dir]` | Upload files (25 MB per commit, multipart parsed in `src/multipart.ts`), replacing what is already there and keeping its mode | push scope |
 | `GET/POST /:collection/:repo/delete/:branch/*path` | Delete a file with a confirm step | push scope |
 | `POST /:collection/:repo/branches/create` `branches/delete` | Branch operations (default branch is not deletable) | push scope |
 | `POST /:collection/:repo/tags/create` `tags/delete` | Lightweight tag operations | push scope |

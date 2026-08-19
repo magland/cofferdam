@@ -143,6 +143,79 @@ interface FileCommitArgs {
     | { kind: 'delete' };
 }
 
+export interface UploadedFile {
+  path: string;
+  content: Buffer;
+}
+
+/**
+ * Commit several files at once, which is what an upload is. Same index dance
+ * as commitFileChange and the same optimistic guard on the branch tip; the
+ * difference is only that a batch of paths goes in before the tree is
+ * written, so an upload of twenty files is one commit and not twenty.
+ *
+ * A path that already exists is replaced and keeps its mode, so re-uploading
+ * a script does not quietly drop its executable bit.
+ */
+export async function commitFiles(
+  repoDir: string,
+  args: { branch: string; files: UploadedFile[]; message: string; author: CommitAuthor; expectedHead: string | null }
+): Promise<string> {
+  const { branch, files, message, author, expectedHead } = args;
+  if (!isValidRefName(branch) || branch.startsWith('-')) throw new OpError('invalid branch name');
+  if (files.length === 0) throw new OpError('no files to commit');
+  for (const file of files) {
+    if (!isValidRepoPath(file.path) || file.path === '') throw new OpError(`invalid file path: ${file.path}`);
+  }
+  if (expectedHead !== null && !isValidSha(expectedHead)) throw new OpError('invalid expected commit');
+
+  const indexFile = tmpFile('hubbit-index');
+  const env = { ...process.env, GIT_INDEX_FILE: indexFile };
+  try {
+    let baseTree: string | null = null;
+    if (expectedHead !== null) {
+      baseTree = (await execGit(repoDir, ['rev-parse', `${expectedHead}^{tree}`])).toString('utf8').trim();
+      await execGit(repoDir, ['read-tree', expectedHead], { env });
+    } else {
+      await execGit(repoDir, ['read-tree', '--empty'], { env });
+    }
+
+    for (const file of files) {
+      const mode =
+        expectedHead !== null && (await entryExists(repoDir, expectedHead, file.path))
+          ? await entryMode(repoDir, expectedHead, file.path)
+          : '100644';
+      const contentFile = tmpFile('hubbit-blob');
+      let blobSha: string;
+      try {
+        fs.writeFileSync(contentFile, file.content, { mode: 0o600 });
+        blobSha = (await execGit(repoDir, ['hash-object', '-w', '--', contentFile])).toString('utf8').trim();
+      } finally {
+        fs.rmSync(contentFile, { force: true });
+      }
+      await execGit(repoDir, ['update-index', '--add', '--cacheinfo', `${mode},${blobSha},${file.path}`], { env });
+    }
+
+    const newTree = (await execGit(repoDir, ['write-tree'], { env })).toString('utf8').trim();
+    if (newTree === baseTree) throw new OpError('those files are already in the repository, unchanged', 'nochange');
+    const commitArgs = ['commit-tree', newTree, '-m', message];
+    if (expectedHead !== null) commitArgs.push('-p', expectedHead);
+    const newCommit = (await execGit(repoDir, commitArgs, { env: authorEnv(author) })).toString('utf8').trim();
+    try {
+      await execGit(repoDir, ['update-ref', `refs/heads/${branch}`, newCommit, expectedHead ?? '']);
+    } catch (e) {
+      const tip = await refTip(repoDir, `refs/heads/${branch}`);
+      if (tip !== expectedHead) {
+        throw new OpError(`branch ${branch} has moved since you loaded this page`, 'conflict');
+      }
+      throw e;
+    }
+    return newCommit;
+  } finally {
+    fs.rmSync(indexFile, { force: true });
+  }
+}
+
 export async function commitFileChange(repoDir: string, args: FileCommitArgs): Promise<string> {
   const { branch, filePath, message, author, expectedHead, action } = args;
   if (!isValidRefName(branch) || branch.startsWith('-')) throw new OpError('invalid branch name');
@@ -275,10 +348,14 @@ async function planMerge(
   if ((await execGitStatus(repoDir, ['merge-base', '--is-ancestor', headSha, baseSha])).code === 0) {
     return { status: 'up-to-date' };
   }
-  // The base has not moved since the head left it, so the branch can simply
-  // advance, which is what git would do at the terminal.
+  // The base has not moved since the head left it, so the merged tree is the
+  // head's own. A merge commit is still made rather than fast-forwarding:
+  // that commit is the record of the merge, and a history where a proposal
+  // simply appears says nothing about why it was taken. This is what GitHub's
+  // merge button does too.
   if ((await execGitStatus(repoDir, ['merge-base', '--is-ancestor', baseSha, headSha])).code === 0) {
-    return { status: 'clean', tree: null, fastForward: true, baseSha, headSha };
+    const tree = (await execGit(repoDir, ['rev-parse', `${headSha}^{tree}`])).toString('utf8').trim();
+    return { status: 'clean', tree, fastForward: true, baseSha, headSha };
   }
 
   const merged = await execGitStatus(repoDir, ['merge-tree', '--write-tree', '--name-only', baseSha, headSha]);
@@ -326,10 +403,6 @@ export async function mergeBranch(
 ): Promise<MergeOutcome> {
   const plan = await planMerge(repoDir, base, head);
   if (plan.status !== 'clean') return plan;
-  if (plan.fastForward) {
-    await moveBranch(repoDir, base, plan.headSha, plan.baseSha);
-    return { status: 'merged', sha: plan.headSha, before: plan.baseSha, fastForward: true };
-  }
   const sha = (
     await execGit(repoDir, ['commit-tree', plan.tree!, '-p', plan.baseSha, '-p', plan.headSha, '-m', message], {
       env: authorEnv(author),
@@ -338,7 +411,7 @@ export async function mergeBranch(
     .toString('utf8')
     .trim();
   await moveBranch(repoDir, base, sha, plan.baseSha);
-  return { status: 'merged', sha, before: plan.baseSha, fastForward: false };
+  return { status: 'merged', sha, before: plan.baseSha, fastForward: plan.fastForward };
 }
 
 /** Move a branch, refusing if it is no longer where the caller last saw it. */

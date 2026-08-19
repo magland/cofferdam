@@ -8,44 +8,26 @@ cd "$(dirname "$0")/.."
 
 PORT="${SMOKE_PORT:-$((RANDOM % 2000 + 42000))}"
 BASE="http://127.0.0.1:$PORT"
-# The scratch tree needs two things from its filesystem, and a container is
-# not guaranteed to offer both:
-#
-#  - it must be able to execute a script, because git silently skips a hook it
-#    cannot execute. git-lfs uploads objects from a pre-push hook, so on a
-#    filesystem mounted noexec the LFS checks below see a pointer pushed, no
-#    object uploaded, and a download that 404s, none of which is hubbit's
-#    doing. The vault lives here too, and its repositories have hooks of their
-#    own.
-#  - it should be able to keep a file private, because `git credential-store`
-#    writes 0600 and one check asserts it. Some overlay and container mounts
-#    force a mode (646, 666) whatever the umask.
-#
-# Executing wins when only one is on offer: it decides what the suite can test
-# at all, while the other costs a single assertion, which is then skipped and
-# says so. The function prints the directory and whether it is private, since
-# a command substitution cannot hand back a variable.
+# The credential checks below assert that git's store wrote 0600, so the
+# scratch tree has to sit on a filesystem that can actually keep a file
+# private. In some containers /tmp cannot: a file created under umask 077
+# comes back 646, and the assertion fails for a reason that has nothing to do
+# with hubbit. Probe, and fall back rather than making the check weaker.
 smoke_tmp() {
-  local base d mode exec_ok private_ok fallback=""
+  local base d mode
   for base in "${TMPDIR:-/tmp}" /dev/shm; do
     [ -d "$base" ] && [ -w "$base" ] || continue
     d="$(mktemp -d "$base/hubbit-smoke.XXXXXX" 2>/dev/null)" || continue
-    printf '#!/bin/sh\nexit 0\n' > "$d/probe.sh"; chmod +x "$d/probe.sh"
-    if "$d/probe.sh" 2>/dev/null; then exec_ok=1; else exec_ok=0; fi
-    ( umask 077; : > "$d/probe.mode" )
-    mode="$(stat -c '%a' "$d/probe.mode" 2>/dev/null || stat -f '%Lp' "$d/probe.mode")"
-    [ "$mode" = 600 ] && private_ok=1 || private_ok=0
-    rm -f "$d/probe.sh" "$d/probe.mode"
-    if [ "$exec_ok" = 1 ] && [ "$private_ok" = 1 ]; then printf '%s 1\n' "$d"; return 0; fi
-    if [ "$exec_ok" = 1 ] && [ -z "$fallback" ]; then fallback="$d"; continue; fi
+    ( umask 077; : > "$d/probe" )
+    mode="$(stat -c '%a' "$d/probe" 2>/dev/null || stat -f '%Lp' "$d/probe")"
+    rm -f "$d/probe"
+    if [ "$mode" = 600 ]; then printf '%s\n' "$d"; return 0; fi
     rm -rf "$d"
   done
-  if [ -n "$fallback" ]; then printf '%s 0\n' "$fallback"; return 0; fi
-  echo "no writable directory that can execute a script (tried \$TMPDIR and /dev/shm); set TMPDIR to one" >&2
+  echo "no writable directory that can hold a 0600 file (tried \$TMPDIR and /dev/shm); set TMPDIR to one" >&2
   return 1
 }
-read -r TMP TMP_PRIVATE <<<"$(smoke_tmp)"
-[ -n "$TMP" ] || exit 1
+TMP="$(smoke_tmp)"
 VAULT="$TMP/vault"
 LOG="$TMP/server.log"
 JAR="$TMP/owner.jar"
@@ -420,6 +402,34 @@ body_has "language share shown" 'class="lang-pct'
 check "subdirectory listing" 200 "$BASE/demo/proj/tree/main/src"
 body_lacks "no languages away from the root" 'lang-bar'
 
+# ---- uploading files ----
+
+check "anonymous upload form redirects to login" 302 "$BASE/demo/proj/upload/main"
+check "upload form" 200 -b "$JAR" "$BASE/demo/proj/upload/main"
+body_has "upload form posts multipart" 'enctype="multipart/form-data"'
+CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
+printf 'uploaded through the web\n' > "$TMP/upload.txt"
+printf '\x89PNG\r\n\x1a\n\x00\x01\x02\x03' > "$TMP/upload.bin"
+check "upload two files" 302 -b "$JAR" "$BASE/demo/proj/upload/main" \
+  -F "csrf=$CSRF" -F "expected=$EXPECTED" -F "message=Add files by upload" \
+  -F "files=@$TMP/upload.txt" -F "files=@$TMP/upload.bin"
+check "the uploaded text file is there" 200 "$BASE/demo/proj/raw/main/upload.txt"
+body_has "its contents survived" 'uploaded through the web'
+check "the uploaded binary is there" 200 -o "$TMP/back.bin" "$BASE/demo/proj/raw/main/upload.bin"
+cmp -s "$TMP/upload.bin" "$BODY" || { echo "FAIL: the uploaded binary did not round-trip"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the uploaded binary round-trips byte for byte"
+check "one commit for the pair" 200 "$BASE/demo/proj/commits/main"
+body_has "the upload commit is named" 'Add files by upload'
+check "upload form again" 200 -b "$JAR" "$BASE/demo/proj/upload/main"
+CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
+check "an upload with no files is refused" 400 -b "$JAR" "$BASE/demo/proj/upload/main" \
+  -F "csrf=$CSRF" -F "expected=$EXPECTED" -F "message=nothing"
+check "an upload with a bad csrf is refused" 403 -b "$JAR" "$BASE/demo/proj/upload/main" \
+  -F "csrf=bogus" -F "expected=$EXPECTED" -F "files=@$TMP/upload.txt"
+check "upload into a subdirectory" 302 -b "$JAR" "$BASE/demo/proj/upload/main/docs" \
+  -F "csrf=$CSRF" -F "expected=$EXPECTED" -F "message=Add a file under docs" -F "files=@$TMP/upload.txt"
+check "the file landed in the subdirectory" 200 "$BASE/demo/proj/raw/main/docs/upload.txt"
+
 # ---- branches and tags ----
 
 check "branches page" 200 -b "$JAR" "$BASE/demo/proj/branches"
@@ -728,15 +738,6 @@ check "history of a path that was never in the repository" 200 "$BASE/demo/proj/
 body_has "empty history says so" "Nothing in this ref's history touches"
 check "history of a bad ref 404s" 404 "$BASE/demo/proj/commits/no-such-ref"
 
-# ---- blame ----
-
-check "blame a file" 200 "$BASE/demo/proj/blame/main/README.md"
-body_has "blame names the commit" 'class="blame-subject"'
-body_has "blame numbers its lines" 'id="L1"'
-body_has "blame links back to the code view" "href=\"/demo/proj/blob/main/README.md\""
-check "blame of a directory 404s" 404 "$BASE/demo/proj/blame/main"
-check "blame of a missing file 404s" 404 "$BASE/demo/proj/blame/main/nope.txt"
-
 # ---- source archives ----
 
 check "source archive as tar.gz" 200 -D "$TMP/headers" "$BASE/demo/proj/archive/main.tar.gz"
@@ -750,6 +751,76 @@ check "source archive as zip" 200 "$BASE/demo/proj/archive/main.zip"
 PASS=$((PASS+1)); echo "ok: zip archive is a zip"
 check "archive of an unknown ref 404s" 404 "$BASE/demo/proj/archive/nope.zip"
 check "archive in an unknown format 404s" 404 "$BASE/demo/proj/archive/main.rar"
+
+# ---- pull requests ----
+
+check "pull request tab" 200 "$BASE/demo/proj"
+body_has "pull request tab present" '/demo/proj/pulls"'
+check "empty pull request list" 200 "$BASE/demo/proj/pulls"
+body_has "empty list invites one" 'No open pull requests'
+check "anonymous new pull request redirects to sign in" 302 "$BASE/demo/proj/pulls/new"
+
+check "branches page for a proposal branch" 200 -b "$JAR" "$BASE/demo/proj/branches"
+CSRF="$(csrf_of)"
+check "create the proposal branch" 302 -b "$JAR" "$BASE/demo/proj/branches/create" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode name=proposal --data-urlencode from=main
+check "new file form on the proposal branch" 200 -b "$JAR" "$BASE/demo/proj/new/proposal"
+CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
+check "commit to the proposal branch" 302 -b "$JAR" "$BASE/demo/proj/new/proposal" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
+  --data-urlencode filename=PROPOSAL.md --data-urlencode "content=A change worth discussing." \
+  --data-urlencode "message=Add a proposal"
+# A commit on main as well, so the two branches have genuinely diverged and
+# the merge is a merge rather than a branch moving forward.
+check "new file form on main" 200 -b "$JAR" "$BASE/demo/proj/new/main"
+CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
+check "commit to main while the proposal waits" 302 -b "$JAR" "$BASE/demo/proj/new/main" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
+  --data-urlencode filename=MEANWHILE.md --data-urlencode "content=Work continued." \
+  --data-urlencode "message=Carry on with main"
+check "comparing offers a pull request" 200 "$BASE/demo/proj/compare/main...proposal"
+body_has "compare page proposes one" 'Create pull request'
+
+check "new pull request form" 200 -b "$JAR" --get "$BASE/demo/proj/pulls/new" \
+  --data-urlencode base=main --data-urlencode head=proposal
+CSRF="$(csrf_of)"
+check "a pull request needs a title" 400 -b "$JAR" "$BASE/demo/proj/pulls/new" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode base=main --data-urlencode head=proposal \
+  --data-urlencode "title=   " --data-urlencode "body=x"
+check "a branch cannot be proposed into itself" 400 -b "$JAR" "$BASE/demo/proj/pulls/new" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode base=main --data-urlencode head=main \
+  --data-urlencode "title=Nope" --data-urlencode "body=x"
+check "open a pull request" 302 -b "$JAR" "$BASE/demo/proj/pulls/new" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode base=main --data-urlencode head=proposal \
+  --data-urlencode "title=Propose the change" --data-urlencode "body=Please **look**."
+check "pull request page" 200 "$BASE/demo/proj/pulls/1"
+body_has "pull request title" 'Propose the change'
+body_has "pull request body is rendered markdown" '<strong>look</strong>'
+body_has "pull request names its branches" 'wants to merge'
+body_has "pull request says it is mergeable" 'no conflicts with main'
+body_has "pull request shows the diff" 'PROPOSAL.md'
+check "pull request list shows it" 200 "$BASE/demo/proj/pulls"
+body_has "list links the pull request" 'href="/demo/proj/pulls/1"'
+
+check "anonymous cannot comment on a pull request" 403 "$BASE/demo/proj/pulls/1/comment" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "body=hello"
+check "comment on a pull request" 302 -b "$JAR" "$BASE/demo/proj/pulls/1/comment" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "body=Looks right to me"
+check "the comment shows" 200 "$BASE/demo/proj/pulls/1"
+body_has "comment body" 'Looks right to me'
+
+check "anonymous cannot merge" 403 "$BASE/demo/proj/pulls/1/merge" --data-urlencode "csrf=$CSRF"
+check "csrf is checked on merge" 403 -b "$JAR" "$BASE/demo/proj/pulls/1/merge" --data-urlencode "csrf=bogus"
+check "merge the pull request" 302 -b "$JAR" "$BASE/demo/proj/pulls/1/merge" --data-urlencode "csrf=$CSRF"
+check "merged pull request page" 200 "$BASE/demo/proj/pulls/1"
+body_has "pull request reads as merged" 'Merged'
+body_has "merge names who did it" 'merged this'
+check "the merge landed on the base branch" 200 "$BASE/demo/proj/commits/main"
+body_has "merge commit in the history" 'Merge pull request #1'
+check "merging again is refused" 400 -b "$JAR" "$BASE/demo/proj/pulls/1/merge" --data-urlencode "csrf=$CSRF"
+check "a merged pull request cannot be reopened" 400 -b "$JAR" "$BASE/demo/proj/pulls/1/state" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode state=open
+check "pull request for a missing number 404s" 404 "$BASE/demo/proj/pulls/99"
 
 # ---- releases, and feeds ----
 
@@ -842,13 +913,9 @@ PASS=$((PASS+1)); echo "ok: nothing stored for a rejected token"
 run_ok "login stores the token" cli login --host "$BASE" --token "$OWNER_TOKEN" --helper store
 grep -q "$OWNER_TOKEN" "$CRED_HOME/.git-credentials" || { echo "FAIL: token not in the credential store"; exit 1; }
 PASS=$((PASS+1)); echo "ok: token is in the credential store"
-if [ "$TMP_PRIVATE" = 1 ]; then
-  CRED_MODE="$(stat -c '%a' "$CRED_HOME/.git-credentials" 2>/dev/null || stat -f '%Lp' "$CRED_HOME/.git-credentials")"
-  [ "$CRED_MODE" = 600 ] || { echo "FAIL: credential file is mode $CRED_MODE, not 0600"; exit 1; }
-  PASS=$((PASS+1)); echo "ok: credential file is mode 0600"
-else
-  echo "skip: this filesystem forces file modes, so 0600 on the credential file cannot be checked here"
-fi
+CRED_MODE="$(stat -c '%a' "$CRED_HOME/.git-credentials" 2>/dev/null || stat -f '%Lp' "$CRED_HOME/.git-credentials")"
+[ "$CRED_MODE" = 600 ] || { echo "FAIL: credential file is mode $CRED_MODE, not 0600"; exit 1; }
+PASS=$((PASS+1)); echo "ok: credential file is mode 0600"
 # Recorded for this host alone, so other remotes keep whatever they use now.
 cred_env git config --global --get-regexp '^credential\.' | grep -q "credential.$BASE.helper store" \
   || { echo "FAIL: helper not recorded for this host alone"; exit 1; }

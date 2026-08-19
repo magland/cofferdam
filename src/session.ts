@@ -138,7 +138,14 @@ export function viewerIsAdmin(viewer: Viewer | null): boolean {
 
 export function checkCsrf(req: Request, viewer: Viewer): boolean {
   const presented = (req.body as Record<string, unknown> | undefined)?.csrf;
-  if (typeof presented !== 'string') return false;
+  return typeof presented === 'string' && csrfMatches(presented, viewer);
+}
+
+/**
+ * The comparison behind checkCsrf, for a handler that has the value in hand
+ * rather than in req.body - a multipart form, which express does not parse.
+ */
+export function csrfMatches(presented: string, viewer: Viewer): boolean {
   const a = Buffer.from(presented);
   const b = Buffer.from(viewer.csrf);
   return a.length === b.length && crypto.timingSafeEqual(a, b);
