@@ -52,7 +52,15 @@ cat > "$GIT_CONFIG_GLOBAL" <<'GITCONFIG'
 	defaultBranch = main
 GITCONFIG
 
-npm run build > /dev/null
+# tsc writes its diagnostics to stdout, so discarding stdout here used to turn
+# "HEAD does not compile" into a suite that exited 2 having printed nothing at
+# all. Keep the output and show it: the build failing is the most useful thing
+# this script can tell you, not the least.
+if ! npm run build > "$TMP/build.log" 2>&1; then
+  echo "FAIL: the build failed, so none of the checks below ran"
+  cat "$TMP/build.log"
+  exit 1
+fi
 
 SERVER_PID=""
 FORGE_PID=""
