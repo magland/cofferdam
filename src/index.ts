@@ -525,7 +525,8 @@ nothing when that is nothing.`,
     ['deploy', 'fly'],
     'Put a vault on Fly.io, or deploy an update to one',
     `Usage: cofferdam deploy fly <app> [--region <r>] [--volume <gb>] [--vm-size <s>]
-                            [--vm-memory <m>] [--lfs-bucket] [--image <ref>] [--org <o>]
+                            [--vm-memory <m>] [--lfs-bucket] [--org <o>]
+                            [--image <ref> | --from-source [--local-build]]
 
 Needs flyctl installed, and fly auth login done. The app name is globally
 unique on Fly and becomes the URL, https://<app>.fly.dev. Creating one mints
@@ -537,7 +538,13 @@ flag keep whatever the live app has, so a single flag changes a single thing. A
 vault is a directory on one volume, so the app runs as exactly one machine: a
 busier vault wants a bigger one, not more.
 
-See also: cofferdam deploy fly show <app>, cofferdam deploy fly destroy <app>.`,
+By default the image deployed is the published one for this CLI's own version.
+--from-source builds it from the checkout you are running instead, which is how
+to deploy a change before it has been released; --local-build uses this machine's
+Docker rather than Fly's builder. --image <ref> deploys some other published tag.
+
+See also: cofferdam deploy fly show <app>, cofferdam deploy fly destroy <app>.
+`,
     deployFlyCmd
   ),
   raw(['deploy', 'fly', 'show'], 'What Fly has for this app, and whether the vault answers', '', deployShowCmd),

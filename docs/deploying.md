@@ -66,7 +66,7 @@ cofferdam deploy fly my-vault-name --vm-memory 1gb      # a bigger machine
 cofferdam deploy fly my-vault-name --image ghcr.io/magland/cofferdam:main
 ```
 
-The flags, all optional: `--region` (default `ewr`, and see `fly platform regions`), `--volume <gb>` (default 10), `--vm-size` (default `shared-cpu-1x`), `--vm-memory` (default `512mb`), `--org` for which Fly organization owns a new app, `--lfs-bucket` (below), and `--image <ref>` to deploy something other than the published image for your CLI's own version.
+The flags, all optional: `--region` (default `ewr`, and see `fly platform regions`), `--volume <gb>` (default 10), `--vm-size` (default `shared-cpu-1x`), `--vm-memory` (default `512mb`), `--org` for which Fly organization owns a new app, `--lfs-bucket` (below), and `--image <ref>` or `--from-source` (below) to deploy something other than the published image for your CLI's own version.
 
 Two of these have limits worth knowing before you rely on them: Fly volumes can grow but never shrink, and a volume cannot move between regions, so `--volume` with a smaller number and `--region` pointing somewhere else are both refused rather than quietly ignored. Changing region means a new vault and copying the data across.
 
@@ -88,6 +88,30 @@ my-vault-name  https://my-vault-name.fly.dev
 ```
 
 `cofferdam deploy fly destroy my-vault-name` removes the app, the volume, and with them the vault; it asks you to type the app name first (`--yes` skips the prompt, for a script that means it), and also drops the stored credential for a vault that no longer exists. Anything else is flyctl's job, and flyctl is already on your machine: `fly logs -a my-vault-name`, `fly ssh console -a my-vault-name` for a shell on the volume, and `fly certs` for [a domain of your own](#a-domain-of-your-own).
+
+### Deploying your own build
+
+By default the image deployed is the published one matching the version of the CLI you ran, which means waiting for a release before a change of your own can reach a vault. `--from-source` builds the image from the checkout you are running instead:
+
+```bash
+git clone https://github.com/magland/cofferdam && cd cofferdam
+npm install && npm run build
+node dist/index.js deploy fly my-vault-name --from-source
+```
+
+That runs `fly deploy` in the checkout, so the build context is the checkout and Fly builds the `Dockerfile` that is in it. Nothing is published anywhere in the process: the image goes to the Fly registry for that app alone. Everything else about the deploy is unchanged, so the volume, the vault on it, and the settings the app already has all survive as they do for any other update.
+
+The build happens on a Fly builder machine, which needs no Docker on your side and which Fly provisions on first use. `--local-build` uses this machine's Docker daemon instead and pushes the result:
+
+```bash
+node dist/index.js deploy fly my-vault-name --from-source --local-build
+```
+
+Local is usually faster to iterate with and slower to finish, since the finished image is uploaded rather than the source. Either way the same `Dockerfile` runs `npm ci` and `npm run build` inside the image, so what gets deployed is built from the source in your checkout and not from your `node_modules` or your local `dist` (a `.dockerignore` keeps both out of the context, along with `.git` and any `example-root` you have lying about). A dirty working tree is deployed as it stands, uncommitted changes included, which is the point but is worth remembering.
+
+`--from-source` and `--image` contradict each other and passing both is refused. After a source build `deploy fly show` reports an image like `registry.fly.io/my-vault-name:deployment-01J…` rather than a version tag, which is how to tell one from a released deploy at a glance.
+
+This is meant for trying a change against a real vault. For anything you mean to keep, tagging a release and deploying the published image leaves a record of what is running.
 
 ### LFS objects in a bucket
 

@@ -45,6 +45,10 @@ interface DeployArgs {
   vmSize: string | null;
   memory: string | null;
   image: string | null;
+  /** Build the image from this checkout rather than pulling a published one. */
+  fromSource: boolean;
+  /** With --from-source, build with the local Docker rather than Fly's builder. */
+  localBuild: boolean;
   org: string | null;
   lfsBucket: boolean;
   yes: boolean;
@@ -89,9 +93,9 @@ async function flyJson<T>(args: string[]): Promise<T | null> {
 // The commands whose progress the user should watch: deploying, creating a
 // volume, provisioning a bucket. Their output is fly's to format, and hiding a
 // three-minute deploy behind a spinner of our own would only lose detail.
-function flyStream(args: string[]): Promise<number> {
+function flyStream(args: string[], cwd?: string): Promise<number> {
   return new Promise((resolve, reject) => {
-    const child = spawn('fly', args, { stdio: 'inherit' });
+    const child = spawn('fly', args, { stdio: 'inherit', cwd });
     child.on('error', (e) => {
       reject((e as NodeJS.ErrnoException).code === 'ENOENT'
         ? new Error('flyctl is not on PATH. Install it from https://fly.io/docs/flyctl/install/')
@@ -114,6 +118,8 @@ function parseDeployArgs(args: string[], usage: () => never): DeployArgs {
     vmSize: null,
     memory: null,
     image: null,
+    fromSource: false,
+    localBuild: false,
     org: null,
     lfsBucket: false,
     yes: false,
@@ -129,6 +135,8 @@ function parseDeployArgs(args: string[], usage: () => never): DeployArgs {
     } else if (a === '--vm-size') out.vmSize = args[++i];
     else if (a === '--vm-memory') out.memory = args[++i];
     else if (a === '--image') out.image = args[++i];
+    else if (a === '--from-source') out.fromSource = true;
+    else if (a === '--local-build') out.localBuild = true;
     else if (a === '--org') out.org = args[++i];
     else if (a === '--lfs-bucket') out.lfsBucket = true;
     else if (a === '-y' || a === '--yes') out.yes = true;
@@ -151,6 +159,8 @@ function rejectFlyFlags(a: DeployArgs, usage: string, allowYes: boolean): void {
     ['--vm-size', a.vmSize !== null],
     ['--vm-memory', a.memory !== null],
     ['--image', a.image !== null],
+    ['--from-source', a.fromSource],
+    ['--local-build', a.localBuild],
     ['--org', a.org !== null],
     ['--lfs-bucket', a.lfsBucket],
     ['--yes', a.yes && !allowYes],
@@ -198,6 +208,30 @@ function ownVersion(): string {
     /* fall through to the message below */
   }
   die('Could not read this package\'s version, so there is no image tag to deploy. Pass --image <ref>.');
+}
+
+/**
+ * The checkout this CLI is running out of, for --from-source.
+ *
+ * dist/deploy-cli.js and src/deploy-cli.ts are both one directory below the
+ * package root, so this is the same answer either way: a built checkout, or one
+ * being run through tsx. The published npm package ships only dist, so a globally
+ * installed cofferdam has no Dockerfile and no src to build from, and that is
+ * worth saying rather than letting docker fail on a missing file.
+ */
+function sourceRoot(): string {
+  const root = path.resolve(__dirname, '..');
+  if (!fs.existsSync(path.join(root, 'Dockerfile')) || !fs.existsSync(path.join(root, 'src'))) {
+    die(
+      '--from-source builds the image from a cofferdam checkout, and this is not one:\n' +
+        `  ${root}\n\n` +
+        'The published package contains only the compiled output, so there is nothing to\n' +
+        'build. Clone the repository and run the deploy from there:\n\n' +
+        '  git clone https://github.com/magland/cofferdam && cd cofferdam && npm install\n' +
+        '  npm run build && node dist/index.js deploy fly <app> --from-source\n'
+    );
+  }
+  return root;
 }
 
 async function requireFly(): Promise<void> {
@@ -367,12 +401,24 @@ export async function deployFlyCmd(args: string[], usage: () => never): Promise<
   if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(app)) {
     die(`Not a valid Fly app name: ${app}\nUse lowercase letters, digits, and dashes.`);
   }
+
+  // What gets deployed: a published image to pull, or this checkout to build.
+  // Settled from the flags before anything reaches the network, so a
+  // contradiction between them costs no round trip and creates no app.
+  if (a.fromSource && a.image !== null) {
+    die('--image names an image to pull and --from-source builds one instead. Pass one or the other.');
+  }
+  if (a.localBuild && !a.fromSource) {
+    die('--local-build says how to build, and without --from-source there is nothing to build.');
+  }
+  const buildRoot = a.fromSource ? sourceRoot() : null;
+  const image = buildRoot === null ? a.image ?? `${IMAGE_REPO}:${ownVersion()}` : null;
+
   await requireFly();
 
   const existed = await appExists(app);
   const live = existed ? await liveSettings(app) : {};
   const settings = resolveSettings(a, live);
-  const image = a.image ?? `${IMAGE_REPO}:${ownVersion()}`;
 
   // A volume cannot move, so a region flag that disagrees with the volume that
   // exists is a request this cannot carry out. Saying so beats deploying a
@@ -493,18 +539,33 @@ export async function deployFlyCmd(args: string[], usage: () => never): Promise<
   }
 
   const config = writeTempConfig(app, settings);
-  console.log(`==> Deploying ${image}`);
-  const code = await flyStream([
-    'deploy',
-    '--app',
-    app,
-    '--config',
-    config,
-    '--image',
-    image,
-    '--ha=false',
-    '--yes',
-  ]);
+  // A source build runs fly in the checkout, so the build context is the checkout
+  // and fly finds its Dockerfile without being told where it is. --config still
+  // points at the generated fly.toml in a temporary directory, which is why there
+  // is no fly.toml in the repository for a build to pick up by accident.
+  //
+  // Without --local-only, flyctl builds on a Fly builder machine, which needs no
+  // Docker here and provisions a builder app on first use. --local-build asks for
+  // the local daemon instead and pushes the result to Fly's registry.
+  const source = buildRoot !== null;
+  if (source) {
+    console.log(`==> Building ${buildRoot} ${a.localBuild ? 'with the local Docker' : "on Fly's builder"}`);
+  } else {
+    console.log(`==> Deploying ${image}`);
+  }
+  const code = await flyStream(
+    [
+      'deploy',
+      '--app',
+      app,
+      '--config',
+      config,
+      ...(source ? (a.localBuild ? ['--local-only'] : []) : ['--image', image as string]),
+      '--ha=false',
+      '--yes',
+    ],
+    buildRoot ?? undefined
+  );
   fs.rmSync(path.dirname(config), { recursive: true, force: true });
   if (code !== 0) {
     console.error('');
@@ -520,10 +581,16 @@ export async function deployFlyCmd(args: string[], usage: () => never): Promise<
       console.error('this output is already the token the vault will be initialized with. Keep it,');
       console.error('and log in with it once a deploy succeeds.');
     }
-    if (a.image === null) {
+    if (source) {
+      console.error('');
+      console.error('If the build is the problem, `npm run build` in the checkout reproduces it locally');
+      console.error(a.localBuild
+        ? 'without Fly in the way; check that the Docker daemon here is running.'
+        : "without Fly in the way. --local-build uses this machine's Docker instead of Fly's builder.");
+    } else if (a.image === null) {
       console.error('');
       console.error(`If the image is the problem, check that ${image} exists,`);
-      console.error('or deploy another tag with --image <ref>.');
+      console.error('or deploy another tag with --image <ref>, or build this checkout with --from-source.');
     }
     process.exit(1);
   }

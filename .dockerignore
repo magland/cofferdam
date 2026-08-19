@@ -1,0 +1,32 @@
+# What the image build does not need. The Dockerfile copies only package.json,
+# the lockfile, tsconfig.json, and src, and installs its own dependencies, so
+# everything here would be uploaded to the builder and then ignored.
+#
+# node_modules is the reason this file exists: at around 70 MB it dwarfs the
+# source, and sending a host's own build of it to a builder that runs `npm ci`
+# anyway is pure waiting. It would also be the wrong platform if the builder
+# and this machine disagree.
+node_modules
+dist
+
+# History, and the working files that come with it.
+.git
+.gitignore
+.github
+
+# A local vault, which is somebody's data and never belongs in an image.
+example-root
+*.site
+
+# Documentation, deployment recipes, and the test suite: none of it runs in the
+# image, and none of it changes what the image contains.
+docs
+logo
+scripts
+README.md
+LICENSE
+SPEC-*.md
+Caddyfile
+docker-compose.yml
+Dockerfile
+.dockerignore
