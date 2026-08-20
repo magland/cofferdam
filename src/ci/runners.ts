@@ -28,6 +28,17 @@ export interface RunnerRecord {
   // the one it was registered with. Kept because the useful question about a
   // runner that stopped working is often "was its token rotated under it".
   tokenUpdatedAt?: string;
+  // Where to send a request when this runner has work waiting and is not
+  // there to take it. A runner that stops when idle cannot be reached at all,
+  // so something has to start it; on Fly that something is a request to the
+  // app, which the proxy answers by starting the machine.
+  //
+  // The secret is stored as the vault sends it, not as a hash: this is a
+  // credential the vault presents to somebody else, which is the opposite of
+  // the token above. It buys nothing but the right to start a machine, and
+  // runners.json is already mode 0600.
+  wakeUrl?: string;
+  wakeSecret?: string;
 }
 
 export interface RunnerRegistry {
@@ -60,6 +71,8 @@ function normalize(parsed: unknown): RunnerRegistry {
       createdBy: typeof r.createdBy === 'string' ? r.createdBy : '',
       createdAt: typeof r.createdAt === 'string' ? r.createdAt : '',
       ...(typeof r.tokenUpdatedAt === 'string' ? { tokenUpdatedAt: r.tokenUpdatedAt } : {}),
+      ...(typeof r.wakeUrl === 'string' ? { wakeUrl: r.wakeUrl } : {}),
+      ...(typeof r.wakeSecret === 'string' ? { wakeSecret: r.wakeSecret } : {}),
     };
   }
   return { runners };
@@ -123,7 +136,7 @@ function newRunnerToken(): string {
 export function registerRunner(
   root: string,
   name: string,
-  opts: { labels: string[]; allow: string[]; createdBy: string }
+  opts: { labels: string[]; allow: string[]; createdBy: string; wake?: RunnerWake | null }
 ): { token: string; runner: RunnerRecord } {
   return editRunners(root, () => {
     const registry = loadRunners(root);
@@ -134,6 +147,7 @@ export function registerRunner(
       allow: opts.allow,
       createdBy: opts.createdBy,
       createdAt: new Date().toISOString(),
+      ...(opts.wake ? { wakeUrl: opts.wake.url, wakeSecret: opts.wake.secret } : {}),
     };
     registry.runners[name] = runner;
     write(root, registry);
@@ -162,6 +176,37 @@ export function regenerateRunnerToken(root: string, name: string): { token: stri
     registry.runners[name] = runner;
     write(root, registry);
     return { token, runner };
+  });
+}
+
+export interface RunnerWake {
+  url: string;
+  secret: string;
+}
+
+/**
+ * Point a runner's wake address somewhere, or clear it with null.
+ *
+ * Separate from registration because the two are learned at different times:
+ * `cofferdam deploy fly runner` registers the runner before the app it will
+ * run on exists, and only afterwards knows the URL that starts it. Returns
+ * null if no runner by that name is registered.
+ */
+export function setRunnerWake(root: string, name: string, wake: RunnerWake | null): RunnerRecord | null {
+  return editRunners(root, () => {
+    const registry = loadRunners(root);
+    const existing = registry.runners[name];
+    if (!existing) return null;
+    const runner: RunnerRecord = { ...existing };
+    delete runner.wakeUrl;
+    delete runner.wakeSecret;
+    if (wake) {
+      runner.wakeUrl = wake.url;
+      runner.wakeSecret = wake.secret;
+    }
+    registry.runners[name] = runner;
+    write(root, registry);
+    return runner;
   });
 }
 

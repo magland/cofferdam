@@ -2991,6 +2991,142 @@ body_has "and the queue" '"queued"'
 run_code "an unknown field names the ones there are" 2 \
   node dist/index.js runner list --json=nosuchfield --host "$BASE" --token "$OWNER_TOKEN"
 
+# ---- waking a runner that is not there ----
+#
+# A runner started with --idle stops when it has nothing to do, and cannot then
+# be told that work has arrived: the vault sends a request to its wake address
+# instead, and whatever is in front of the runner starts it. Here that is a
+# listener which records what it was sent, since what matters is that the
+# request arrives carrying the right secret, and that a wrong one is refused.
+
+WAKE_PORT=$((PORT + 6))
+WAKE_LOG="$TMP/wake.log"
+WAKE_OK_SECRET=wake-secret-for-the-smoke-test
+: > "$WAKE_LOG"
+node -e '
+  const http = require("http");
+  const fs = require("fs");
+  const [port, log, secret] = process.argv.slice(1);
+  http
+    .createServer((req, res) => {
+      const ok = req.headers["x-cofferdam-wake"] === secret;
+      fs.appendFileSync(log, req.method + " " + req.url + " " + (ok ? "ok" : "bad-secret") + "\n");
+      res.writeHead(ok ? 204 : 401).end();
+    })
+    .listen(Number(port), "127.0.0.1");
+' "$WAKE_PORT" "$WAKE_LOG" "$WAKE_OK_SECRET" &
+WAKE_PID=$!
+for _ in $(seq 1 40); do
+  curl -fsS -o /dev/null -H "x-cofferdam-wake: $WAKE_OK_SECRET" "http://127.0.0.1:$WAKE_PORT/wake" 2>/dev/null && break
+  sleep 0.25
+done
+: > "$WAKE_LOG"
+
+check "a wake address needs a secret with it" 400 -X PUT -H "Authorization: Bearer $OWNER_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"wakeUrl":"http://127.0.0.1:1/wake"}' \
+  "$BASE/api/runners/smoke/wake"
+check "and has to be a URL" 400 -X PUT -H "Authorization: Bearer $OWNER_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"wakeUrl":"not a url","wakeSecret":"s"}' \
+  "$BASE/api/runners/smoke/wake"
+check "an unknown runner has nowhere to be woken" 404 -X PUT -H "Authorization: Bearer $OWNER_TOKEN" \
+  -H 'Content-Type: application/json' -d '{}' "$BASE/api/runners/nosuchrunner/wake"
+check "waking a runner with no address is refused" 400 -X POST -H "Authorization: Bearer $OWNER_TOKEN" \
+  -H 'Content-Type: application/json' -d '{}' "$BASE/api/runners/smoke/wake"
+
+check "set the wake address" 200 -X PUT -H "Authorization: Bearer $OWNER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"wakeUrl\":\"http://127.0.0.1:$WAKE_PORT/wake\",\"wakeSecret\":\"$WAKE_OK_SECRET\"}" \
+  "$BASE/api/runners/smoke/wake"
+body_has "reporting where it goes" "127.0.0.1:$WAKE_PORT"
+grep -q '"wakeSecret"' "$VAULT/runners.json" || {
+  echo "FAIL: the wake secret was not stored, so the vault cannot send it"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the wake secret is stored, since the vault presents it rather than checking it"
+
+check "the listing says a runner can be started" 200 -H "Authorization: Bearer $OWNER_TOKEN" "$BASE/api/runners"
+body_has "by naming its wake address" "127.0.0.1:$WAKE_PORT"
+body_lacks "and never its secret" 'wakeSecret'
+
+check "send a wake request now" 200 -X POST -H "Authorization: Bearer $OWNER_TOKEN" \
+  -H 'Content-Type: application/json' -d '{}' "$BASE/api/runners/smoke/wake"
+body_has "reporting that it answered" '"woke":true'
+grep -q 'POST /wake ok' "$WAKE_LOG" || {
+  echo "FAIL: the wake request did not arrive carrying the secret: $(cat "$WAKE_LOG")"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the wake request arrives, carrying the secret and nothing else"
+
+# A wrong secret is refused at the runner's end, which is what stops a stranger
+# from starting somebody's machine and spending their money.
+: > "$WAKE_LOG"
+check "point it at the same listener with the wrong secret" 200 -X PUT -H "Authorization: Bearer $OWNER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"wakeUrl\":\"http://127.0.0.1:$WAKE_PORT/wake\",\"wakeSecret\":\"the-wrong-secret\"}" \
+  "$BASE/api/runners/smoke/wake"
+check "a refused wake is reported as a failure" 502 -X POST -H "Authorization: Bearer $OWNER_TOKEN" \
+  -H 'Content-Type: application/json' -d '{}' "$BASE/api/runners/smoke/wake"
+grep -q 'bad-secret' "$WAKE_LOG" || {
+  echo "FAIL: the listener did not see the wrong secret"; exit 1; }
+PASS=$((PASS+1)); echo "ok: a runner refuses a wake request that does not carry its secret"
+
+# The same operations from the admin pages and the CLI.
+check "the runner page shows the wake address" 200 -b "$JAR" "$BASE/admin/runners/smoke"
+body_has "naming where it is sent" "127.0.0.1:$WAKE_PORT"
+body_has "and offering to send one now" 'Send a wake request now'
+CSRF="$(csrf_of)"
+check "save a wake address from the admin page" 200 -b "$JAR" "$BASE/admin/runners/smoke/wake" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "wakeUrl=http://127.0.0.1:$WAKE_PORT/wake"
+body_has "showing the secret it generated, once" 'COFFERDAM_WAKE_SECRET='
+check "a wake address that is not a URL is refused" 400 -b "$JAR" "$BASE/admin/runners/smoke/wake" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "wakeUrl=not a url"
+check "clearing it is saving an empty one" 302 -b "$JAR" "$BASE/admin/runners/smoke/wake" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "wakeUrl="
+
+run_ok "runner wake --url sets one over the CLI" node dist/index.js runner wake smoke \
+  --wake-url "http://127.0.0.1:$WAKE_PORT/wake" --wake-secret "$WAKE_OK_SECRET" \
+  --host "$BASE" --token "$OWNER_TOKEN"
+: > "$WAKE_LOG"
+run_ok "runner wake sends the request" node dist/index.js runner wake smoke --host "$BASE" --token "$OWNER_TOKEN"
+body_has "saying it woke, and how long that took" 'Woke smoke'
+grep -q 'POST /wake ok' "$WAKE_LOG" || {
+  echo "FAIL: the CLI wake did not arrive"; exit 1; }
+PASS=$((PASS+1)); echo "ok: cofferdam runner wake sends the request the vault would have sent"
+run_ok "runner list notes a runner that is woken on demand" rcli
+body_has "rather than reporting it as simply absent" 'woken on demand'
+run_ok "runner wake --clear removes the address" node dist/index.js runner wake smoke --clear \
+  --host "$BASE" --token "$OWNER_TOKEN"
+run_ok "after which the listing reports none" node dist/index.js runner list --json \
+  --host "$BASE" --token "$OWNER_TOKEN"
+body_has "as a null address" '"wakeUrl": null'
+
+# The vault sending one by itself, which is the whole point of the address.
+# 'sleeper' has never polled, so it counts as absent, and the runs dispatched
+# earlier are still queued for exactly the labels and repository it serves: the
+# dispatcher should notice within a sweep and start it.
+: > "$WAKE_LOG"
+check "register a runner that is not there" 200 -X POST -H "Authorization: Bearer $OWNER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"name\":\"sleeper\",\"labels\":[\"ubuntu-latest\"],\"allow\":[\"demo/*\"],\"wakeUrl\":\"http://127.0.0.1:$WAKE_PORT/wake\",\"wakeSecret\":\"$WAKE_OK_SECRET\"}" \
+  "$BASE/api/runners"
+for _ in $(seq 1 60); do
+  grep -q 'POST /wake ok' "$WAKE_LOG" && break
+  sleep 1
+done
+grep -q 'POST /wake ok' "$WAKE_LOG" || {
+  echo "FAIL: a job was queued for an absent runner and the vault never tried to start it"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the vault wakes a runner by itself when a job is waiting for one"
+
+# At most one per minute per runner, however many jobs are waiting: several
+# jobs are queued here, and starting one machine is the whole of the work.
+WAKES_FIRST="$(grep -c 'POST /wake' "$WAKE_LOG")"
+sleep 5
+WAKES_AFTER="$(grep -c 'POST /wake' "$WAKE_LOG")"
+[ "$WAKES_FIRST" = "$WAKES_AFTER" ] || {
+  echo "FAIL: the vault sent $WAKES_AFTER wake requests where it should have sent $WAKES_FIRST"; exit 1; }
+PASS=$((PASS+1)); echo "ok: one wake request per runner, not one per queued job"
+
+check "remove the absent runner" 200 -X DELETE -H "Authorization: Bearer $OWNER_TOKEN" \
+  "$BASE/api/runners/sleeper"
+
+kill $WAKE_PID 2>/dev/null || true
+
 # A job acquired with a bogus lease may not be reported on.
 check "acquire with an unmatched label yields nothing" 204 -X POST \
   -H "Authorization: Bearer $RUNNER_TOKEN" -H 'Content-Type: application/json' \

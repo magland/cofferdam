@@ -8,7 +8,15 @@ import { ah, baseUrlOf, fail, field, loadRepo, makeCtx, requireViewerPost, send4
 import { artifactPath, isValidArtifactName, listArtifacts } from './artifacts';
 import { CiEngine, listWorkflowsAt } from './engine';
 import { JobRecord, RunRecord, jobLogPath, listRuns } from './runs';
-import { loadRunners, regenerateRunnerToken, registerRunner, removeRunner, runnerLastSeen } from './runners';
+import {
+  loadRunners,
+  regenerateRunnerToken,
+  registerRunner,
+  removeRunner,
+  runnerLastSeen,
+  setRunnerWake,
+} from './runners';
+import { newWakeSecret, sendWake, wakeOf } from './wake';
 import { dispatchWorkflow } from './dispatch';
 import * as ciViews from './views';
 
@@ -344,6 +352,7 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
       tokenUpdatedAt: r.tokenUpdatedAt,
       lastSeen: runnerLastSeen(name),
       running: load.running[name] ?? null,
+      wakeUrl: r.wakeUrl ?? null,
     }));
   }
 
@@ -451,6 +460,90 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
       return;
     }
     res.type('html').send(ciViews.runnerTokenPage(viewer, name, issued.token, baseUrlOf(req), true));
+  });
+
+  // Setting the address and sending a request to it are separate posts
+  // because they are separate acts: one changes what is stored, the other
+  // starts a machine and waits for it. A single form doing both would make
+  // the slow one unavoidable.
+  app.post('/admin/runners/:name/wake', form, (req, res) => {
+    const viewer = requireViewerPost(root, req, res);
+    if (!viewer) return;
+    if (!viewerIsAdmin(viewer)) {
+      fail(res, 403, 'Admin access is required to manage runners.', viewer);
+      return;
+    }
+    const name = req.params.name;
+    const existing = loadRunners(root).runners[name];
+    if (!existing) {
+      send404(res, `No runner named ${name} is registered.`, viewer);
+      return;
+    }
+    if (!canAdmin(viewer.auth, existing.allow)) {
+      fail(res, 403, `Your admin scope does not cover: ${existing.allow.join(', ')}`, viewer, '/admin/runners');
+      return;
+    }
+    const url = field(req, 'wakeUrl').trim();
+    const back = `/admin/runners/${encodeURIComponent(name)}`;
+    if (!url) {
+      setRunnerWake(root, name, null);
+      res.redirect(`${back}?flash=${encodeURIComponent('Wake address removed; nothing will start this runner.')}`);
+      return;
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      fail(res, 400, `That is not a URL: ${url}`, viewer, back);
+      return;
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      fail(res, 400, 'A wake address must be an http or https URL.', viewer, back);
+      return;
+    }
+    // The secret is generated rather than asked for, and shown once here, for
+    // the same reason a runner token is: it is the runner's copy that has to
+    // match, and there is nothing to be gained by having an operator invent
+    // one. Keeping the old secret when only the URL changed would be worse,
+    // since the address that was trusted with it is no longer the address
+    // being written.
+    const secret = newWakeSecret();
+    setRunnerWake(root, name, { url, secret });
+    res.type('html').send(ciViews.runnerWakePage(viewer, name, url, secret));
+  });
+
+  app.post('/admin/runners/:name/wake/send', form, async (req, res) => {
+    const viewer = requireViewerPost(root, req, res);
+    if (!viewer) return;
+    if (!viewerIsAdmin(viewer)) {
+      fail(res, 403, 'Admin access is required to manage runners.', viewer);
+      return;
+    }
+    const name = req.params.name;
+    const existing = loadRunners(root).runners[name];
+    if (!existing) {
+      send404(res, `No runner named ${name} is registered.`, viewer);
+      return;
+    }
+    if (!canAdmin(viewer.auth, existing.allow)) {
+      fail(res, 403, `Your admin scope does not cover: ${existing.allow.join(', ')}`, viewer, '/admin/runners');
+      return;
+    }
+    const back = `/admin/runners/${encodeURIComponent(name)}`;
+    const wake = wakeOf(existing);
+    if (!wake) {
+      fail(res, 400, `${name} has no wake address, so there is nothing to start it.`, viewer, back);
+      return;
+    }
+    const started = Date.now();
+    try {
+      await sendWake(wake);
+    } catch (e) {
+      fail(res, 502, `${wake.url} did not answer: ${e instanceof Error ? e.message : String(e)}`, viewer, back);
+      return;
+    }
+    const secs = Math.round((Date.now() - started) / 1000);
+    res.redirect(`${back}?flash=${encodeURIComponent(`${name} answered the wake request in ${secs}s.`)}`);
   });
 
   app.post('/admin/runners/:name/remove', form, (req, res) => {

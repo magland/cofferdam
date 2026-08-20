@@ -387,6 +387,10 @@ export interface RunnerView {
   // runner that has not polled since the server started reads as absent.
   lastSeen: string | null;
   running: { collection: string; repo: string; run: number; job: string } | null;
+  // Where the vault sends a request to start this runner, for one that stops
+  // when it has nothing to do. Null for the ordinary kind that is left
+  // running, which is most of them.
+  wakeUrl?: string | null;
 }
 
 // A runner is either working on something, idle but in touch, or not there at
@@ -403,6 +407,11 @@ function runnerStatus(r: RunnerView): string {
   }
   if (r.lastSeen) {
     return `${statusIcon('success')}<span>idle, last heard from ${timeTag(r.lastSeen, '')}</span>`;
+  }
+  // A runner with a wake address is meant to be absent between jobs, so the
+  // absence is the arrangement working rather than something to look into.
+  if (r.wakeUrl) {
+    return `${statusIcon('queued')}<span class="muted">stopped; the vault starts it when a job is waiting</span>`;
   }
   return `${statusIcon('queued')}<span class="muted">not seen since the vault restarted</span>`;
 }
@@ -462,6 +471,7 @@ ${fact(
 ${fact('Repositories', `<span class="mono">${esc(r.allow.join(' '))}</span>`)}
 ${fact('Registered', `by ${esc(r.createdBy)}${r.createdAt ? ` ${timeTag(r.createdAt, '')}` : ''}`)}
 ${fact('Token', r.tokenUpdatedAt ? `regenerated ${timeTag(r.tokenUpdatedAt, '')}` : 'the one issued at registration')}
+${fact('Wake', r.wakeUrl ? `<span class="mono">${esc(r.wakeUrl)}</span>` : '<span class="muted">nothing starts this runner</span>')}
 </div>`;
   const content = `<div class="page-head"><h1>${icon('server', 'icon')}${esc(r.name)}</h1></div>
 ${flash ? `<div class="flash">${esc(flash)}</div>` : ''}
@@ -477,6 +487,28 @@ ${copyRow(`cofferdam runner run --host ${host} --runner-token <token>`)}
 <p class="muted small">Jobs are matched by label, so this runner will be offered jobs whose <code>runs-on</code> names ${
     r.labels.length ? r.labels.map((l) => `<code>${esc(l)}</code>`).join(' or ') : 'nothing yet'
   }.</p>
+</div>
+<div class="form-box wide" style="margin-top:24px">
+<h2>Wake address</h2>
+<p class="muted">A runner started with <code>--idle</code> stops when it has had no job for that long, which is how a runner on hardware billed by the minute stops costing anything between runs. It cannot be told that work has arrived, though, so the vault sends a request to this address instead, and whatever is in front of the runner (a Fly proxy, a socket unit) starts it. The request carries a secret and nothing else; a new one is generated when you save an address, and the runner has to be started with it.</p>
+<p class="muted">Sent at most once a minute per runner, however many jobs are waiting, and only when the runner has not been heard from.</p>
+<form method="post" action="/admin/runners/${encodeURIComponent(r.name)}/wake">
+${csrfField(viewer)}
+<div class="field"><label for="wakeUrl">URL</label><input type="text" id="wakeUrl" name="wakeUrl" value="${esc(
+    r.wakeUrl ?? ''
+  )}" placeholder="https://my-runner.fly.dev/wake">
+<p class="muted small">Leave empty to remove the address, after which nothing starts this runner.</p></div>
+<button type="submit" class="btn">${icon('sync')}<span>Save wake address</span></button>
+</form>
+${
+  r.wakeUrl
+    ? `<form method="post" action="/admin/runners/${encodeURIComponent(r.name)}/wake/send" style="margin-top:12px">
+${csrfField(viewer)}
+<button type="submit" class="btn">${icon('play')}<span>Send a wake request now</span></button>
+<p class="muted small">Tests the address without queuing a job. A machine that has to boot may take half a minute to answer.</p>
+</form>`
+    : ''
+}
 </div>
 <div class="form-box wide" style="margin-top:24px">
 <h2>Regenerate token</h2>
@@ -530,4 +562,25 @@ ${copyRow(`cofferdam runner run --host ${host} --runner-token ${token}`)}
 <p><a class="btn" href="/admin/runners/${encodeURIComponent(name)}">Back to ${esc(name)}</a> <a class="btn" href="/admin/runners">All runners</a></p>
 </div>`;
   return layout(heading, content, { viewer, path: '/admin/runners' });
+}
+
+// The secret a saved wake address is given, shown once for the same reason a
+// token is: the vault keeps it in order to send it, and the runner has to be
+// started with the same one, so this page is the only place the two halves
+// meet.
+export function runnerWakePage(viewer: Viewer, name: string, url: string, secret: string): string {
+  const content = `<div class="form-box wide">
+<h1>Wake address saved</h1>
+<p>The vault will start <b>${esc(name)}</b> by sending a request to <span class="mono">${esc(
+    url
+  )}</span> when a job it could take is waiting and it has not been heard from.</p>
+<p>The secret that request carries, shown once here because the runner has to be started with it:</p>
+${copyRow(secret)}
+<h2>Start it</h2>
+<p class="muted">With an idle timeout, so that there is something to wake, and a port for the request to arrive on:</p>
+${copyRow(`COFFERDAM_WAKE_SECRET=${secret} cofferdam runner run --idle 5m --wake-port 3000`)}
+<p class="muted small">A runner deployed with <code>cofferdam deploy fly runner</code> is given all of this already; this page is for a runner you start yourself. Saving an address again issues a new secret, so the runner has to be restarted with it.</p>
+<p><a class="btn" href="/admin/runners/${encodeURIComponent(name)}">Back to ${esc(name)}</a> <a class="btn" href="/admin/runners">All runners</a></p>
+</div>`;
+  return layout('Wake address saved', content, { viewer, path: '/admin/runners' });
 }

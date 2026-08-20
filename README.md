@@ -37,7 +37,7 @@ The same command deploys updates. See [Deploying a vault](docs/deploying.md) for
 - **Editing in the browser:** files, uploads, branches, tags, repositories, collections, forks, users. Controls a token cannot use are not shown.
 - **Issues and pull requests,** stored as markdown in the vault. Merge or squash, refused on conflicts.
 - **Releases** tied to a tag, with Atom feeds.
-- **Workflows:** GitHub Actions workflows, planned by the server and run by a Docker runner you start elsewhere.
+- **Workflows:** GitHub Actions workflows, planned by the server and run by a Docker runner you start elsewhere, including one deployed to Fly.io with a command, which stops when idle and is woken by the vault when a job is queued.
 - **Sites:** a static site per repository, sandboxed by default, optionally on its own hostname.
 - **Git:** anonymous clone over smart HTTP, token-authenticated push including push-to-create, and LFS to S3 or to the vault.
 - **CLI and JSON API** covering everything the web UI does, plus a generic `cofferdam api`. Built for scripts: `--json` everywhere, distinct exit codes, no prompts.

@@ -23,10 +23,14 @@ example-root
 docs
 logo
 scripts
+# Except the one script that is part of an image: the runner's entrypoint,
+# which starts a Docker daemon before the runner and stops it afterwards.
+!scripts/runner-entrypoint.sh
 README.md
 LICENSE
 SPEC-*.md
 Caddyfile
 docker-compose.yml
 Dockerfile
+Dockerfile.runner
 .dockerignore
