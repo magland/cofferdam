@@ -89,6 +89,7 @@ The agent needs `cofferdam` on its PATH and either `COFFERDAM_HOST`/`COFFERDAM_T
 npm install
 npm run example    # creates example-root/ with sample data and a dev user
 npm run dev        # serves example-root/ at http://127.0.0.1:3000
+npm run test:unit  # the pure modules, in milliseconds
 npm run smoke      # end to end; npm run smoke:slow adds containerized workflow jobs
 ```
 

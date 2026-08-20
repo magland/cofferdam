@@ -39,7 +39,8 @@
     "dev": "tsx src/index.ts serve example-root",
     "start": "node dist/index.js serve",
     "example": "bash scripts/create-example.sh example-root",
-    "test": "bash scripts/smoke.sh",
+    "test": "npm run test:unit && bash scripts/smoke.sh",
+    "test:unit": "node --import tsx --test tests/*.test.ts",
     "smoke": "bash scripts/smoke.sh",
     "smoke:slow": "SMOKE_SLOW=1 bash scripts/smoke.sh",
     "prepublishOnly": "npm run build"

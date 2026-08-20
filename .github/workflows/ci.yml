@@ -45,6 +45,8 @@ jobs:
       - name: Require git-lfs, so its checks cannot be skipped
         run: git lfs version
 
+      - run: npm run test:unit
+
       - run: npm run smoke
 
   # Executing a workflow job for real: the server plans a run, a runner takes
