@@ -2337,9 +2337,45 @@ header_has "and the cross-origin header" 'access-control-allow-origin: \*'
 check "a forge page for comparison" 200 -D "$TMP/headers" -b "$JAR" "$BASE/pushed/created"
 header_lacks "forge pages allow no cross-origin reads" 'access-control-allow-origin'
 header_lacks "and are not sandboxed" 'content-security-policy: sandbox'
-# What a forge page does carry: only the forge may frame it, so a click on a
-# real control cannot be obtained through somebody else's frame.
-header_has "forge pages may be framed only by the forge" "content-security-policy: frame-ancestors 'self'"
+# What a forge page does carry: a policy the browser enforces on top of the
+# escaping. frame-ancestors so that a click on a real control cannot be
+# obtained through somebody else's frame, and script-src 'self' so that markup
+# which somehow carried an injected script could still not run it.
+header_has "forge pages may be framed only by the forge" "frame-ancestors 'self'"
+header_has "and may run only script served from the vault" "script-src 'self'"
+header_has "and load no plugin" "object-src 'none'"
+header_has "and post no form elsewhere" "form-action 'self'"
+header_has "and take no injected base URL" "base-uri 'none'"
+
+# script-src 'self' is only worth having while the pages carry no inline
+# script, since a policy loose enough to allow theirs would allow an injected
+# one. These two checks are what keep that true as pages are edited: the one
+# script is the served file, and no element carries a handler attribute.
+# Anything page-specific reaches the script through a data attribute.
+for page in "" /pushed /pushed/created /pushed/created/tree/main /pushed/created/branches \
+  /pushed/created/settings /pushed/created/issues /pushed/created/pulls /admin/users /admin/runners; do
+  check "no inline script on ${page:-/}" 200 -b "$JAR" "$BASE$page"
+  if grep -qE '<script(?![^>]*(src=|type="application/json"))' -P "$BODY"; then
+    echo "FAIL: ${page:-/} carries an inline script"; exit 1
+  fi
+  if grep -qiE ' on(click|input|change|submit|keydown|mouseenter|error|load)=' "$BODY"; then
+    echo "FAIL: ${page:-/} carries an inline event handler"
+    grep -oiE ' on[a-z]+="[^"]*"' "$BODY" | head -3
+    exit 1
+  fi
+  PASS=$((PASS+2)); echo "ok: ${page:-/} carries no inline script and no handler attribute"
+done
+
+# The script itself: served from the vault, cacheable for good when the request
+# names the body it wants, and revalidated when it does not.
+PAGE_JS="$(grep -o '/assets/page\.js?v=[0-9a-f]*' "$BODY" | head -1)"
+[ -n "$PAGE_JS" ] || { echo "FAIL: no page.js link in the page"; exit 1; }
+check "the page script is served" 200 -D "$TMP/headers" "$BASE$PAGE_JS"
+header_has "as javascript" 'content-type: text/javascript'
+header_has "kept for good when the request names the body" 'cache-control: public, max-age=31536000, immutable'
+body_has "and it is the interface's script" 'function applyTheme'
+check "asked for without a tag it is revalidated" 200 -D "$TMP/headers" "$BASE/assets/page.js"
+header_has "saying so" 'cache-control: no-cache'
 
 # ---- sites on their own hostname ----
 

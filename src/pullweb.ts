@@ -158,7 +158,7 @@ function mergeBox(ctx: RepoCtx, pull: Pull, preview: MergePreview | null, canMer
       stale && ctx.canPush && viewer
         ? html`<form method="post" action="${pullsUrl(ctx)}/${
             pull.number
-          }/delete-branch" onsubmit="return confirm('Delete the branch ${pull.head}?')">${csrfField(
+          }/delete-branch" data-confirm="Delete the branch ${pull.head}?">${csrfField(
             viewer
           )}<button class="btn" type="submit">${icon('trash')}<span>Delete branch ${pull.head}</span></button></form>`
         : '';

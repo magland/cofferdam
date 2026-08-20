@@ -179,22 +179,13 @@ ${inputs}
   });
   const picker =
     workflows.length > 1
-      ? html`<div class="field"><label>Workflow</label><select onchange="pickWorkflow(this)">${workflows.map(
+      ? html`<div class="field"><label>Workflow</label><select data-workflow-picker>${workflows.map(
           (w) => html`<option value="${w.path}">${w.name}</option>`
         )}</select></div>`
       : '';
   return html`<details class="dropdown dispatch">
 <summary class="btn">${icon('play')}<span>Run workflow</span>${icon('chevron-down', 'caret')}</summary>
 <div class="dropdown-menu dd-right dispatch-body">${picker}${panels}</div>
-<script>
-function pickWorkflow(sel) {
-  var root = sel.closest('.dispatch-body');
-  var forms = root.querySelectorAll('.dispatch-panel');
-  for (var i = 0; i < forms.length; i++) {
-    forms[i].hidden = forms[i].getAttribute('data-wf') !== sel.value;
-  }
-}
-</script>
 </details>`;
 }
 
@@ -288,37 +279,16 @@ export function runPage(
       // escapes rather than coloured; colour arrives with the step view when
       // the job completes and the page reloads into it.
       const initial = logLines.map((l) => stripAnsi(l.l)).join('\n');
+      // The endpoint and the offset ride on the element rather than in a
+      // script, which is what lets /assets/page.js stay one cacheable file
+      // and this page carry no executable markup; the tailer there picks
+      // them up.
       detail = html`${errorBox}<div class="job-head"><b>${selected.name}</b> ${statusIcon(js)} <span class="muted small">${
         js === 'queued' ? 'waiting for a runner' : 'running'
       }</span></div>
-<pre class="joblog live" id="livelog">${initial}</pre>
-<script>
-(function () {
-  var el = document.getElementById('livelog');
-  var offset = ${logOffset};
-  var url = ${raw(JSON.stringify(`${runBase}/log/${encodeURIComponent(selected.id)}`))};
-  var stick = true;
-  el.addEventListener('scroll', function () {
-    stick = el.scrollTop + el.clientHeight >= el.scrollHeight - 8;
-  });
-  function poll() {
-    fetch(url + '?offset=' + offset, { headers: { accept: 'application/json' } })
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        if (d.lines && d.lines.length) {
-          el.textContent += (el.textContent ? '\\n' : '') + d.lines.join('\\n');
-          if (stick) el.scrollTop = el.scrollHeight;
-        }
-        offset = d.offset;
-        if (d.done) { location.reload(); return; }
-        setTimeout(poll, 1500);
-      })
-      .catch(function () { setTimeout(poll, 5000); });
-  }
-  el.scrollTop = el.scrollHeight;
-  setTimeout(poll, 1000);
-})();
-</script>`;
+<pre class="joblog live" id="livelog" data-log-url="${runBase}/log/${encodeURIComponent(
+        selected.id
+      )}" data-log-offset="${logOffset}">${initial}</pre>`;
     } else {
       const rawLink = html`<a class="btn raw-log-link" href="${runBase}/log/${encodeURIComponent(
         selected.id
@@ -540,7 +510,7 @@ ${csrfField(viewer)}
 <p class="muted">Issues a new token for ${r.name} and invalidates the current one. Its labels and repositories are kept, but a runner still running with the old token will start failing to poll and has to be restarted.</p>
 <form method="post" action="/admin/runners/${encodeURIComponent(
     r.name
-  )}/token" onsubmit="return confirm('Regenerate the token for ${r.name}? The current token stops working immediately.')">
+  )}/token" data-confirm="Regenerate the token for ${r.name}? The current token stops working immediately.">
 ${csrfField(viewer)}
 <button type="submit" class="btn">${icon('sync')}<span>Regenerate token</span></button>
 </form>
@@ -550,7 +520,7 @@ ${csrfField(viewer)}
 <p class="muted">Removes ${r.name} from the registry. It stops being able to take jobs; a job it is running now will be handed back to the queue when its lease expires.</p>
 <form method="post" action="/admin/runners/${encodeURIComponent(
     r.name
-  )}/remove" onsubmit="return confirm('Remove runner ${r.name}? It will stop being able to take jobs.')">
+  )}/remove" data-confirm="Remove runner ${r.name}? It will stop being able to take jobs.">
 ${csrfField(viewer)}
 <button type="submit" class="btn btn-danger-outline">${icon('trash')}<span>Remove runner</span></button>
 </form>

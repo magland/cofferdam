@@ -252,9 +252,9 @@ function releaseFormPage(
   );
   const del =
     editing && ctx.canPush
-      ? html`<form method="post" action="${base}/releases/delete" onsubmit="return confirm('Delete the notes for ${
+      ? html`<form method="post" action="${base}/releases/delete" data-confirm="Delete the notes for ${
           editing.tag
-        }? The tag itself is not touched.')">${csrfField(viewer)}<input type="hidden" name="tag" value="${
+        }? The tag itself is not touched.">${csrfField(viewer)}<input type="hidden" name="tag" value="${
           editing.tag
         }"><button type="submit" class="btn btn-danger-outline">${icon('trash')}<span>Delete release</span></button></form>`
       : '';

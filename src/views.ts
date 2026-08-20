@@ -4,6 +4,7 @@ import { Html, html, joinHtml, raw } from './html';
 import { esc, formatDay, formatSize, highlightedLines, timeTag } from './render';
 import { Viewer, viewerIsAdmin } from './session';
 import { styleSheet } from './assets';
+import { pageScript } from './pagescript';
 import { THEMES, activeTheme, darkFor } from './themes';
 import { WORDMARK } from './logo';
 import { IconName, icon } from './icons';
@@ -108,7 +109,7 @@ function userBox(opts: PageOpts): Html {
  * mentions is a shortcut nobody finds.
  */
 function jumpButton(): Html {
-  return html`<button type="button" class="jump-open" onclick="openJump()" aria-haspopup="dialog" aria-label="Jump to a repository">${icon(
+  return html`<button type="button" class="jump-open" data-jump-open aria-haspopup="dialog" aria-label="Jump to a repository">${icon(
     'search'
   )}<span class="jump-label">Jump to</span><kbd class="jump-key">/</kbd></button>`;
 }
@@ -122,7 +123,7 @@ function jumpButton(): Html {
  */
 function themeMenu(): Html {
   const item = (name: string, label: string) =>
-    html`<button type="button" class="dd-item theme-item" role="menuitemradio" aria-checked="false" data-theme-name="${name}" onclick="setTheme('${name}')"><span class="theme-check">${icon('check')}</span><span>${label}</span></button>`;
+    html`<button type="button" class="dd-item theme-item" role="menuitemradio" aria-checked="false" data-theme-name="${name}"><span class="theme-check">${icon('check')}</span><span>${label}</span></button>`;
   return html`<details class="dropdown theme-menu">
 <summary aria-label="Appearance">${icon('appearance')}</summary>
 <div class="dropdown-menu dd-right" role="menu">
@@ -140,7 +141,7 @@ function jumpDialog(jump: JumpContext | null): Html {
       html`<script type="application/json" id="jump-data">${raw(JSON.stringify(jump).replace(/</g, '\\u003c'))}</script>`
     : '';
   return html`${data}<dialog class="jump" id="jump" aria-label="Jump to">
-<div class="jump-field">${icon('search', 'jump-glyph')}<input id="jump-q" type="text" autocomplete="off" spellcheck="false" placeholder="Jump to a repository" aria-label="Jump to a repository" aria-controls="jump-list" oninput="renderJump()" onkeydown="jumpKey(event)"></div>
+<div class="jump-field">${icon('search', 'jump-glyph')}<input id="jump-q" type="text" autocomplete="off" spellcheck="false" placeholder="Jump to a repository" aria-label="Jump to a repository" aria-controls="jump-list"></div>
 <ul class="jump-list" id="jump-list" role="listbox" aria-label="Results"></ul>
 <div class="jump-foot"><kbd>↑</kbd><kbd>↓</kbd> move<kbd>↵</kbd>open<kbd>esc</kbd>close</div>
 </dialog>`;
@@ -153,8 +154,12 @@ export function layout(title: string, content: Html, opts: PageOpts = {}): strin
   // then be kept for good instead of revalidated on every navigation.
   const theme = activeTheme().name;
   const sheet = styleSheet(activeTheme()).tag;
+  const script = pageScript().tag;
+  // The theme pair rides on <html> rather than in the script, which is what
+  // lets /assets/page.js be one cacheable file for every vault: the script
+  // reads these two attributes instead of being generated around them.
   return html`<!doctype html>
-<html lang="en">
+<html lang="en" data-theme-vault="${theme}" data-theme-dark="${darkFor(activeTheme())}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -163,40 +168,7 @@ export function layout(title: string, content: Html, opts: PageOpts = {}): strin
 <link id="hl-css" rel="stylesheet" href="/assets/hl.css?t=${encodeURIComponent(theme)}">
 <link rel="stylesheet" href="/assets/katex/katex.css">
 <link rel="icon" href="/favicon.svg?t=${encodeURIComponent(theme)}" type="image/svg+xml">
-<script>
-// The appearance the reader chose, applied before the page is painted so the
-// vault's own theme is never shown for a frame first. The stylesheet carries
-// every theme's tokens, so this is one attribute; the code colours are a whole
-// stylesheet of their own and so are a second request when they differ.
-var cofferdamTheme = { vault: ${raw(JSON.stringify(theme))}, dark: ${raw(JSON.stringify(darkFor(activeTheme())))} };
-function applyTheme() {
-  var pick = null;
-  try { pick = localStorage.getItem('cofferdam.theme'); } catch (e) {}
-  var auto = !pick || pick === 'auto';
-  if (auto) pick = matchMedia('(prefers-color-scheme: dark)').matches ? cofferdamTheme.dark : cofferdamTheme.vault;
-  document.documentElement.setAttribute('data-theme', pick);
-  var hl = document.getElementById('hl-css');
-  var href = '/assets/hl.css?t=' + encodeURIComponent(pick);
-  if (hl && hl.getAttribute('href') !== href) hl.setAttribute('href', href);
-  var items = document.querySelectorAll('[data-theme-name]');
-  for (var i = 0; i < items.length; i++) {
-    var n = items[i].getAttribute('data-theme-name');
-    items[i].setAttribute('aria-checked', String(auto ? n === 'auto' : n === pick));
-  }
-}
-function setTheme(name) {
-  try { localStorage.setItem('cofferdam.theme', name); } catch (e) {}
-  applyTheme();
-  if (typeof closeMenus === 'function') closeMenus(null);
-}
-applyTheme();
-// Again once the menu exists: the call above runs before the body is parsed,
-// which is the point of it, but it means the menu's marks are set here.
-document.addEventListener('DOMContentLoaded', applyTheme);
-// Following the system means following it while the page is open, not only
-// when it was loaded.
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
-</script>
+<script src="/assets/page.js?v=${script}"></script>
 </head>
 <body>
 <header class="topbar"><div class="container"><a class="brand" href="/">${raw(WORDMARK)}</a><span class="crumbs">${opts.crumbs}</span><div class="userbox">${jumpButton()}${themeMenu()}${userBox(opts)}</div></div></header>
@@ -204,255 +176,6 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme
 ${content}
 </main>
 ${jumpDialog(opts.jump ?? null)}
-<script>
-function copyText(btn, text) {
-  function done() { btn.classList.add('copied'); setTimeout(function () { btn.classList.remove('copied'); }, 1400); }
-  function fallback() {
-    var ta = document.createElement('textarea');
-    ta.value = text;
-    document.body.appendChild(ta);
-    ta.select();
-    try { document.execCommand('copy'); } catch (e) {}
-    ta.remove();
-  }
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(done, function () { fallback(); done(); });
-  } else { fallback(); done(); }
-}
-// The text to copy is the button's own data-copy when it carries one, and
-// otherwise whatever sits just before it: a <code>, or an <input> holding a URL.
-function copyCmd(btn) {
-  var el = btn.previousElementSibling;
-  var own = btn.getAttribute('data-copy');
-  copyText(btn, own !== null ? own : (el && el.tagName === 'INPUT' ? el.value : el.textContent));
-}
-// A file view is one element per line, so its text is gathered rather than
-// read off one node; the line numbers are separate elements and stay out.
-function copyLines(btn) {
-  var lines = document.querySelectorAll('.code-lines .ltext');
-  var out = [];
-  for (var i = 0; i < lines.length; i++) out.push(lines[i].textContent);
-  copyText(btn, out.join('\\n'));
-}
-// Menus are <details> elements. These two handlers give them the rest of what
-// a menu is expected to do: close when the reader clicks elsewhere or presses
-// Escape. Nothing else about them needs script.
-function closeMenus(except) {
-  var open = document.querySelectorAll('details.dropdown[open]');
-  for (var i = 0; i < open.length; i++) {
-    if (!except || !open[i].contains(except)) open[i].open = false;
-  }
-}
-document.addEventListener('click', function (e) { closeMenus(e.target); });
-document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMenus(null); });
-// The file finder's matching: every character of the query in order, though
-// not necessarily together, so "srcmn" finds src/compute/mean.py. Matching is
-// done here rather than on the server because the whole list is already in
-// the page.
-function findMatch(hay, needle) {
-  var i = 0;
-  for (var j = 0; j < hay.length && i < needle.length; j++) {
-    if (hay.charCodeAt(j) === needle.charCodeAt(i)) i++;
-  }
-  return i === needle.length;
-}
-function filterFiles(input) {
-  var items = document.getElementById('find-list').children;
-  var q = input.value.trim().toLowerCase();
-  var shown = 0;
-  for (var i = 0; i < items.length; i++) {
-    var hit = q === '' || findMatch(items[i].textContent.toLowerCase(), q);
-    items[i].hidden = !hit;
-    if (hit) shown++;
-  }
-  document.getElementById('find-empty').hidden = shown !== 0;
-}
-// Enter opens the first match, Escape clears the box.
-function findKey(e, input) {
-  if (e.key === 'Escape') { input.value = ''; filterFiles(input); return; }
-  if (e.key !== 'Enter') return;
-  var items = document.getElementById('find-list').children;
-  for (var i = 0; i < items.length; i++) {
-    if (!items[i].hidden) { e.preventDefault(); location.href = items[i].href; return; }
-  }
-}
-// ---- the jump box ----
-// The repository names are the same list the front page shows, fetched once
-// and kept for the tab, so typing costs nothing after the first opening.
-var jumpRepos = null;
-var jumpCtx = null;
-var jumpSel = 0;
-(function () {
-  var el = document.getElementById('jump-data');
-  if (el) { try { jumpCtx = JSON.parse(el.textContent); } catch (e) {} }
-})();
-function loadJumpRepos() {
-  if (jumpRepos) return Promise.resolve(jumpRepos);
-  var cached = null;
-  try { cached = sessionStorage.getItem('cofferdam.repos'); } catch (e) {}
-  if (cached) { try { jumpRepos = JSON.parse(cached); return Promise.resolve(jumpRepos); } catch (e) {} }
-  return fetch('/assets/repos.json').then(function (r) { return r.json(); }).then(function (list) {
-    jumpRepos = list;
-    try { sessionStorage.setItem('cofferdam.repos', JSON.stringify(list)); } catch (e) {}
-    return list;
-  }, function () { jumpRepos = []; return jumpRepos; });
-}
-function openJump() {
-  var dlg = document.getElementById('jump');
-  if (!dlg || dlg.open) return;
-  closeMenus(null);
-  dlg.showModal();
-  var q = document.getElementById('jump-q');
-  q.value = '';
-  q.focus();
-  renderJump();
-  loadJumpRepos().then(renderJump);
-}
-// The score is the position of the first character of the match, so a name
-// beginning with what was typed comes before one that merely contains it, and
-// a match on the repository's own name before one on its collection.
-function jumpScore(hay, q) {
-  if (q === '') return 0;
-  var i = hay.toLowerCase().indexOf(q);
-  if (i !== -1) return i;
-  return findMatch(hay.toLowerCase(), q) ? 900 : -1;
-}
-function jumpItems() {
-  var q = document.getElementById('jump-q').value.trim().toLowerCase();
-  var out = [];
-  if (jumpCtx) {
-    for (var s = 0; s < jumpCtx.sections.length; s++) {
-      var sec = jumpCtx.sections[s];
-      var ss = jumpScore(sec.label, q);
-      if (ss >= 0) out.push({ score: ss, group: jumpCtx.repo, label: sec.label, href: sec.href });
-    }
-  }
-  var repos = jumpRepos || [];
-  for (var i = 0; i < repos.length; i++) {
-    var name = repos[i];
-    var slash = name.indexOf('/');
-    var short = name.slice(slash + 1);
-    var sc = jumpScore(short, q);
-    // Falling back to the whole path lets "concept/bench" find a repository,
-    // but only as a literal substring: a collection name spread across it a
-    // letter at a time would match nearly everything.
-    if (sc < 0 && q !== '' && name.toLowerCase().indexOf(q) !== -1) sc = 950;
-    // A repository is what the box is mostly for, so its matches sort above a
-    // section of equal quality rather than below.
-    if (sc >= 0) out.push({ score: sc - 1, group: 'Repositories', label: short, note: name.slice(0, slash), href: '/' + name.split('/').map(encodeURIComponent).join('/') });
-  }
-  out.sort(function (a, b) { return a.score - b.score || a.label.localeCompare(b.label); });
-  out = out.slice(0, 15);
-  if (jumpCtx && q !== '') {
-    var g = 'Search ' + jumpCtx.repo;
-    out.push({ group: g, label: 'Contents matching \u201c' + q + '\u201d', href: jumpCtx.searchUrl + encodeURIComponent(q) });
-    out.push({ group: g, label: 'File names', href: jumpCtx.findUrl });
-  }
-  return out;
-}
-function renderJump() {
-  var list = document.getElementById('jump-list');
-  if (!list) return;
-  var items = jumpItems();
-  if (jumpSel >= items.length) jumpSel = 0;
-  var html = '';
-  var group = null;
-  for (var i = 0; i < items.length; i++) {
-    var it = items[i];
-    if (it.group !== group) { group = it.group; html += '<li class="jump-group" role="presentation">' + escapeHtml(group) + '</li>'; }
-    html += '<li role="option" aria-selected="' + (i === jumpSel) + '"><a class="jump-item' + (i === jumpSel ? ' on' : '') +
-      '" href="' + escapeHtml(it.href) + '" onmouseenter="jumpPoint(' + i + ')">' + escapeHtml(it.label) +
-      (it.note ? '<span class="jump-note">' + escapeHtml(it.note) + '</span>' : '') + '</a></li>';
-  }
-  list.innerHTML = html || '<li class="jump-empty" role="presentation">' +
-    (jumpRepos === null ? 'Loading\u2026' : 'Nothing matches.') + '</li>';
-  var on = list.querySelector('.jump-item.on');
-  if (on) on.scrollIntoView({ block: 'nearest' });
-}
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, function (c) {
-    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
-  });
-}
-function jumpPoint(i) { jumpSel = i; renderJump(); }
-function jumpKey(e) {
-  var items = document.getElementById('jump-list').querySelectorAll('.jump-item');
-  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-    e.preventDefault();
-    if (!items.length) return;
-    jumpSel = (jumpSel + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length;
-    renderJump();
-  } else if (e.key === 'Enter') {
-    e.preventDefault();
-    if (items[jumpSel]) location.href = items[jumpSel].getAttribute('href');
-  }
-}
-// / opens the box and t still goes straight to the file finder. A key pressed
-// while typing into something is a keystroke, not a shortcut.
-document.addEventListener('keydown', function (e) {
-  var el = document.activeElement;
-  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
-  if ((e.key === 'k' || e.key === 'K') && (e.metaKey || e.ctrlKey)) { e.preventDefault(); openJump(); return; }
-  if (e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.key === '/') { e.preventDefault(); openJump(); return; }
-  if (e.key !== 't') return;
-  var btn = document.querySelector('[data-find-url]');
-  if (!btn) return;
-  e.preventDefault();
-  location.href = btn.getAttribute('data-find-url');
-});
-// Clicking the backdrop closes the box, as clicking outside any other menu does.
-document.addEventListener('click', function (e) {
-  var dlg = document.getElementById('jump');
-  if (dlg && dlg.open && e.target === dlg) dlg.close();
-});
-// The filter box above a listing: hide the rows that do not match, and say so
-// when none do.
-function filterRows(input) {
-  var id = input.getAttribute('data-target');
-  var table = document.getElementById(id);
-  var empty = document.getElementById(id + '-empty');
-  var q = input.value.trim().toLowerCase();
-  var rows = table.tBodies[0].rows;
-  var shown = 0;
-  for (var i = 0; i < rows.length; i++) {
-    var hit = q === '' || rows[i].textContent.toLowerCase().indexOf(q) !== -1;
-    rows[i].hidden = !hit;
-    if (hit) shown++;
-  }
-  if (empty) empty.hidden = shown !== 0;
-}
-// The same as filterRows, over a list of cards rather than table rows.
-function filterCards(input) {
-  var list = document.getElementById(input.getAttribute('data-target'));
-  var empty = document.getElementById(input.getAttribute('data-target') + '-empty');
-  var q = input.value.trim().toLowerCase();
-  var items = list.children;
-  var shown = 0;
-  for (var i = 0; i < items.length; i++) {
-    var hit = q === '' || items[i].textContent.toLowerCase().indexOf(q) !== -1;
-    items[i].hidden = !hit;
-    if (hit) shown++;
-  }
-  if (empty) empty.hidden = shown !== 0;
-}
-// The filter box in a menu of many items (branches and tags).
-function filterMenu(input) {
-  var menu = input.parentElement;
-  var q = input.value.trim().toLowerCase();
-  var groups = menu.querySelectorAll('.dd-group');
-  for (var g = 0; g < groups.length; g++) {
-    var items = groups[g].querySelectorAll('.dd-item');
-    var shown = 0;
-    for (var i = 0; i < items.length; i++) {
-      var hit = q === '' || items[i].textContent.toLowerCase().indexOf(q) !== -1;
-      items[i].hidden = !hit;
-      if (hit) shown++;
-    }
-    groups[g].hidden = shown === 0;
-  }
-}
-</script>
 </body>
 </html>`.text;
 }
@@ -508,7 +231,7 @@ export function copyButton(label = '', text?: string, title = ''): Html {
   // With no text of its own the button copies the element before it, which is
   // how the command rows and the clone box use it.
   const payload = text === undefined ? '' : html` data-copy="${text}"`;
-  return html`<button class="copy-btn" type="button" onclick="copyCmd(this)"${payload}${
+  return html`<button class="copy-btn" type="button"${payload}${
     title ? html` title="${title}"` : ''
   } aria-label="Copy${label ? ` ${label.toLowerCase()}` : ''}">${face('copy', label, 'copy-idle')}${face(
     'check',
@@ -551,7 +274,7 @@ function refPicker(ctx: RepoCtx, urlForRef: (ref: string) => string): Html {
     'caret'
   )}</summary>
 <div class="dropdown-menu">
-  <input class="dd-filter" type="text" placeholder="Find a branch or tag" oninput="filterMenu(this)" aria-label="Filter branches and tags">
+  <input class="dd-filter" type="text" placeholder="Find a branch or tag" aria-label="Filter branches and tags">
   <div class="dd-scroll">${group('Branches', ctx.branches)}${group('Tags', ctx.tags)}</div>
 </div>
 </details>`;
@@ -579,7 +302,7 @@ function cloneMenu(ctx: RepoCtx): Html {
 <summary class="btn btn-primary">${icon('code')}<span>Code</span>${icon('chevron-down', 'caret')}</summary>
 <div class="dropdown-menu dd-right">
   <div class="dd-section">Clone with HTTP</div>
-  <div class="cmd-row"><input readonly value="${ctx.cloneUrl}" onclick="this.select()">${copyButton()}</div>
+  <div class="cmd-row"><input readonly value="${ctx.cloneUrl}" data-select-all>${copyButton()}</div>
   <p class="muted small">Anyone can clone. Pushing asks for a username and a token.</p>
   <div class="dd-group"><div class="dd-section">Download ${ctx.ref}</div>
 ${archive('zip', 'Source as zip')}${archive('tar.gz', 'Source as tar.gz')}</div>
@@ -648,7 +371,7 @@ function breadcrumb(ctx: RepoCtx, path: string): Html {
  */
 function listFilter(target: string, placeholder: string, rowCount: number): Html | '' {
   if (rowCount <= 5) return '';
-  return html`<div class="toolbar"><div class="left"><input class="list-filter" type="text" placeholder="${placeholder}" data-target="${target}" oninput="filterRows(this)" aria-label="${placeholder}"></div></div>`;
+  return html`<div class="toolbar"><div class="left"><input class="list-filter" type="text" placeholder="${placeholder}" data-target="${target}" data-filter="rows" aria-label="${placeholder}"></div></div>`;
 }
 
 function noMatches(target: string): Html {
@@ -725,7 +448,7 @@ function repoListing(
       id === 'recent' ? '' : `?sort=${id}`
     }">${label}</a>`;
   const controls = html`<div class="listing-controls">
-<input class="list-filter" type="text" placeholder="Filter repositories" data-target="repo-list" oninput="filterCards(this)" aria-label="Filter repositories">
+<input class="list-filter" type="text" placeholder="Filter repositories" data-target="repo-list" data-filter="cards" aria-label="Filter repositories">
 <span class="seg">${sortLink('recent', 'Recent')}${sortLink('name', 'A–Z')}</span>
 </div>`;
   return html`${repos.length > 5 ? controls : ''}<ul class="repo-grid" id="repo-list">${joinHtml(
@@ -1232,7 +955,7 @@ export function findFilePage(ctx: RepoCtx, paths: string[], total: number): stri
     total
   )} file${total === 1 ? '' : 's'}</span></div>
 </div>
-<input class="find-input" type="text" placeholder="Go to file" autofocus autocomplete="off" spellcheck="false" aria-label="Go to file" oninput="filterFiles(this)" onkeydown="findKey(event, this)">
+<input class="find-input" type="text" placeholder="Go to file" autofocus autocomplete="off" spellcheck="false" aria-label="Go to file">
 ${capped}
 <div class="find-list" id="find-list">${items}</div>
 <div class="empty-state" id="find-empty" hidden>No file matches.</div>`;
@@ -1301,7 +1024,7 @@ export function blobPage(
       const n = i + 1;
       return html`<div class="cline" id="L${n}"><a class="lnum" href="#L${n}" aria-label="Line ${n}">${n}</a><span class="ltext">${raw(line)}</span></div>`;
     });
-    const copyRaw = html`<button class="btn" type="button" onclick="copyLines(this)" title="Copy the file's contents"><span class="copy-idle">${icon(
+    const copyRaw = html`<button class="btn" type="button" data-copy-lines title="Copy the file's contents"><span class="copy-idle">${icon(
       'copy'
     )}<span>Copy</span></span><span class="copy-done">${icon('check')}<span>Copied</span></span></button>`;
     body = html`${meta(html`${view.lineCount} line${view.lineCount === 1 ? '' : 's'} &middot; ${formatSize(view.size)}`, copyRaw)}
@@ -1501,7 +1224,7 @@ export function refListPage(ctx: RepoCtx, kind: 'branches' | 'tags'): string {
   const rows = refs.map((r) => {
     let action: Html | '' = '';
     if (ctx.canPush && viewer && (kind === 'tags' || r.name !== ctx.defaultBranch)) {
-      action = html`<form method="post" action="${base}/${kind}/delete" onsubmit="return confirm('Delete ${noun} ${r.name}?')">${csrfField(
+      action = html`<form method="post" action="${base}/${kind}/delete" data-confirm="Delete ${noun} ${r.name}?">${csrfField(
         viewer
       )}<input type="hidden" name="name" value="${r.name}"><button type="submit" class="btn btn-danger-outline" title="Delete this ${noun}" aria-label="Delete ${r.name}">${icon(
         'trash'

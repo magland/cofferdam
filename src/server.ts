@@ -28,6 +28,7 @@ import { getViewer } from './session';
 import { registerSiteHost } from './site';
 import { isUnderSitesHost } from './siteshost';
 import { styleSheet } from './assets';
+import { pageScript } from './pagescript';
 import { activeTheme, findTheme, setActiveTheme } from './themes';
 import * as views from './views';
 import { registerWebOps } from './webops';
@@ -57,6 +58,53 @@ function isCompressible(req: Request, res: Response): boolean {
   if (UNCOMPRESSED.test(req.path)) return false;
   return compression.filter(req, res);
 }
+
+/**
+ * What a forge page may load, and from where.
+ *
+ * The interface serves untrusted content from its own origin -- a repository's
+ * files, an issue somebody wrote, a rendered README -- so escaping and
+ * sanitizing are not the only line worth having. This one is the browser's:
+ * even a page that somehow carried injected markup could not run it.
+ *
+ * script-src 'self' is the directive that does the work, and it is why the
+ * pages carry no inline script at all: the one script they load is
+ * /assets/page.js, and everything page-specific reaches it through a data
+ * attribute (see src/pagescript.ts). A policy that allowed inline script would
+ * allow an injected one too, since the browser cannot tell them apart.
+ *
+ * Two directives are looser than the rest, both deliberately:
+ *
+ *   style-src allows inline style, because the interface paints with values it
+ *   computes -- a language bar's widths, a theme swatch's palette, an egress
+ *   meter's fill. An inline style cannot execute anything, so this buys much
+ *   less than script-src and costs nothing to keep.
+ *
+ *   img-src allows any host, because markdown may already reference an
+ *   external image and does today; narrowing it would silently stop READMEs
+ *   rendering and needs an image proxy first, which is what GitHub built for
+ *   the same reason.
+ *
+ * frame-ancestors keeps the forge's own pages out of somebody else's frame: a
+ * CSRF token and the Origin check in src/session.ts refuse a request forged
+ * from elsewhere, but neither refuses a real click on a real page inside a
+ * frame, which is what would let a merge, a close, or a branch deletion be
+ * obtained from a signed-in reader who thought they were clicking something of
+ * the framing page's. base-uri and form-action close the two ways injected
+ * markup could redirect a relative URL or a form post without running script.
+ */
+const FORGE_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  'img-src * data:',
+  "font-src 'self'",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "frame-ancestors 'self'",
+].join('; ');
 
 function isRateExempt(root: string, req: Request): boolean {
   if (req.path.startsWith('/api/runner/')) return true;
@@ -178,13 +226,13 @@ export function createApp(root: string) {
   // of the framing page's. Registered after the sites middleware, so a request
   // on a sites hostname never reaches it.
   //
-  // frame-ancestors alone, and not X-Frame-Options: site content served on the
-  // forge host replaces this header with its own sandbox policy (see
+  // A Content-Security-Policy and not X-Frame-Options: site content served on
+  // the forge host replaces this header with its own sandbox policy (see
   // setSiteHeaders in src/site.ts), and an X-Frame-Options it could not
   // replace would stop a published site being embedded anywhere, which is
   // ordinary for a static site and no business of the forge's.
   app.use((_req, res, next) => {
-    res.setHeader('Content-Security-Policy', "frame-ancestors 'self'");
+    res.setHeader('Content-Security-Policy', FORGE_CSP);
     next();
   });
 
@@ -209,6 +257,18 @@ export function createApp(root: string) {
       .type('text/css')
       .set('Cache-Control', fresh ? 'public, max-age=31536000, immutable' : 'no-cache')
       .send(sheet.body);
+  });
+  // The page script, on the same terms as the stylesheet above: a request that
+  // names the body it wants may keep it forever, since a different body would
+  // be a different tag and so a different URL.
+  app.get('/assets/page.js', (req, res) => {
+    const script = pageScript();
+    const fresh = String(req.query.v ?? '') === script.tag;
+    res
+      .type('text/javascript')
+      .set('Cache-Control', fresh ? 'public, max-age=31536000, immutable' : 'no-cache')
+      .set('X-Content-Type-Options', 'nosniff')
+      .send(script.body);
   });
   app.get('/assets/hl.css', (req, res) => {
     // Code colours are a whole stylesheet rather than a set of tokens, so the

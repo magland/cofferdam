@@ -37,7 +37,21 @@ The absence of `allow-same-origin` is the point: it places the document in an op
 
 `Access-Control-Allow-Origin: *` is there so that a page in an opaque origin can still `fetch` its own sibling files, which is what a single-page app, a wasm loader, or any data-driven site needs. Those requests carry no credentials, so allowing them gives nothing away. The header goes on site responses only, never on forge pages and never on the API.
 
-Forge pages carry a policy of their own, `Content-Security-Policy: frame-ancestors 'self'`, so only the forge may frame them. The CSRF token refuses a request forged from another origin, but it does not refuse a real click on a real control inside somebody else's frame, which is what that closes. Site responses replace the header with the sandbox above and so are not restricted this way: a published static site is ordinarily embedded wherever its author likes, and that is no business of the forge's.
+Forge pages carry a policy of their own:
+
+```
+Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+  img-src * data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none';
+  form-action 'self'; frame-ancestors 'self'
+```
+
+`frame-ancestors` is why only the forge may frame its own pages. The CSRF token refuses a request forged from another origin, but it does not refuse a real click on a real control inside somebody else's frame, which is what that closes.
+
+`script-src 'self'` is the one that matters most, and it is why forge pages contain no inline script at all. The interface serves untrusted content from its own origin, a repository's files and a rendered README and an issue somebody wrote, so the escaping in the templates is not the only line worth having: under this policy, markup that somehow carried an injected `<script>` or an `onclick` still could not run. The single script a page loads is `/assets/page.js`, and anything page-specific reaches it through a data attribute rather than through generated JavaScript. A policy that allowed the interface's own inline script would allow an injected one too, since the browser cannot tell them apart.
+
+Two directives are deliberately looser. `style-src` allows inline style, because the interface paints with values it computes: a language bar's widths, a theme swatch's palette, an egress meter's fill. An inline style cannot execute anything, so it buys far less than `script-src` does and costs nothing to keep. And `img-src` allows any host, because a README may already reference an external image and does today; narrowing it would quietly stop those rendering, and doing it properly needs an image proxy, which is what GitHub built for the same reason.
+
+Site responses replace the whole header with the sandbox above and so are restricted by none of this: a published static site is ordinarily embedded wherever its author likes, may load whatever it likes, and that is no business of the forge's. Raw file responses replace it too, with a bare `sandbox`.
 
 ## A hostname per site
 
