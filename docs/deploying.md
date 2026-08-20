@@ -89,6 +89,42 @@ my-vault-name  https://my-vault-name.fly.dev
 
 `cofferdam deploy fly destroy my-vault-name` removes the app, the volume, and with them the vault; it asks you to type the app name first (`--yes` skips the prompt, for a script that means it), and also drops the stored credential for a vault that no longer exists. Anything else is flyctl's job, and flyctl is already on your machine: `fly logs -a my-vault-name`, `fly ssh console -a my-vault-name` for a shell on the volume, and `fly certs` for [a domain of your own](#a-domain-of-your-own).
 
+### Updating on a schedule
+
+A vault does not update itself, and Fly will not update it for you. The tag a deploy names is resolved to a digest when the machine is created, so a restart, an autostart after an idle spell, and a move to another host all bring back the image that deploy pinned. Updating is a deploy, every time.
+
+What makes that worth automating is that a deploy needs nothing of yours but a Fly credential. It reads the region, the volume, and the machine's shape back off the live app, writes nothing on the machine it runs from, and on an app that already has a machine it mints no owner token and prints nothing secret. So the command that updates a vault by hand is also the whole of a scheduled job somewhere you are not:
+
+```yaml
+# .github/workflows/update-vault.yml, in a repository of your own
+name: update-vault
+on:
+  schedule: [{ cron: '17 9 * * 1' }]     # Mondays, 09:17 UTC
+  workflow_dispatch:
+jobs:
+  redeploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: npx --yes @magland/cofferdam@latest deploy fly my-vault-name
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+```
+
+Run the newest CLI and pass no `--image`, rather than pinning `--image ...:latest` on an older one. The CLI asks for the image tag matching its own version, and a version tag exists only because the release that produced it was built and smoke-tested first, so what reaches the vault is a version that passed. It also leaves `cofferdam deploy fly show` reporting a version rather than `latest`, which is the difference between knowing what is running and knowing only when it was last deployed.
+
+flyctl reads `FLY_API_TOKEN` from the environment, so nothing needs to be logged in on the runner. `fly tokens create deploy -a my-vault-name` mints the narrowest token that can do this. Note that a deploy starts by asking `fly auth whoami` and stops if that cannot answer, so if a deploy-scoped token is refused there, an org-scoped one from `fly tokens create org <org>` is the fallback.
+
+A systemd timer, a launchd job, or a cron line on any machine you keep running does the same thing with the same command. GitHub Actions is only the version of it that needs no machine of yours.
+
+Two costs, worth choosing deliberately rather than discovering. A vault is one machine on one volume, so every update is a restart, and a restart cuts whatever clone or push was in flight; weekly at a quiet hour is the cadence to want, and nightly buys nothing, since the published tags move only when a release is cut. And an unattended deploy has no notion of rolling back, so if a release does break something the repair is a deploy that pins the previous version by hand:
+
+```bash
+cofferdam deploy fly my-vault-name --image ghcr.io/magland/cofferdam:0.2.0
+```
+
 ### Deploying your own build
 
 By default the image deployed is the published one matching the version of the CLI you ran, which means waiting for a release before a change of your own can reach a vault. `--from-source` builds the image from the checkout you are running instead:
@@ -253,6 +289,19 @@ The server honors `X-Forwarded-*` headers when the vault says a proxy is in fron
 ```
 
 It is false by default, and deliberately so: `X-Forwarded-For` is supplied by the client, so on a vault exposed directly any visitor could claim any address, which defeats every per-address limit below and lets one attacker fill the limiter's key space. Set it only when a reverse proxy you control is the only way in. `cofferdam deploy fly` sets it for you, since Fly always terminates TLS in front.
+
+Updating a vault hosted this way is a pull and a recreate, and unlike the Fly deployment it can be made to happen on its own. Point the service at a published image rather than at the checkout, by replacing `build: .` with `image: ghcr.io/magland/cofferdam:latest`, and put a container updater beside it:
+
+```yaml
+  watchtower:
+    image: containrrr/watchtower
+    restart: unless-stopped
+    command: --cleanup --interval 86400
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+```
+
+That is a genuine automatic update rather than a deploy on a timer, and the reason it can be one here is that a Fly machine pins the digest its deploy resolved where a `latest` tag on a host of your own is resolved again every time the container is recreated. It costs the same restart of the vault, and it costs handing the Docker socket to a container, which is root on the host under another name. On a machine that does anything else, `docker compose pull && docker compose up -d` from a systemd timer is the same effect without that trade. [Updating on a schedule](#updating-on-a-schedule) is the equivalent for a vault on Fly.
 
 Backing up a vault is copying a directory, and moving it to another host is copying it there, on a machine you have a shell on. On a Fly volume you have neither a shell in the ordinary sense nor rsync at the far end, so `cofferdam backup <dir>` pulls the copy over HTTP instead, incrementally, into a directory that is itself a servable vault: see [Backing up a vault](backup.md). It works the same way against a machine of your own, and is worth preferring there too, since it moves only what changed. Note that a vault on the open internet is readable by anyone, so say so in your own deployment notes.
 

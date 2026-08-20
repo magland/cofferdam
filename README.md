@@ -75,7 +75,7 @@ There is no database and no state outside this directory, so backing up a vault 
 - [Getting started](docs/getting-started.md): a local vault, a vault on the internet, and a domain of your own
 - [The vault](docs/vault.md): the layout on disk, and how signing in relates to the tokens git uses
 - [The command line](docs/cli.md): the `cofferdam` command, `cofferdam login`, pushing, importing, and the commands over repositories, issues, pull requests, releases, and runs
-- [Deploying a vault](docs/deploying.md): `cofferdam deploy fly`, a domain of your own, Docker, and automatic HTTPS with Caddy
+- [Deploying a vault](docs/deploying.md): `cofferdam deploy fly`, updating on a schedule, a domain of your own, Docker, and automatic HTTPS with Caddy
 - [Workflows](docs/workflows.md): what runs today, runners, artifacts, and the divergences from GitHub
 - [Backing up a vault](docs/backup.md): `cofferdam backup`, snapshots and retention, and what a backup does not promise
 - [Git LFS](docs/lfs.md): storage backends, bucket configuration, and limitations
