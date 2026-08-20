@@ -1,5 +1,6 @@
 import { BlameLine, CommitDetail, CommitSummary, RefInfo, TreeEntry } from './git';
 import { LanguageStat } from './languages';
+import { Html, html, joinHtml, raw } from './html';
 import { esc, formatDay, formatSize, highlightedLines, timeTag } from './render';
 import { Viewer, viewerIsAdmin } from './session';
 import { styleSheet } from './assets';
@@ -38,7 +39,7 @@ export interface RepoCtx {
 }
 
 export interface PageOpts {
-  crumbs?: string;
+  crumbs?: Html | string;
   viewer?: Viewer | null;
   // Current request path, used as the ?next= target of the Sign in link.
   path?: string;
@@ -66,31 +67,31 @@ export function repoUrl(ctx: { collection: string; repo: string }): string {
   return `/${encodeURIComponent(ctx.collection)}/${encodeURIComponent(ctx.repo)}`;
 }
 
-export function csrfField(viewer: Viewer): string {
-  return `<input type="hidden" name="csrf" value="${esc(viewer.csrf)}">`;
+export function csrfField(viewer: Viewer): Html {
+  return html`<input type="hidden" name="csrf" value="${viewer.csrf}">`;
 }
 
 const FOLDER_ICON = icon('folder', 'icon');
 const FILE_ICON = icon('file', 'icon file');
 const REPO_ICON = icon('repo', 'icon');
 
-function userBox(opts: PageOpts): string {
+function userBox(opts: PageOpts): Html {
   const viewer = opts.viewer ?? null;
   if (!viewer) {
     const next = opts.path && opts.path.startsWith('/') ? opts.path : '/';
-    return `<a class="btn" href="/login?next=${encodeURIComponent(next)}">Sign in</a>`;
+    return html`<a class="btn" href="/login?next=${encodeURIComponent(next)}">Sign in</a>`;
   }
   // The signed-in header is an avatar that opens a menu, as GitHub's is: the
   // name and what you can do with the account are one click away rather than
   // spread across the bar.
   const name = viewer.auth.username;
   const admin = viewerIsAdmin(viewer)
-    ? `<a class="dd-item" href="/admin">${icon('sliders')}<span>Admin</span></a>`
+    ? html`<a class="dd-item" href="/admin">${icon('sliders')}<span>Admin</span></a>`
     : '';
-  return `<details class="dropdown user-menu">
+  return html`<details class="dropdown user-menu">
 <summary aria-label="Account menu">${avatar(name, 24)}${icon('chevron-down', 'caret')}</summary>
 <div class="dropdown-menu dd-right">
-  <div class="dd-section">Signed in as <b>${esc(name)}</b></div>
+  <div class="dd-section">Signed in as <b>${name}</b></div>
   ${admin}
   <form method="post" action="/logout">${csrfField(viewer)}<button type="submit" class="dd-item">${icon(
     'sign-out'
@@ -106,8 +107,8 @@ function userBox(opts: PageOpts): string {
  * The button carries the keystroke on its face, since a shortcut nothing
  * mentions is a shortcut nobody finds.
  */
-function jumpButton(): string {
-  return `<button type="button" class="jump-open" onclick="openJump()" aria-haspopup="dialog" aria-label="Jump to a repository">${icon(
+function jumpButton(): Html {
+  return html`<button type="button" class="jump-open" onclick="openJump()" aria-haspopup="dialog" aria-label="Jump to a repository">${icon(
     'search'
   )}<span class="jump-label">Jump to</span><kbd class="jump-key">/</kbd></button>`;
 }
@@ -119,47 +120,49 @@ function jumpButton(): string {
  * kept in their own browser: nothing about it reaches the vault, and a vault
  * that is read anonymously has nowhere to keep it anyway.
  */
-function themeMenu(): string {
+function themeMenu(): Html {
   const item = (name: string, label: string) =>
-    `<button type="button" class="dd-item theme-item" role="menuitemradio" aria-checked="false" data-theme-name="${esc(
-      name
-    )}" onclick="setTheme('${esc(name)}')"><span class="theme-check">${icon('check')}</span><span>${esc(
-      label
-    )}</span></button>`;
-  return `<details class="dropdown theme-menu">
+    html`<button type="button" class="dd-item theme-item" role="menuitemradio" aria-checked="false" data-theme-name="${name}" onclick="setTheme('${name}')"><span class="theme-check">${icon('check')}</span><span>${label}</span></button>`;
+  return html`<details class="dropdown theme-menu">
 <summary aria-label="Appearance">${icon('appearance')}</summary>
 <div class="dropdown-menu dd-right" role="menu">
   <div class="dd-section">Appearance</div>
   ${item('auto', 'Match my system')}
-  ${THEMES.map((t) => item(t.name, t.label)).join('\n  ')}
+  ${joinHtml(THEMES.map((t) => item(t.name, t.label)), '\n  ')}
 </div>
 </details>`;
 }
 
-function jumpDialog(jump: JumpContext | null): string {
+function jumpDialog(jump: JumpContext | null): Html {
   const data = jump
-    ? `<script type="application/json" id="jump-data">${JSON.stringify(jump).replace(/</g, '\\u003c')}</script>`
+    ? // The payload is JSON in a script tag, where escaping entities would
+      // corrupt it; < is neutralized in the JSON's own spelling instead.
+      html`<script type="application/json" id="jump-data">${raw(JSON.stringify(jump).replace(/</g, '\\u003c'))}</script>`
     : '';
-  return `${data}<dialog class="jump" id="jump" aria-label="Jump to">
+  return html`${data}<dialog class="jump" id="jump" aria-label="Jump to">
 <div class="jump-field">${icon('search', 'jump-glyph')}<input id="jump-q" type="text" autocomplete="off" spellcheck="false" placeholder="Jump to a repository" aria-label="Jump to a repository" aria-controls="jump-list" oninput="renderJump()" onkeydown="jumpKey(event)"></div>
 <ul class="jump-list" id="jump-list" role="listbox" aria-label="Results"></ul>
 <div class="jump-foot"><kbd>↑</kbd><kbd>↓</kbd> move<kbd>↵</kbd>open<kbd>esc</kbd>close</div>
 </dialog>`;
 }
 
-export function layout(title: string, content: string, opts: PageOpts = {}): string {
+// content and crumbs accept Html and string both while the view files are
+// being converted to the html`` tag; the string arm is trusted as it always
+// was, and goes away with the last manual template.
+export function layout(title: string, content: Html | string, opts: PageOpts = {}): string {
   // The theme name rides along as a query parameter so a changed theme busts
   // any cache in front of the stylesheets, and the stylesheet carries a tag of
   // its own contents so that an upgrade does too. Between them the sheet can
   // then be kept for good instead of revalidated on every navigation.
   const theme = activeTheme().name;
   const sheet = styleSheet(activeTheme()).tag;
-  return `<!doctype html>
+  const crumbs = opts.crumbs ?? '';
+  return html`<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)}</title>
+<title>${title}</title>
 <link rel="stylesheet" href="/assets/style.css?t=${encodeURIComponent(theme)}&amp;v=${sheet}">
 <link id="hl-css" rel="stylesheet" href="/assets/hl.css?t=${encodeURIComponent(theme)}">
 <link rel="stylesheet" href="/assets/katex/katex.css">
@@ -169,7 +172,7 @@ export function layout(title: string, content: string, opts: PageOpts = {}): str
 // vault's own theme is never shown for a frame first. The stylesheet carries
 // every theme's tokens, so this is one attribute; the code colours are a whole
 // stylesheet of their own and so are a second request when they differ.
-var cofferdamTheme = { vault: ${JSON.stringify(theme)}, dark: ${JSON.stringify(darkFor(activeTheme()))} };
+var cofferdamTheme = { vault: ${raw(JSON.stringify(theme))}, dark: ${raw(JSON.stringify(darkFor(activeTheme())))} };
 function applyTheme() {
   var pick = null;
   try { pick = localStorage.getItem('cofferdam.theme'); } catch (e) {}
@@ -200,11 +203,11 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme
 </script>
 </head>
 <body>
-<header class="topbar"><div class="container"><a class="brand" href="/">${WORDMARK}</a><span class="crumbs">${
-    opts.crumbs ?? ''
+<header class="topbar"><div class="container"><a class="brand" href="/">${raw(WORDMARK)}</a><span class="crumbs">${
+    typeof crumbs === 'string' ? raw(crumbs) : crumbs
   }</span><div class="userbox">${jumpButton()}${themeMenu()}${userBox(opts)}</div></div></header>
 <main class="container">
-${content}
+${typeof content === 'string' ? raw(content) : content}
 </main>
 ${jumpDialog(opts.jump ?? null)}
 <script>
@@ -457,7 +460,7 @@ function filterMenu(input) {
 }
 </script>
 </body>
-</html>`;
+</html>`.text;
 }
 
 export function repoOpts(ctx: RepoCtx, path?: string): PageOpts {
@@ -465,9 +468,9 @@ export function repoOpts(ctx: RepoCtx, path?: string): PageOpts {
   // head of the page. The bar is what stays in view once the reader has
   // scrolled into a long file or a long thread, so it is the one place that
   // can always answer "where am I, and how do I get back up from here".
-  const crumbs = ` / <a href="/${encodeURIComponent(ctx.collection)}">${esc(
-    ctx.collection
-  )}</a> / <a href="${repoUrl(ctx)}">${esc(ctx.repo)}</a>`;
+  const crumbs = html` / <a href="/${encodeURIComponent(ctx.collection)}">${ctx.collection}</a> / <a href="${repoUrl(
+    ctx
+  )}">${ctx.repo}</a>`;
   return { viewer: ctx.viewer, path, crumbs, jump: jumpContext(ctx) };
 }
 
@@ -505,23 +508,23 @@ function jumpContext(ctx: RepoCtx): JumpContext {
  * the idle and copied faces are both in the page and neither needs escaping
  * at click time.
  */
-export function copyButton(label = '', text?: string, title = ''): string {
+export function copyButton(label = '', text?: string, title = ''): Html {
   const face = (glyph: IconName, caption: string, cls: string) =>
-    `<span class="${cls}">${icon(glyph)}${label ? `<span>${esc(caption)}</span>` : ''}</span>`;
+    html`<span class="${cls}">${icon(glyph)}${label ? html`<span>${caption}</span>` : ''}</span>`;
   // With no text of its own the button copies the element before it, which is
   // how the command rows and the clone box use it.
-  const payload = text === undefined ? '' : ` data-copy="${esc(text)}"`;
-  return `<button class="copy-btn" type="button" onclick="copyCmd(this)"${payload}${
-    title ? ` title="${esc(title)}"` : ''
-  } aria-label="Copy${label ? ` ${esc(label.toLowerCase())}` : ''}">${face('copy', label, 'copy-idle')}${face(
+  const payload = text === undefined ? '' : html` data-copy="${text}"`;
+  return html`<button class="copy-btn" type="button" onclick="copyCmd(this)"${payload}${
+    title ? html` title="${title}"` : ''
+  } aria-label="Copy${label ? ` ${label.toLowerCase()}` : ''}">${face('copy', label, 'copy-idle')}${face(
     'check',
     'Copied',
     'copy-done'
   )}</button>`;
 }
 
-export function copyRow(cmd: string): string {
-  return `<div class="cmd-row"><code>${esc(cmd)}</code>${copyButton()}</div>`;
+export function copyRow(cmd: string): Html {
+  return html`<div class="cmd-row"><code>${cmd}</code>${copyButton()}</div>`;
 }
 
 /**
@@ -531,27 +534,28 @@ export function copyRow(cmd: string): string {
  * framework; the page script closes it on an outside click and filters the
  * list as you type.
  */
-function refPicker(ctx: RepoCtx, urlForRef: (ref: string) => string): string {
+function refPicker(ctx: RepoCtx, urlForRef: (ref: string) => string): Html {
   const isTag = ctx.tags.some((t) => t.name === ctx.ref);
   const known = isTag || ctx.branches.some((b) => b.name === ctx.ref);
   const item = (r: RefInfo) => {
     const current = r.name === ctx.ref;
-    return `<a class="dd-item${current ? ' current' : ''}" href="${esc(urlForRef(r.name))}">${
-      current ? icon('check', 'dd-check') : '<span class="dd-check"></span>'
-    }<span class="dd-label">${esc(r.name)}</span></a>`;
+    return html`<a class="dd-item${current ? ' current' : ''}" href="${urlForRef(r.name)}">${
+      current ? icon('check', 'dd-check') : raw('<span class="dd-check"></span>')
+    }<span class="dd-label">${r.name}</span></a>`;
   };
   const group = (label: string, refs: RefInfo[]) =>
     refs.length === 0
       ? ''
-      : `<div class="dd-group"><div class="dd-section">${label}</div>${refs.map(item).join('')}</div>`;
+      : html`<div class="dd-group"><div class="dd-section">${label}</div>${refs.map(item)}</div>`;
   // A ref that is neither branch nor tag is a raw commit the reader navigated
   // to; name it on the button so the picker never lies about where they are.
   const glyph = known ? (isTag ? 'tag' : 'git-branch') : 'git-commit';
   const shown = known ? ctx.ref : ctx.ref.slice(0, 7);
-  return `<details class="dropdown ref-picker">
-<summary class="btn" title="Switch branches or tags">${icon(glyph)}<b class="dd-current">${esc(
-    shown
-  )}</b>${icon('chevron-down', 'caret')}</summary>
+  return html`<details class="dropdown ref-picker">
+<summary class="btn" title="Switch branches or tags">${icon(glyph)}<b class="dd-current">${shown}</b>${icon(
+    'chevron-down',
+    'caret'
+  )}</summary>
 <div class="dropdown-menu">
   <input class="dd-filter" type="text" placeholder="Find a branch or tag" oninput="filterMenu(this)" aria-label="Filter branches and tags">
   <div class="dd-scroll">${group('Branches', ctx.branches)}${group('Tags', ctx.tags)}</div>
@@ -564,26 +568,26 @@ function refPicker(ctx: RepoCtx, urlForRef: (ref: string) => string): string {
  * watches for, so that t reaches the finder from any page that offers it, as
  * on GitHub.
  */
-function findButton(ctx: RepoCtx): string {
+function findButton(ctx: RepoCtx): Html {
   const href = `${repoUrl(ctx)}/find/${encPath(ctx.ref)}`;
-  return `<a class="btn" href="${href}" data-find-url="${href}" title="Go to file (t)">${icon(
+  return html`<a class="btn" href="${href}" data-find-url="${href}" title="Go to file (t)">${icon(
     'search'
   )}<span>Go to file</span></a>`;
 }
 
 /** The green Code button: the clone URL, and the source as an archive. */
-function cloneMenu(ctx: RepoCtx): string {
+function cloneMenu(ctx: RepoCtx): Html {
   const archive = (ext: string, label: string) =>
-    `<a class="dd-item" href="${repoUrl(ctx)}/archive/${encPath(ctx.ref)}.${ext}">${icon(
+    html`<a class="dd-item" href="${repoUrl(ctx)}/archive/${encPath(ctx.ref)}.${ext}">${icon(
       'file-zip'
     )}<span class="dd-label">${label}</span></a>`;
-  return `<details class="dropdown clone-menu">
+  return html`<details class="dropdown clone-menu">
 <summary class="btn btn-primary">${icon('code')}<span>Code</span>${icon('chevron-down', 'caret')}</summary>
 <div class="dropdown-menu dd-right">
   <div class="dd-section">Clone with HTTP</div>
-  <div class="cmd-row"><input readonly value="${esc(ctx.cloneUrl)}" onclick="this.select()">${copyButton()}</div>
+  <div class="cmd-row"><input readonly value="${ctx.cloneUrl}" onclick="this.select()">${copyButton()}</div>
   <p class="muted small">Anyone can clone. Pushing asks for a username and a token.</p>
-  <div class="dd-group"><div class="dd-section">Download ${esc(ctx.ref)}</div>
+  <div class="dd-group"><div class="dd-section">Download ${ctx.ref}</div>
 ${archive('zip', 'Source as zip')}${archive('tar.gz', 'Source as tar.gz')}</div>
 </div>
 </details>`;
@@ -592,30 +596,24 @@ ${archive('zip', 'Source as zip')}${archive('tar.gz', 'Source as tar.gz')}</div>
 export function repoHeader(
   ctx: RepoCtx,
   active: 'code' | 'commits' | 'issues' | 'pulls' | 'actions' | 'branches' | 'tags' | 'releases' | 'settings'
-): string {
+): Html {
   const base = repoUrl(ctx);
   const tab = (id: string, label: string, href: string, glyph: IconName, count?: number) =>
-    `<a class="tab${active === id ? ' active' : ''}" href="${href}">${icon(glyph)}<span>${label}</span>${
-      count !== undefined ? `<span class="counter">${count}</span>` : ''
+    html`<a class="tab${active === id ? ' active' : ''}" href="${href}">${icon(glyph)}<span>${label}</span>${
+      count !== undefined ? html`<span class="counter">${count}</span>` : ''
     }</a>`;
   // The search box rides in the title row, so searching this repository is a
   // keystroke away from every one of its pages.
-  const search = `<form class="repo-search" method="get" action="${base}/search" role="search"><input type="hidden" name="ref" value="${esc(
-    ctx.ref
-  )}"><input class="search-input" type="search" name="q" placeholder="Search this repository" aria-label="Search this repository">${icon(
+  const search = html`<form class="repo-search" method="get" action="${base}/search" role="search"><input type="hidden" name="ref" value="${ctx.ref}"><input class="search-input" type="search" name="q" placeholder="Search this repository" aria-label="Search this repository">${icon(
     'search',
     'search-glyph'
   )}</form>`;
   const parent = ctx.forkedFrom
-    ? `<div class="fork-note muted small">${icon('repo-forked')}<span>forked from <a href="/${encodeURIComponent(
+    ? html`<div class="fork-note muted small">${icon('repo-forked')}<span>forked from <a href="/${encodeURIComponent(
         ctx.forkedFrom.collection
-      )}/${encodeURIComponent(ctx.forkedFrom.repo)}">${esc(ctx.forkedFrom.collection)}/${esc(
-        ctx.forkedFrom.repo
-      )}</a></span></div>`
+      )}/${encodeURIComponent(ctx.forkedFrom.repo)}">${ctx.forkedFrom.collection}/${ctx.forkedFrom.repo}</a></span></div>`
     : '';
-  return `<div class="repo-title">${REPO_ICON}<a href="/${encodeURIComponent(ctx.collection)}">${esc(
-    ctx.collection
-  )}</a> <span class="muted">/</span> <a href="${base}"><b>${esc(ctx.repo)}</b></a>${search}</div>
+  return html`<div class="repo-title">${REPO_ICON}<a href="/${encodeURIComponent(ctx.collection)}">${ctx.collection}</a> <span class="muted">/</span> <a href="${base}"><b>${ctx.repo}</b></a>${search}</div>
 ${parent}
 <nav class="tabs">
 ${tab('code', 'Code', base, 'code')}
@@ -631,21 +629,21 @@ ${ctx.canPush || ctx.canAdmin ? tab('settings', 'Settings', `${base}/settings`, 
 </nav>`;
 }
 
-function breadcrumb(ctx: RepoCtx, path: string): string {
+function breadcrumb(ctx: RepoCtx, path: string): Html {
   const base = repoUrl(ctx);
   const parts = path === '' ? [] : path.split('/');
-  const pieces: string[] = [`<a href="${base}/tree/${encPath(ctx.ref)}">${esc(ctx.repo)}</a>`];
+  const pieces: Html[] = [html`<a href="${base}/tree/${encPath(ctx.ref)}">${ctx.repo}</a>`];
   let acc = '';
   parts.forEach((part, i) => {
     acc = acc === '' ? part : `${acc}/${part}`;
     const last = i === parts.length - 1;
     if (last) {
-      pieces.push(`<b>${esc(part)}</b>`);
+      pieces.push(html`<b>${part}</b>`);
     } else {
-      pieces.push(`<a href="${base}/tree/${encPath(ctx.ref)}/${encPath(acc)}">${esc(part)}</a>`);
+      pieces.push(html`<a href="${base}/tree/${encPath(ctx.ref)}/${encPath(acc)}">${part}</a>`);
     }
   });
-  return `<span class="crumb">${pieces.join(' / ')}</span>`;
+  return html`<span class="crumb">${joinHtml(pieces, ' / ')}</span>`;
 }
 
 /**
@@ -654,15 +652,13 @@ function breadcrumb(ctx: RepoCtx, path: string): string {
  * it is: a way to find a name you already know in a list you can already see.
  * Short lists do not get one, since scanning five names is faster than typing.
  */
-function listFilter(target: string, placeholder: string, rowCount: number): string {
+function listFilter(target: string, placeholder: string, rowCount: number): Html | '' {
   if (rowCount <= 5) return '';
-  return `<div class="toolbar"><div class="left"><input class="list-filter" type="text" placeholder="${esc(
-    placeholder
-  )}" data-target="${esc(target)}" oninput="filterRows(this)" aria-label="${esc(placeholder)}"></div></div>`;
+  return html`<div class="toolbar"><div class="left"><input class="list-filter" type="text" placeholder="${placeholder}" data-target="${target}" oninput="filterRows(this)" aria-label="${placeholder}"></div></div>`;
 }
 
-function noMatches(target: string): string {
-  return `<div class="empty-state" id="${esc(target)}-empty" hidden>No match.</div>`;
+function noMatches(target: string): Html {
+  return html`<div class="empty-state" id="${target}-empty" hidden>No match.</div>`;
 }
 
 /** One repository as a listing shows it, on the front page or in a collection. */
@@ -685,12 +681,10 @@ const CI_MARKS: Record<string, { glyph: IconName; label: string }> = {
   skipped: { glyph: 'skip', label: 'skipped' },
 };
 
-function ciMark(ci: NonNullable<RepoCard['ci']>, repoName: string): string {
+function ciMark(ci: NonNullable<RepoCard['ci']>, repoName: string): Html {
   const state = ci.running ? 'running' : (ci.conclusion ?? 'skipped');
   const mark = CI_MARKS[state] ?? CI_MARKS.skipped;
-  return `<a class="ci-mark ci-${esc(state)}" href="${esc(ci.url)}" aria-label="Last workflow run for ${esc(
-    repoName
-  )}: ${mark.label}" title="Last workflow run ${mark.label}">${icon(mark.glyph)}</a>`;
+  return html`<a class="ci-mark ci-${state}" href="${ci.url}" aria-label="Last workflow run for ${repoName}: ${mark.label}" title="Last workflow run ${mark.label}">${icon(mark.glyph)}</a>`;
 }
 
 /**
@@ -700,21 +694,17 @@ function ciMark(ci: NonNullable<RepoCard['ci']>, repoName: string): string {
  * passed. The name is the only link that fills the card, so the site and the
  * build are reachable without opening the repository to find them.
  */
-function repoCard(r: RepoCard, showCollection: boolean): string {
+function repoCard(r: RepoCard, showCollection: boolean): Html {
   const href = `/${encodeURIComponent(r.collection)}/${encodeURIComponent(r.name)}`;
-  const prefix = showCollection
-    ? `<span class="rc-collection">${esc(r.collection)}/</span>`
-    : '';
+  const prefix = showCollection ? html`<span class="rc-collection">${r.collection}/</span>` : '';
   const site = r.siteUrl
-    ? `<a class="site-link" href="${esc(r.siteUrl)}" title="Site" aria-label="Site for ${esc(r.name)}">${icon(
-        'globe'
-      )}</a>`
+    ? html`<a class="site-link" href="${r.siteUrl}" title="Site" aria-label="Site for ${r.name}">${icon('globe')}</a>`
     : '';
   const ci = r.ci ? ciMark(r.ci, r.name) : '';
-  const desc = r.description ? `<p class="rc-desc">${esc(r.description)}</p>` : '';
-  const when = r.updated ? `<span class="rc-when">${timeTag(r.updated)}</span>` : '';
-  return `<li class="repo-card">
-<div class="rc-top"><a class="rc-name" href="${href}">${prefix}${esc(r.name)}</a><span class="rc-marks">${site}${ci}</span></div>
+  const desc = r.description ? html`<p class="rc-desc">${r.description}</p>` : '';
+  const when = r.updated ? html`<span class="rc-when">${timeTag(r.updated)}</span>` : '';
+  return html`<li class="repo-card">
+<div class="rc-top"><a class="rc-name" href="${href}">${prefix}${r.name}</a><span class="rc-marks">${site}${ci}</span></div>
 ${desc}
 <div class="rc-meta">${when}</div>
 </li>`;
@@ -729,7 +719,7 @@ ${desc}
 function repoListing(
   repos: RepoCard[],
   opts: { showCollection: boolean; sort: 'recent' | 'name'; sortBase: string }
-): string {
+): Html {
   const sorted = [...repos];
   if (opts.sort === 'name') {
     sorted.sort((a, b) => a.name.localeCompare(b.name) || a.collection.localeCompare(b.collection));
@@ -737,16 +727,17 @@ function repoListing(
     sorted.sort((a, b) => (b.updated ?? '').localeCompare(a.updated ?? ''));
   }
   const sortLink = (id: 'recent' | 'name', label: string) =>
-    `<a${opts.sort === id ? ' class="current" aria-current="true"' : ''} href="${opts.sortBase}${
+    html`<a${opts.sort === id ? raw(' class="current" aria-current="true"') : ''} href="${opts.sortBase}${
       id === 'recent' ? '' : `?sort=${id}`
     }">${label}</a>`;
-  const controls = `<div class="listing-controls">
+  const controls = html`<div class="listing-controls">
 <input class="list-filter" type="text" placeholder="Filter repositories" data-target="repo-list" oninput="filterCards(this)" aria-label="Filter repositories">
 <span class="seg">${sortLink('recent', 'Recent')}${sortLink('name', 'A–Z')}</span>
 </div>`;
-  return `${repos.length > 5 ? controls : ''}<ul class="repo-grid" id="repo-list">${sorted
-    .map((r) => repoCard(r, opts.showCollection))
-    .join('\n')}</ul>${noMatches('repo-list')}`;
+  return html`${repos.length > 5 ? controls : ''}<ul class="repo-grid" id="repo-list">${joinHtml(
+    sorted.map((r) => repoCard(r, opts.showCollection)),
+    '\n'
+  )}</ul>${noMatches('repo-list')}`;
 }
 
 export function homePage(
@@ -758,23 +749,21 @@ export function homePage(
 ): string {
   const total = repos.length;
   const chips = collections.length
-    ? `<nav class="collection-chips" aria-label="Collections">${collections
-        .map(
-          (c) =>
-            `<a class="coll-chip" href="/${encodeURIComponent(c.name)}">${avatar(c.name, 18, 'square')}<span>${esc(
-              c.name
-            )}</span><span class="coll-count">${c.repoCount}</span></a>`
-        )
-        .join('')}</nav>`
+    ? html`<nav class="collection-chips" aria-label="Collections">${collections.map(
+        (c) =>
+          html`<a class="coll-chip" href="/${encodeURIComponent(c.name)}">${avatar(c.name, 18, 'square')}<span>${
+            c.name
+          }</span><span class="coll-count">${c.repoCount}</span></a>`
+      )}</nav>`
     : '';
   const body =
     total === 0
-      ? `<div class="empty-state">No repositories yet.${
+      ? html`<div class="empty-state">No repositories yet.${
           viewer ? ' Create one with the buttons above, or push to a new path.' : ''
         } <a href="/about">What is this?</a></div>`
       : repoListing(repos, { showCollection: true, sort, sortBase: '/' });
   const newBtn = viewer
-    ? `<a class="btn" href="/new/collection">${icon('plus')}<span>New collection</span></a><a class="btn btn-primary" href="/new">${icon(
+    ? html`<a class="btn" href="/new/collection">${icon('plus')}<span>New collection</span></a><a class="btn btn-primary" href="/new">${icon(
         'plus'
       )}<span>New repository</span></a>`
     : '';
@@ -783,19 +772,17 @@ export function homePage(
   const summary =
     total === 0
       ? ''
-      : `<p class="lede">${total} ${total === 1 ? 'repository' : 'repositories'} in ${collections.length} ${
+      : html`<p class="lede">${total} ${total === 1 ? 'repository' : 'repositories'} in ${collections.length} ${
           collections.length === 1 ? 'collection' : 'collections'
         }. <a class="muted" href="/about">What is this?</a></p>`;
-  const content = `<div class="page-head"><h1>Repositories</h1><span class="right-group">${newBtn}</span></div>
+  const content = html`<div class="page-head"><h1>Repositories</h1><span class="right-group">${newBtn}</span></div>
 ${summary}
 ${chips}
 ${body}
 ${
     // Where the vault sits on disk is the operator's business and not a
     // visitor's, so the path is shown to someone who could act on it.
-    viewerIsAdmin(viewer)
-      ? `<p class="muted small vault-note">Serving ${esc(rootLabel)}</p>`
-      : ''
+    viewerIsAdmin(viewer) ? html`<p class="muted small vault-note">Serving ${rootLabel}</p>` : ''
   }`;
   return layout('cofferdam', content, { viewer, path: '/' });
 }
@@ -807,7 +794,7 @@ ${
  * docs a visitor cannot reach.
  */
 export function aboutPage(baseUrl: string, viewer: Viewer | null): string {
-  const content = `<div class="about-page">
+  const content = html`<div class="about-page">
 <h1>About this vault</h1>
 <p class="lede">This site is a <i>vault</i>: a self-hosted git forge run by its operator, holding git repositories
 grouped into collections.</p>
@@ -853,7 +840,7 @@ export function collectionPage(
 ): string {
   const body =
     repoList.length === 0
-      ? `<div class="empty-state">No repositories in this collection yet.${
+      ? html`<div class="empty-state">No repositories in this collection yet.${
           viewer ? ' Create one with the buttons above, or push to a new path.' : ''
         }</div>`
       : repoListing(repoList, {
@@ -862,10 +849,10 @@ export function collectionPage(
           sortBase: `/${encodeURIComponent(collection)}`,
         });
   const settingsBtn = canAdminCollection
-    ? `<a class="btn" href="/${encodeURIComponent(collection)}/settings">${icon('sliders')}<span>Settings</span></a>`
+    ? html`<a class="btn" href="/${encodeURIComponent(collection)}/settings">${icon('sliders')}<span>Settings</span></a>`
     : '';
   const newBtn = viewer
-    ? `<a class="btn" href="/import?collection=${encodeURIComponent(collection)}">${icon(
+    ? html`<a class="btn" href="/import?collection=${encodeURIComponent(collection)}">${icon(
         'download'
       )}<span>Import</span></a><a class="btn btn-primary" href="/new?collection=${encodeURIComponent(
         collection
@@ -875,19 +862,17 @@ export function collectionPage(
   // the collection, and only while there is none: a page with a profile says
   // what it has to say, and the file is edited from the repository holding it.
   const profileBox = profile?.readme
-    ? `<div class="box profile-box" id="profile"><div class="box-header">${icon('book')}<a href="${
+    ? html`<div class="box profile-box" id="profile"><div class="box-header">${icon('book')}<a href="${
         profile.readme.url
-      }">${esc(profile.readme.name)}</a></div><div class="box-body markdown-body">${profile.readme.html}</div></div>`
+      }">${profile.readme.name}</a></div><div class="box-body markdown-body">${raw(profile.readme.html)}</div></div>`
     : profile && canAdminCollection
-      ? `<p class="muted small profile-hint">This collection has no profile README. <a href="${
+      ? html`<p class="muted small profile-hint">This collection has no profile README. <a href="${
           profile.addUrl
         }">Add one</a> at <span class="mono">.cofferdam/profile/README.md</span> to introduce it here.</p>`
       : '';
-  const content = `<div class="page-head"><h1 class="with-avatar">${avatar(collection, 28, 'square')}${esc(
-    collection
-  )}</h1><span class="right-group">${settingsBtn}${newBtn}</span></div>${profileBox}${body}`;
+  const content = html`<div class="page-head"><h1 class="with-avatar">${avatar(collection, 28, 'square')}${collection}</h1><span class="right-group">${settingsBtn}${newBtn}</span></div>${profileBox}${body}`;
   return layout(collection, content, {
-    crumbs: ` / <a href="/${encodeURIComponent(collection)}">${esc(collection)}</a>`,
+    crumbs: html` / <a href="/${encodeURIComponent(collection)}">${collection}</a>`,
     viewer,
     path: `/${encodeURIComponent(collection)}`,
   });
@@ -925,21 +910,17 @@ function count(n: number): string {
  * of style.ts); they come from the table in languages.ts and never from
  * anything a repository contains.
  */
-function languagesBlock(languages: LanguageStat[]): string {
+function languagesBlock(languages: LanguageStat[]): Html | '' {
   if (languages.length === 0) return '';
   const pct = (share: number) => `${share.toFixed(1)}%`;
-  const segments = languages
-    .map((l) => `<span class="lang-seg" style="width:${l.share.toFixed(2)}%;background:${l.color}"></span>`)
-    .join('');
-  const items = languages
-    .map(
-      (l) =>
-        `<li><span class="lang-dot" style="background:${l.color}"></span><span class="lang-name">${esc(
-          l.name
-        )}</span> <span class="lang-pct muted">${pct(l.share)}</span></li>`
-    )
-    .join('');
-  return `<div class="side-block">
+  const segments = languages.map(
+    (l) => html`<span class="lang-seg" style="width:${l.share.toFixed(2)}%;background:${l.color}"></span>`
+  );
+  const items = languages.map(
+    (l) =>
+      html`<li><span class="lang-dot" style="background:${l.color}"></span><span class="lang-name">${l.name}</span> <span class="lang-pct muted">${pct(l.share)}</span></li>`
+  );
+  return html`<div class="side-block">
   <h3>Languages</h3>
   <div class="lang-bar" aria-hidden="true">${segments}</div>
   <ul class="lang-list">${items}</ul>
@@ -962,7 +943,7 @@ const SHOWN_CONTRIBUTORS = 12;
 function contributorsBlock(
   ctx: RepoCtx,
   people: { name: string; email: string; commits: number; account?: string | null }[]
-): string {
+): Html | '' {
   if (people.length === 0) return '';
   const base = repoUrl(ctx);
   // A contributor with an account gets the account's identicon, so the same
@@ -972,67 +953,66 @@ function contributorsBlock(
     .slice(0, SHOWN_CONTRIBUTORS)
     .map(
       (p) =>
-        `<a class="contributor" href="${base}/commits/${encPath(ctx.ref)}?author=${encodeURIComponent(
+        html`<a class="contributor" href="${base}/commits/${encPath(ctx.ref)}?author=${encodeURIComponent(
           p.email || p.name
-        )}" title="${esc(p.name)} - ${count(p.commits)} commit${p.commits === 1 ? '' : 's'}">${avatar(
+        )}" title="${p.name} - ${count(p.commits)} commit${p.commits === 1 ? '' : 's'}">${avatar(
           p.account ?? (p.email || p.name),
           28
         )}</a>`
-    )
-    .join('');
+    );
   const more =
     people.length > SHOWN_CONTRIBUTORS
-      ? `<span class="muted small">+${count(people.length - SHOWN_CONTRIBUTORS)} more</span>`
+      ? html`<span class="muted small">+${count(people.length - SHOWN_CONTRIBUTORS)} more</span>`
       : '';
-  return `<div class="side-block">
+  return html`<div class="side-block">
   <h3>Contributors <span class="counter">${count(people.length)}</span></h3>
   <div class="contributors">${faces}${more}</div>
 </div>`;
 }
 
-function aboutPanel(ctx: RepoCtx, view: TreeView): string {
+function aboutPanel(ctx: RepoCtx, view: TreeView): Html {
   const base = repoUrl(ctx);
   const blob = (name: string) => `${base}/blob/${encPath(ctx.ref)}/${encPath(name)}`;
   const license = view.entries.find(
     (e) => e.type === 'blob' && /^(licen[cs]e|copying)(\.[a-z]+)?$/i.test(e.name)
   );
-  const links: string[] = [];
-  if (view.readmeName) links.push(`<a href="#readme">${icon('book')}<span>Readme</span></a>`);
-  if (license) links.push(`<a href="${blob(license.name)}">${icon('law')}<span>${esc(license.name)}</span></a>`);
-  if (ctx.hasSite) links.push(`<a href="${ctx.siteUrl}">${icon('globe')}<span>Site</span></a>`);
+  const links: Html[] = [];
+  if (view.readmeName) links.push(html`<a href="#readme">${icon('book')}<span>Readme</span></a>`);
+  if (license) links.push(html`<a href="${blob(license.name)}">${icon('law')}<span>${license.name}</span></a>`);
+  if (ctx.hasSite) links.push(html`<a href="${ctx.siteUrl}">${icon('globe')}<span>Site</span></a>`);
   if (ctx.releases.length)
     links.push(
-      `<a href="${base}/releases">${icon('rocket')}<span>${count(ctx.releases.length)} release${
+      html`<a href="${base}/releases">${icon('rocket')}<span>${count(ctx.releases.length)} release${
         ctx.releases.length === 1 ? '' : 's'
       }</span></a>`
     );
   const settings =
     ctx.canPush || ctx.canAdmin
-      ? `<a class="side-edit" href="${base}/settings" title="Edit repository details" aria-label="Edit repository details">${icon(
+      ? html`<a class="side-edit" href="${base}/settings" title="Edit repository details" aria-label="Edit repository details">${icon(
           'sliders'
         )}</a>`
       : '';
   const description = view.description
-    ? `<p class="side-desc">${esc(view.description)}</p>`
-    : `<p class="side-desc muted">No description provided.</p>`;
+    ? html`<p class="side-desc">${view.description}</p>`
+    : html`<p class="side-desc muted">No description provided.</p>`;
   const facts = [
-    `<a href="${base}/commits/${encPath(ctx.ref)}">${icon('history')}<span>${count(view.commitCount)} commit${
+    html`<a href="${base}/commits/${encPath(ctx.ref)}">${icon('history')}<span>${count(view.commitCount)} commit${
       view.commitCount === 1 ? '' : 's'
     }</span></a>`,
-    `<a href="${base}/branches">${icon('git-branch')}<span>${count(ctx.branches.length)} branch${
+    html`<a href="${base}/branches">${icon('git-branch')}<span>${count(ctx.branches.length)} branch${
       ctx.branches.length === 1 ? '' : 'es'
     }</span></a>`,
-    `<a href="${base}/tags">${icon('tag')}<span>${count(ctx.tags.length)} tag${ctx.tags.length === 1 ? '' : 's'}</span></a>`,
+    html`<a href="${base}/tags">${icon('tag')}<span>${count(ctx.tags.length)} tag${ctx.tags.length === 1 ? '' : 's'}</span></a>`,
   ];
   // The documents a reader looks for and the counts they navigate by are both
   // facts about the repository, so they sit in the one About block rather than
   // under a second rule with no caption on it. A hairline keeps them apart.
-  return `<aside class="repo-side">
+  return html`<aside class="repo-side">
 <div class="side-block">
   <h3>About${settings}</h3>
   ${description}
-  ${links.length ? `<div class="side-links">${links.join('')}</div><hr class="rule">` : ''}
-  <div class="side-links">${facts.join('')}</div>
+  ${links.length ? html`<div class="side-links">${links}</div><hr class="rule">` : ''}
+  <div class="side-links">${facts}</div>
 </div>
 ${contributorsBlock(ctx, view.contributors)}
 ${languagesBlock(view.languages)}
@@ -1044,42 +1024,39 @@ export function treePage(ctx: RepoCtx, view: TreeView): string {
   const { path, entries } = view;
   const refBase = `${base}/tree/${encPath(ctx.ref)}`;
   const atRoot = path === '';
-  const rows: string[] = [];
+  const rows: Html[] = [];
   if (!atRoot) {
     const parent = path.split('/').slice(0, -1).join('/');
     const up = parent === '' ? refBase : `${refBase}/${encPath(parent)}`;
-    rows.push(`<tr><td class="tree-name"><a href="${up}" aria-label="Parent directory">..</a></td><td></td><td></td></tr>`);
+    rows.push(html`<tr><td class="tree-name"><a href="${up}" aria-label="Parent directory">..</a></td><td></td><td></td></tr>`);
   }
   for (const e of entries) {
     const childPath = atRoot ? e.name : `${path}/${e.name}`;
-    let name: string;
+    let name: Html;
     if (e.type === 'tree') {
-      name = `${FOLDER_ICON}<a href="${refBase}/${encPath(childPath)}">${esc(e.name)}</a>`;
+      name = html`${FOLDER_ICON}<a href="${refBase}/${encPath(childPath)}">${e.name}</a>`;
     } else if (e.type === 'blob') {
-      name = `${FILE_ICON}<a href="${base}/blob/${encPath(ctx.ref)}/${encPath(childPath)}">${esc(e.name)}</a>`;
+      name = html`${FILE_ICON}<a href="${base}/blob/${encPath(ctx.ref)}/${encPath(childPath)}">${e.name}</a>`;
     } else {
-      name = `${FOLDER_ICON}<span>${esc(e.name)}</span> <span class="muted small mono">@ ${e.sha.slice(
-        0,
-        7
-      )}</span>`;
+      name = html`${FOLDER_ICON}<span>${e.name}</span> <span class="muted small mono">@ ${e.sha.slice(0, 7)}</span>`;
     }
     // The message and age columns are what a directory listing on GitHub
     // shows, and they answer the question a listing is usually asked: what
     // changed here lately.
     const commit = view.entryCommits.get(childPath);
     const message = commit
-      ? `<a href="${base}/commit/${commit.sha}" title="${esc(commit.subject)}">${esc(commit.subject)}</a>`
+      ? html`<a href="${base}/commit/${commit.sha}" title="${commit.subject}">${commit.subject}</a>`
       : '';
     rows.push(
-      `<tr><td class="tree-name">${name}</td><td class="tree-message muted small">${message}</td><td class="tree-age right small">${
+      html`<tr><td class="tree-name">${name}</td><td class="tree-message muted small">${message}</td><td class="tree-age right small">${
         commit ? timeTag(commit.date) : ''
       }</td></tr>`
     );
   }
   const latest = view.latest;
   const latestBar = latest
-    ? `<div class="latest-commit">
-  <span class="lc-main"><b>${esc(latest.author)}</b> <a href="${base}/commit/${latest.sha}">${esc(latest.subject)}</a></span>
+    ? html`<div class="latest-commit">
+  <span class="lc-main"><b>${latest.author}</b> <a href="${base}/commit/${latest.sha}">${latest.subject}</a></span>
   <span class="lc-meta"><a class="sha" href="${base}/commit/${latest.sha}">${latest.sha.slice(
         0,
         7
@@ -1091,13 +1068,13 @@ export function treePage(ctx: RepoCtx, view: TreeView): string {
   const addFileUrl = `${base}/new/${encPath(ctx.ref)}${atRoot ? '' : `/${encPath(path)}`}`;
   // The history of this directory, which at the root is the history of the
   // repository: the same button GitHub puts above a listing.
-  const historyBtn = `<a class="btn" href="${base}/commits/${encPath(ctx.ref)}${
+  const historyBtn = html`<a class="btn" href="${base}/commits/${encPath(ctx.ref)}${
     atRoot ? '' : `/${encPath(path)}`
   }" title="Commits touching this directory">${icon('history')}<span>History</span></a>`;
   // Forking is offered to anyone who can sign in; where the copy may go is
   // settled on the form, where the answer can be explained.
   const forkBtn = atRoot
-    ? `<a class="btn" href="${
+    ? html`<a class="btn" href="${
         ctx.viewer ? `${base}/fork` : `/login?next=${encodeURIComponent(`${base}/fork`)}`
       }" title="Copy this repository elsewhere in the vault">${icon('repo-forked')}<span>Fork</span></a>`
     : '';
@@ -1105,7 +1082,7 @@ export function treePage(ctx: RepoCtx, view: TreeView): string {
   const uploadUrl = `${base}/upload/${encPath(ctx.ref)}${atRoot ? '' : `/${encPath(path)}`}`;
   const addFileBtn =
     ctx.canPush && ctx.refIsBranch
-      ? `<details class="dropdown">
+      ? html`<details class="dropdown">
 <summary class="btn">${icon('plus')}<span>Add file</span>${icon('chevron-down', 'caret')}</summary>
 <div class="dropdown-menu dd-right">
 <a class="dd-item" href="${addFileUrl}">${icon('file')}<span class="dd-label">Create new file</span></a>
@@ -1115,13 +1092,13 @@ export function treePage(ctx: RepoCtx, view: TreeView): string {
       : '';
   const readmePath = atRoot ? view.readmeName : `${path}/${view.readmeName}`;
   const readme = view.readmeHtml
-    ? `<div class="box" id="readme"><div class="box-header">${icon('book')}<a href="${base}/blob/${encPath(
+    ? html`<div class="box" id="readme"><div class="box-header">${icon('book')}<a href="${base}/blob/${encPath(
         ctx.ref
-      )}/${encPath(readmePath ?? 'README')}">${esc(view.readmeName ?? 'README')}</a></div><div class="box-body markdown-body">${
+      )}/${encPath(readmePath ?? 'README')}">${view.readmeName ?? 'README'}</a></div><div class="box-body markdown-body">${raw(
         view.readmeHtml
-      }</div></div>`
+      )}</div></div>`
     : '';
-  const content = `${repoHeader(ctx, 'code')}
+  const content = html`${repoHeader(ctx, 'code')}
 <div class="toolbar">
   <div class="left">${refPicker(ctx, (ref) => `${base}/tree/${encPath(ref)}`)}${breadcrumb(ctx, path)}</div>
   <div class="right-group">${findButton(ctx)}${historyBtn}${forkBtn}${addFileBtn}${cloneMenu(ctx)}</div>
@@ -1129,7 +1106,7 @@ export function treePage(ctx: RepoCtx, view: TreeView): string {
 <div class="repo-layout">
 <div class="repo-main">
 ${latestBar}
-<table class="listing tree"><tbody>${rows.join('')}</tbody></table>
+<table class="listing tree"><tbody>${rows}</tbody></table>
 ${readme}
 </div>
 ${atRoot ? aboutPanel(ctx, view) : ''}
@@ -1166,7 +1143,7 @@ export interface SearchView {
  * A long line is cut around its first match: a result list is for finding the
  * file, not for reading it.
  */
-function markMatches(text: string, query: string): string {
+function markMatches(text: string, query: string): Html {
   const hay = text.toLowerCase();
   const needle = query.toLowerCase();
   let from = needle === '' ? -1 : hay.indexOf(needle);
@@ -1187,57 +1164,49 @@ function markMatches(text: string, query: string): string {
     at = i + needle.length;
   }
   out += esc(cut.slice(at));
-  return `${start > 0 ? '&hellip;' : ''}${out}${start + cut.length < text.length ? '&hellip;' : ''}`;
+  // Escaped by hand above, around positions found in the raw text; the whole
+  // is therefore already HTML.
+  return raw(`${start > 0 ? '&hellip;' : ''}${out}${start + cut.length < text.length ? '&hellip;' : ''}`);
 }
 
 /** Search results: the matching lines, grouped by the file they are in. */
 export function searchPage(ctx: RepoCtx, query: string, view: SearchView): string {
   const base = repoUrl(ctx);
   const searchUrl = (ref: string) => `${base}/search?q=${encodeURIComponent(query)}&ref=${encodeURIComponent(ref)}`;
-  const form = `<form class="search-form" method="get" action="${base}/search" role="search"><input type="hidden" name="ref" value="${esc(
-    ctx.ref
-  )}"><input class="search-input" type="search" name="q" value="${esc(
-    query
-  )}" placeholder="Search this repository" aria-label="Search this repository" autofocus>${icon(
+  const form = html`<form class="search-form" method="get" action="${base}/search" role="search"><input type="hidden" name="ref" value="${ctx.ref}"><input class="search-input" type="search" name="q" value="${query}" placeholder="Search this repository" aria-label="Search this repository" autofocus>${icon(
     'search',
     'search-glyph'
   )}</form>`;
-  const boxes = view.files
-    .map((f) => {
-      const fileUrl = `${base}/blob/${encPath(ctx.ref)}/${encPath(f.path)}`;
-      const lines = f.hits
-        .map(
-          (h) =>
-            `<a class="search-hit" href="${fileUrl}#L${h.line}"><span class="lnum">${h.line}</span><span class="ltext">${markMatches(
-              h.text,
-              query
-            )}</span></a>`
-        )
-        .join('');
-      const more = f.more
-        ? `<a class="search-more" href="${fileUrl}">${count(f.more)} more match${
-            f.more === 1 ? '' : 'es'
-          } in this file</a>`
-        : '';
-      return `<div class="box search-file"><div class="box-header">${FILE_ICON}<a href="${fileUrl}">${esc(
-        f.path
-      )}</a></div><div class="search-hits">${lines}${more}</div></div>`;
-    })
-    .join('');
+  const boxes = view.files.map((f) => {
+    const fileUrl = `${base}/blob/${encPath(ctx.ref)}/${encPath(f.path)}`;
+    const lines = f.hits.map(
+      (h) =>
+        html`<a class="search-hit" href="${fileUrl}#L${h.line}"><span class="lnum">${h.line}</span><span class="ltext">${markMatches(
+          h.text,
+          query
+        )}</span></a>`
+    );
+    const more = f.more
+      ? html`<a class="search-more" href="${fileUrl}">${count(f.more)} more match${
+          f.more === 1 ? '' : 'es'
+        } in this file</a>`
+      : '';
+    return html`<div class="box search-file"><div class="box-header">${FILE_ICON}<a href="${fileUrl}">${f.path}</a></div><div class="search-hits">${lines}${more}</div></div>`;
+  });
   const notes: string[] = [];
   if (view.truncated) notes.push('There were more matches than this page can show.');
   if (view.capped) notes.push('Matches in further files were left out.');
-  let body: string;
+  let body: Html;
   if (query.trim() === '') {
-    body = `<div class="empty-state">Type to search the files at ${esc(ctx.ref)}. Matching is literal text, not a pattern.</div>`;
+    body = html`<div class="empty-state">Type to search the files at ${ctx.ref}. Matching is literal text, not a pattern.</div>`;
   } else if (view.files.length === 0) {
-    body = `<div class="empty-state">No file at ${esc(ctx.ref)} contains ${esc(query)}.</div>`;
+    body = html`<div class="empty-state">No file at ${ctx.ref} contains ${query}.</div>`;
   } else {
-    body = `<p class="muted small">${count(view.total)} matching line${view.total === 1 ? '' : 's'} in ${count(
+    body = html`<p class="muted small">${count(view.total)} matching line${view.total === 1 ? '' : 's'} in ${count(
       view.files.length
-    )} file${view.files.length === 1 ? '' : 's'}${notes.length ? ` &middot; ${esc(notes.join(' '))}` : ''}</p>${boxes}`;
+    )} file${view.files.length === 1 ? '' : 's'}${notes.length ? html` &middot; ${notes.join(' ')}` : ''}</p>${boxes}`;
   }
-  const content = `${repoHeader(ctx, 'code')}
+  const content = html`${repoHeader(ctx, 'code')}
 <div class="toolbar">
   <div class="left">${refPicker(ctx, searchUrl)}${form}</div>
   <div class="right-group">${findButton(ctx)}</div>
@@ -1252,20 +1221,18 @@ ${body}`;
 
 export function findFilePage(ctx: RepoCtx, paths: string[], total: number): string {
   const base = repoUrl(ctx);
-  const items = paths
-    .map((p) => {
-      const cut = p.lastIndexOf('/');
-      const dir = cut === -1 ? '' : `<span class="muted">${esc(p.slice(0, cut + 1))}</span>`;
-      return `<a class="find-item" href="${base}/blob/${encPath(ctx.ref)}/${encPath(p)}">${FILE_ICON}<span>${dir}${esc(
-        p.slice(cut + 1)
-      )}</span></a>`;
-    })
-    .join('');
+  const items = paths.map((p) => {
+    const cut = p.lastIndexOf('/');
+    const dir = cut === -1 ? '' : html`<span class="muted">${p.slice(0, cut + 1)}</span>`;
+    return html`<a class="find-item" href="${base}/blob/${encPath(ctx.ref)}/${encPath(p)}">${FILE_ICON}<span>${dir}${p.slice(
+      cut + 1
+    )}</span></a>`;
+  });
   const capped =
     total > paths.length
-      ? `<p class="muted small">Showing the first ${count(paths.length)} of ${count(total)} files.</p>`
+      ? html`<p class="muted small">Showing the first ${count(paths.length)} of ${count(total)} files.</p>`
       : '';
-  const content = `${repoHeader(ctx, 'code')}
+  const content = html`${repoHeader(ctx, 'code')}
 <div class="toolbar">
   <div class="left">${refPicker(ctx, (ref) => `${base}/find/${encPath(ref)}`)}<span class="muted small">${count(
     total
@@ -1299,7 +1266,7 @@ export function blobPage(
   const rawUrl = `${base}/raw/${encPath(ctx.ref)}/${encPath(path)}`;
   const editable = (view.kind === 'code' || view.kind === 'markdown') && view.editable;
   const editBtns = editable
-    ? `<a class="btn" href="${base}/edit/${encPath(ctx.ref)}/${encPath(path)}" title="Edit this file">${icon(
+    ? html`<a class="btn" href="${base}/edit/${encPath(ctx.ref)}/${encPath(path)}" title="Edit this file">${icon(
         'pencil'
       )}<span>Edit</span></a><a class="btn btn-danger-outline" href="${base}/delete/${encPath(ctx.ref)}/${encPath(
         path
@@ -1307,65 +1274,64 @@ export function blobPage(
     : '';
   // GitHub spells the source view of a rendered file ?plain=1; we follow that.
   const seg = (label: string, glyph: IconName, href: string, current: boolean) =>
-    `<a${current ? ' class="current"' : ''} href="${href}">${icon(glyph)}<span>${label}</span></a>`;
+    html`<a${current ? raw(' class="current"') : ''} href="${href}">${icon(glyph)}<span>${label}</span></a>`;
   const toggle = isMarkdown
-    ? `<span class="seg">${seg('Preview', 'book', blobUrl, view.kind === 'markdown')}${seg(
+    ? html`<span class="seg">${seg('Preview', 'book', blobUrl, view.kind === 'markdown')}${seg(
         'Code',
         'code',
         `${blobUrl}?plain=1`,
         view.kind !== 'markdown'
       )}</span>`
     : '';
-  let body = '';
-  const historyBtn = `<a class="btn" href="${base}/commits/${encPath(ctx.ref)}/${encPath(
+  let body: Html;
+  const historyBtn = html`<a class="btn" href="${base}/commits/${encPath(ctx.ref)}/${encPath(
     path
   )}" title="Commits touching this file">${icon('history')}<span>History</span></a>`;
   // Blame is for anything we render as text, which includes a markdown file
   // being shown as a document rather than as source.
   const blameBtn =
     view.kind === 'code' || view.kind === 'markdown'
-      ? `<a class="btn" href="${base}/blame/${encPath(ctx.ref)}/${encPath(
+      ? html`<a class="btn" href="${base}/blame/${encPath(ctx.ref)}/${encPath(
           path
         )}" title="Who last changed each line">${icon('versions')}<span>Blame</span></a>`
       : '';
-  const meta = (left: string, extra = '') =>
-    `<div class="code-meta"><span class="muted small">${left}</span><span class="right-group">${toggle}${extra}${blameBtn}${historyBtn}<a class="btn" href="${rawUrl}" title="View the file as it was committed">${icon(
+  const meta = (left: Html | string, extra: Html | '' = '') =>
+    html`<div class="code-meta"><span class="muted small">${left}</span><span class="right-group">${toggle}${extra}${blameBtn}${historyBtn}<a class="btn" href="${rawUrl}" title="View the file as it was committed">${icon(
       'download'
     )}<span>Raw</span></a>${editBtns}</span></div>`;
   if (view.kind === 'code') {
     // One element per line, each an anchor: linking to a line is how people
     // point at code, and #L12 is the address GitHub taught them to expect.
-    const rows = highlightedLines(view.html)
-      .map((line, i) => {
-        const n = i + 1;
-        return `<div class="cline" id="L${n}"><a class="lnum" href="#L${n}" aria-label="Line ${n}">${n}</a><span class="ltext">${line}</span></div>`;
-      })
-      .join('');
-    const copyRaw = `<button class="btn" type="button" onclick="copyLines(this)" title="Copy the file's contents"><span class="copy-idle">${icon(
+    // The line text is highlight.js output, already escaped by its renderer.
+    const rows = highlightedLines(view.html).map((line, i) => {
+      const n = i + 1;
+      return html`<div class="cline" id="L${n}"><a class="lnum" href="#L${n}" aria-label="Line ${n}">${n}</a><span class="ltext">${raw(line)}</span></div>`;
+    });
+    const copyRaw = html`<button class="btn" type="button" onclick="copyLines(this)" title="Copy the file's contents"><span class="copy-idle">${icon(
       'copy'
     )}<span>Copy</span></span><span class="copy-done">${icon('check')}<span>Copied</span></span></button>`;
-    body = `${meta(`${view.lineCount} line${view.lineCount === 1 ? '' : 's'} &middot; ${esc(formatSize(view.size))}`, copyRaw)}
+    body = html`${meta(html`${view.lineCount} line${view.lineCount === 1 ? '' : 's'} &middot; ${formatSize(view.size)}`, copyRaw)}
 <div class="code-lines">${rows}</div>`;
   } else if (view.kind === 'markdown') {
-    body = `${meta(esc(formatSize(view.size)))}
-<div class="rendered markdown-body">${view.html}</div>`;
+    body = html`${meta(formatSize(view.size))}
+<div class="rendered markdown-body">${raw(view.html)}</div>`;
   } else if (view.kind === 'image') {
-    body = `${meta(esc(formatSize(view.size)))}<div class="blob-image"><img src="${rawUrl}" alt="${esc(path)}"></div>`;
+    body = html`${meta(formatSize(view.size))}<div class="blob-image"><img src="${rawUrl}" alt="${path}"></div>`;
   } else if (view.kind === 'too-large') {
-    body = `${meta(esc(formatSize(view.size)))}<div class="blob-binary">File is too large to display. <a href="${rawUrl}">View raw</a></div>`;
+    body = html`${meta(formatSize(view.size))}<div class="blob-binary">File is too large to display. <a href="${rawUrl}">View raw</a></div>`;
   } else if (view.kind === 'lfs') {
     // The size comes from the pointer, so no storage request is needed to
     // render this card.
-    body = `${meta(esc(formatSize(view.size)))}<div class="blob-binary">
+    body = html`${meta(formatSize(view.size))}<div class="blob-binary">
 <p><b>Stored with Git LFS</b></p>
-<p>This file is ${esc(formatSize(view.size))}; the repository holds a pointer to it.</p>
-<p class="muted small mono">sha256:${esc(view.oid)}</p>
+<p>This file is ${formatSize(view.size)}; the repository holds a pointer to it.</p>
+<p class="muted small mono">sha256:${view.oid}</p>
 <p><a class="btn btn-primary" href="${rawUrl}">${icon('download')}<span>Download</span></a></p>
 </div>`;
   } else {
-    body = `${meta(esc(formatSize(view.size)))}<div class="blob-binary">Binary file. <a href="${rawUrl}">View raw</a></div>`;
+    body = html`${meta(formatSize(view.size))}<div class="blob-binary">Binary file. <a href="${rawUrl}">View raw</a></div>`;
   }
-  const content = `${repoHeader(ctx, 'code')}
+  const content = html`${repoHeader(ctx, 'code')}
 <div class="toolbar">
   <div class="left">${refPicker(ctx, (ref) => `${base}/blob/${encPath(ref)}/${encPath(path)}`)}${breadcrumb(ctx, path)}</div>
 </div>
@@ -1380,43 +1346,41 @@ ${body}`;
  * stood before that change, which is how a reader walks a line backwards
  * through history.
  */
-export function blamePage(ctx: RepoCtx, path: string, html: string, lines: BlameLine[], size: number): string {
+export function blamePage(ctx: RepoCtx, path: string, highlighted: string, lines: BlameLine[], size: number): string {
   const base = repoUrl(ctx);
   const blobUrl = `${base}/blob/${encPath(ctx.ref)}/${encPath(path)}`;
-  const texts = highlightedLines(html);
-  const rows = lines
-    .map((l, i) => {
-      const n = i + 1;
-      const starts = i === 0 || lines[i - 1].sha !== l.sha;
-      const prior =
-        starts && l.previous
-          ? `<a class="blame-prior" href="${base}/blame/${encPath(l.previous.sha)}/${encPath(
-              l.previous.path
-            )}" title="Blame this file before this change" aria-label="Blame this file before this change">${icon(
-              'versions'
-            )}</a>`
-          : '';
-      const about = starts
-        ? `<a class="sha" href="${base}/commit/${l.sha}">${l.sha.slice(0, 7)}</a><a class="blame-subject" href="${base}/commit/${
-            l.sha
-          }" title="${esc(l.summary)}">${esc(l.summary)}</a><span class="blame-when small muted">${esc(
-            l.author
-          )} ${timeTag(l.date)}</span>${prior}`
+  const texts = highlightedLines(highlighted);
+  const rows = lines.map((l, i) => {
+    const n = i + 1;
+    const starts = i === 0 || lines[i - 1].sha !== l.sha;
+    const prior =
+      starts && l.previous
+        ? html`<a class="blame-prior" href="${base}/blame/${encPath(l.previous.sha)}/${encPath(
+            l.previous.path
+          )}" title="Blame this file before this change" aria-label="Blame this file before this change">${icon(
+            'versions'
+          )}</a>`
         : '';
-      return `<div class="blame-row${starts ? ' blame-start' : ''}" id="L${n}"><span class="blame-commit">${about}</span><a class="lnum" href="#L${n}" aria-label="Line ${n}">${n}</a><span class="ltext">${
-        texts[i] ?? ''
-      }</span></div>`;
-    })
-    .join('');
-  const toggle = `<span class="seg"><a href="${blobUrl}">Code</a><a class="current" href="${base}/blame/${encPath(
+    const about = starts
+      ? html`<a class="sha" href="${base}/commit/${l.sha}">${l.sha.slice(0, 7)}</a><a class="blame-subject" href="${base}/commit/${
+          l.sha
+        }" title="${l.summary}">${l.summary}</a><span class="blame-when small muted">${l.author} ${timeTag(
+          l.date
+        )}</span>${prior}`
+      : '';
+    return html`<div class="blame-row${starts ? ' blame-start' : ''}" id="L${n}"><span class="blame-commit">${about}</span><a class="lnum" href="#L${n}" aria-label="Line ${n}">${n}</a><span class="ltext">${raw(
+      texts[i] ?? ''
+    )}</span></div>`;
+  });
+  const toggle = html`<span class="seg"><a href="${blobUrl}">Code</a><a class="current" href="${base}/blame/${encPath(
     ctx.ref
   )}/${encPath(path)}">Blame</a></span>`;
-  const content = `${repoHeader(ctx, 'code')}
+  const content = html`${repoHeader(ctx, 'code')}
 <div class="toolbar">
   <div class="left">${refPicker(ctx, (ref) => `${base}/blame/${encPath(ref)}/${encPath(path)}`)}${breadcrumb(ctx, path)}</div>
 </div>
-<div class="code-meta"><span class="muted small">${lines.length} line${lines.length === 1 ? '' : 's'} &middot; ${esc(
-    formatSize(size)
+<div class="code-meta"><span class="muted small">${lines.length} line${lines.length === 1 ? '' : 's'} &middot; ${formatSize(
+    size
   )}</span><span class="right-group">${toggle}<a class="btn" href="${base}/commits/${encPath(ctx.ref)}/${encPath(
     path
   )}" title="Commits touching this file">${icon('history')}<span>History</span></a></span></div>
@@ -1443,9 +1407,9 @@ export function commitsPage(
   // Each row carries what a reader might want next from that commit: to read
   // it, to take its id, or to browse the tree as it stood then.
   const row = (c: CommitSummary) =>
-    `<div class="commit-row"><span class="commit-main">${avatar(c.author, 20)}<span><a class="title" href="${base}/commit/${
+    html`<div class="commit-row"><span class="commit-main">${avatar(c.author, 20)}<span><a class="title" href="${base}/commit/${
       c.sha
-    }">${esc(c.subject)}</a><div class="muted small">${esc(c.author)} committed ${timeTag(
+    }">${c.subject}</a><div class="muted small">${c.author} committed ${timeTag(
       c.date
     )}</div></span></span><span class="commit-actions"><a class="sha" href="${base}/commit/${c.sha}">${c.sha.slice(
       0,
@@ -1457,55 +1421,51 @@ export function commitsPage(
     )}</a></span></div>`;
   // Commits are grouped under the day they landed, as on GitHub: a history
   // reads as a sequence of days, and the dates stop repeating on every row.
-  const groups: { day: string; rows: string[] }[] = [];
+  const groups: { day: string; rows: Html[] }[] = [];
   for (const c of commits) {
     const day = formatDay(c.date);
     const last = groups[groups.length - 1];
     if (last && last.day === day) last.rows.push(row(c));
     else groups.push({ day, rows: [row(c)] });
   }
-  const rows = groups
-    .map(
-      (g) =>
-        `<div class="commit-day">${icon('git-commit')}<span>Commits on ${esc(
-          g.day
-        )}</span></div><div class="commit-group">${g.rows.join('')}</div>`
-    )
-    .join('');
-  const pager: string[] = [];
+  const rows = groups.map(
+    (g) =>
+      html`<div class="commit-day">${icon('git-commit')}<span>Commits on ${g.day}</span></div><div class="commit-group">${g.rows}</div>`
+  );
+  const pager: Html[] = [];
   const pageUrl = (p: number) =>
     `${base}/commits/${encPath(ctx.ref)}${suffix}?page=${p}${
       author ? `&author=${encodeURIComponent(author)}` : ''
     }`;
-  if (page > 1) pager.push(`<a class="btn" href="${pageUrl(page - 1)}">&larr; Newer</a>`);
-  if (page < totalPages) pager.push(`<a class="btn" href="${pageUrl(page + 1)}">Older &rarr;</a>`);
+  if (page > 1) pager.push(html`<a class="btn" href="${raw(pageUrl(page - 1))}">&larr; Newer</a>`);
+  if (page < totalPages) pager.push(html`<a class="btn" href="${raw(pageUrl(page + 1))}">Older &rarr;</a>`);
   const scope =
     path === ''
-      ? `<span class="muted small">${count(totalCount)} commit${totalCount === 1 ? '' : 's'}</span>`
-      : `${breadcrumb(ctx, path)}<span class="muted small">${count(totalCount)} commit${
+      ? html`<span class="muted small">${count(totalCount)} commit${totalCount === 1 ? '' : 's'}</span>`
+      : html`${breadcrumb(ctx, path)}<span class="muted small">${count(totalCount)} commit${
           totalCount === 1 ? '' : 's'
         } touching this path</span>`;
   const empty = author
-    ? `No commits here are by ${esc(author)}.`
+    ? html`No commits here are by ${author}.`
     : path === ''
-      ? 'No commits on this ref.'
-      : `Nothing in this ref's history touches ${esc(path)}.`;
+      ? html`No commits on this ref.`
+      : html`Nothing in this ref's history touches ${path}.`;
   // A filter the reader can see is a filter they can take off again.
   const byAuthor = author
-    ? `<span class="filter-chip">${icon('person')}<span>${esc(author)}</span><a href="${base}/commits/${encPath(
+    ? html`<span class="filter-chip">${icon('person')}<span>${author}</span><a href="${base}/commits/${encPath(
         ctx.ref
       )}${suffix}" title="Show every author" aria-label="Show every author">${icon('x')}</a></span>`
     : '';
-  const feed = `<a class="btn" href="${base}/commits/${encPath(ctx.ref)}${suffix}.atom" title="Atom feed of this history">${icon(
+  const feed = html`<a class="btn" href="${base}/commits/${encPath(ctx.ref)}${suffix}.atom" title="Atom feed of this history">${icon(
     'rss'
   )}<span>Feed</span></a>`;
-  const content = `${repoHeader(ctx, 'commits')}
+  const content = html`${repoHeader(ctx, 'commits')}
 <div class="toolbar"><div class="left">${refPicker(
     ctx,
     (ref) => `${base}/commits/${encPath(ref)}${suffix}${query}`
   )}${byAuthor}${scope}</div><div class="right-group">${feed}</div></div>
-${rows || `<div class="empty-state">${empty}</div>`}
-${pager.length ? `<div class="pagination">${pager.join('')}</div>` : ''}`;
+${rows.length ? rows : html`<div class="empty-state">${empty}</div>`}
+${pager.length ? html`<div class="pagination">${pager}</div>` : ''}`;
   return layout(
     `Commits${path ? ` for ${path}` : ''} at ${ctx.ref} - ${ctx.collection}/${ctx.repo}`,
     content,
@@ -1518,22 +1478,23 @@ export function commitPage(ctx: RepoCtx, detail: CommitDetail, diffHtml: string)
   const lines = detail.message.split('\n');
   const subject = lines[0] ?? '';
   const body = lines.slice(1).join('\n').trim();
-  const parents = detail.parents
-    .map((p) => `<a class="sha" href="${base}/commit/${p}">${p.slice(0, 7)}</a>`)
-    .join(' ');
-  const content = `${repoHeader(ctx, 'commits')}
+  const parents = joinHtml(
+    detail.parents.map((p) => html`<a class="sha" href="${base}/commit/${p}">${p.slice(0, 7)}</a>`),
+    ' '
+  );
+  const content = html`${repoHeader(ctx, 'commits')}
 <div class="commit-head">
-  <div class="subject">${esc(subject)}</div>
-  ${body ? `<div class="body">${esc(body)}</div>` : ''}
+  <div class="subject">${subject}</div>
+  ${body ? html`<div class="body">${body}</div>` : ''}
   <div class="meta">
-    <span><b>${esc(detail.author)}</b> &lt;${esc(detail.email)}&gt;</span>
+    <span><b>${detail.author}</b> &lt;${detail.email}&gt;</span>
     <span>committed ${timeTag(detail.date, '')}</span>
     <span>commit <span class="sha">${detail.sha.slice(0, 12)}</span></span>
-    ${parents ? `<span>parent${detail.parents.length > 1 ? 's' : ''} ${parents}</span>` : ''}
+    ${detail.parents.length ? html`<span>parent${detail.parents.length > 1 ? 's' : ''} ${parents}</span>` : ''}
     <span><a href="${base}/tree/${detail.sha}">Browse files</a></span>
   </div>
 </div>
-${diffHtml}`;
+${raw(diffHtml)}`;
   return layout(`${subject} - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, `${base}/commit/${detail.sha}`));
 }
 
@@ -1543,91 +1504,85 @@ export function refListPage(ctx: RepoCtx, kind: 'branches' | 'tags'): string {
   const viewer = ctx.viewer;
   const noun = kind === 'branches' ? 'branch' : 'tag';
   const listId = `${kind}-list`;
-  const rows = refs
-    .map((r) => {
-      let action = '';
-      if (ctx.canPush && viewer && (kind === 'tags' || r.name !== ctx.defaultBranch)) {
-        action = `<form method="post" action="${base}/${kind}/delete" onsubmit="return confirm('Delete ${noun} ${esc(
-          r.name
-        )}?')">${csrfField(viewer)}<input type="hidden" name="name" value="${esc(
-          r.name
-        )}"><button type="submit" class="btn btn-danger-outline" title="Delete this ${noun}" aria-label="Delete ${esc(
-          r.name
-        )}">${icon('trash')}</button></form>`;
-      }
-      // A tag is what people download a release from, so its row carries the
-      // archives, as the tags page on GitHub does.
-      const archives =
-        kind === 'tags'
-          ? `<a class="btn" href="${base}/archive/${encPath(r.name)}.zip" title="Download this tag as a zip">${icon(
-              'file-zip'
-            )}<span>zip</span></a><a class="btn" href="${base}/archive/${encPath(
-              r.name
-            )}.tar.gz" title="Download this tag as a tar.gz">${icon('file-zip')}<span>tar.gz</span></a>`
-          : '';
-      const badge =
-        kind === 'branches' && r.name === ctx.defaultBranch ? ' <span class="badge">Default</span>' : '';
-      // A tag with notes leads to them; one without invites whoever may push
-      // to write them, which is the only way a release is ever created.
-      const release =
-        kind === 'tags'
-          ? ctx.releases.includes(r.name)
-            ? `<a class="btn" href="${base}/releases/tag/${encPath(r.name)}" title="Release notes for ${esc(
+  const rows = refs.map((r) => {
+    let action: Html | '' = '';
+    if (ctx.canPush && viewer && (kind === 'tags' || r.name !== ctx.defaultBranch)) {
+      action = html`<form method="post" action="${base}/${kind}/delete" onsubmit="return confirm('Delete ${noun} ${r.name}?')">${csrfField(
+        viewer
+      )}<input type="hidden" name="name" value="${r.name}"><button type="submit" class="btn btn-danger-outline" title="Delete this ${noun}" aria-label="Delete ${r.name}">${icon(
+        'trash'
+      )}</button></form>`;
+    }
+    // A tag is what people download a release from, so its row carries the
+    // archives, as the tags page on GitHub does.
+    const archives =
+      kind === 'tags'
+        ? html`<a class="btn" href="${base}/archive/${encPath(r.name)}.zip" title="Download this tag as a zip">${icon(
+            'file-zip'
+          )}<span>zip</span></a><a class="btn" href="${base}/archive/${encPath(
+            r.name
+          )}.tar.gz" title="Download this tag as a tar.gz">${icon('file-zip')}<span>tar.gz</span></a>`
+        : '';
+    const badge =
+      kind === 'branches' && r.name === ctx.defaultBranch ? html` <span class="badge">Default</span>` : '';
+    // A tag with notes leads to them; one without invites whoever may push
+    // to write them, which is the only way a release is ever created.
+    const release =
+      kind === 'tags'
+        ? ctx.releases.includes(r.name)
+          ? html`<a class="btn" href="${base}/releases/tag/${encPath(r.name)}" title="Release notes for ${r.name}">${icon(
+              'rocket'
+            )}<span>Release</span></a>`
+          : ctx.canPush
+            ? html`<a class="btn" href="${base}/releases/new?tag=${encodeURIComponent(
                 r.name
-              )}">${icon('rocket')}<span>Release</span></a>`
-            : ctx.canPush
-              ? `<a class="btn" href="${base}/releases/new?tag=${encodeURIComponent(
-                  r.name
-                )}" title="Write release notes for ${esc(r.name)}">${icon('rocket')}<span>Draft release</span></a>`
-              : ''
-          : '';
-      // Every ref but the default one can be compared against it, which is
-      // the question a list of branches invites: what is on this one?
-      const compare =
-        ctx.defaultBranch && r.name !== ctx.defaultBranch
-          ? `<a class="btn" href="${base}/compare/${encPath(ctx.defaultBranch)}...${encPath(
-              r.name
-            )}" title="Compare with ${esc(ctx.defaultBranch)}">${icon('git-compare')}<span>Compare</span></a>`
-          : '';
-      return `<tr>
+              )}" title="Write release notes for ${r.name}">${icon('rocket')}<span>Draft release</span></a>`
+            : ''
+        : '';
+    // Every ref but the default one can be compared against it, which is
+    // the question a list of branches invites: what is on this one?
+    const compare =
+      ctx.defaultBranch && r.name !== ctx.defaultBranch
+        ? html`<a class="btn" href="${base}/compare/${encPath(ctx.defaultBranch)}...${encPath(
+            r.name
+          )}" title="Compare with ${ctx.defaultBranch}">${icon('git-compare')}<span>Compare</span></a>`
+        : '';
+    return html`<tr>
 <td class="ref-name">${icon(kind === 'branches' ? 'git-branch' : 'tag', 'icon')}<a href="${base}/tree/${encPath(
-        r.name
-      )}"><b>${esc(r.name)}</b></a>${badge}
-<div class="muted small">Updated ${timeTag(r.date)} &middot; ${esc(r.subject)}</div></td>
+      r.name
+    )}"><b>${r.name}</b></a>${badge}
+<div class="muted small">Updated ${timeTag(r.date)} &middot; ${r.subject}</div></td>
 <td class="right"><a class="sha" href="${base}/commit/${r.sha}">${r.sha.slice(0, 7)}</a></td>
 <td class="right"><span class="right-group">${release}${compare}${archives}${action}</span></td>
 </tr>`;
-    })
-    .join('');
-  const body = rows
-    ? `${listFilter(listId, `Find a ${noun}`, refs.length)}<table class="listing" id="${listId}"><tbody>${rows}</tbody></table>${noMatches(
+  });
+  const body = rows.length
+    ? html`${listFilter(listId, `Find a ${noun}`, refs.length)}<table class="listing" id="${listId}"><tbody>${rows}</tbody></table>${noMatches(
         listId
       )}`
-    : `<div class="empty-state">No ${kind} yet.</div>`;
-  let createMenu = '';
+    : html`<div class="empty-state">No ${kind} yet.</div>`;
+  let createMenu: Html | '' = '';
   if (ctx.canPush && viewer && ctx.branches.length > 0) {
-    const fromOptions = ctx.branches
-      .map(
-        (b) =>
-          `<option value="${esc(b.name)}"${b.name === ctx.defaultBranch ? ' selected' : ''}>${esc(b.name)}</option>`
-      )
-      .join('');
+    const fromOptions = ctx.branches.map(
+      (b) =>
+        html`<option value="${b.name}"${b.name === ctx.defaultBranch ? raw(' selected') : ''}>${b.name}</option>`
+    );
     const form =
       kind === 'branches'
-        ? `<form method="post" action="${base}/branches/create">${csrfField(viewer)}
+        ? html`<form method="post" action="${base}/branches/create">${csrfField(viewer)}
 <div class="field"><label for="new-ref">New branch name</label><input type="text" id="new-ref" name="name" placeholder="new-branch-name" required></div>
 <div class="field"><label for="ref-from">From</label><select id="ref-from" name="from">${fromOptions}</select></div>
 <button type="submit" class="btn btn-primary">Create branch</button></form>`
-        : `<form method="post" action="${base}/tags/create">${csrfField(viewer)}
+        : html`<form method="post" action="${base}/tags/create">${csrfField(viewer)}
 <div class="field"><label for="new-ref">Tag name</label><input type="text" id="new-ref" name="name" placeholder="v1.0.0" required></div>
 <div class="field"><label for="ref-at">At</label><select id="ref-at" name="at">${fromOptions}</select></div>
 <button type="submit" class="btn btn-primary">Create tag</button></form>`;
-    createMenu = `<details class="dropdown">
+    createMenu = html`<details class="dropdown">
 <summary class="btn btn-primary">${icon('plus')}<span>New ${noun}</span>${icon('chevron-down', 'caret')}</summary>
 <div class="dropdown-menu dd-right ref-form">${form}</div>
 </details>`;
   }
-  const content = `${repoHeader(ctx, kind)}<div class="page-head"><h2>${
+  const content = html`${repoHeader(ctx, kind)}<div class="page-head"><h2>${
     kind === 'branches' ? 'Branches' : 'Tags'
   }</h2>${createMenu}</div>${body}`;
   return layout(`${kind} - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, `${base}/${kind}`));
@@ -1643,15 +1598,15 @@ export function emptyRepoPage(ctx: RepoCtx): string {
   const base = repoUrl(ctx);
   const url = ctx.cloneUrl;
   const block = (lines: string[]) =>
-    `<div class="cmd-block"><pre>${esc(lines.join('\n'))}</pre>${copyButton()}</div>`;
+    html`<div class="cmd-block"><pre>${lines.join('\n')}</pre>${copyButton()}</div>`;
   const readmeBtn = ctx.canPush
-    ? `<a class="btn btn-primary" href="${base}/new/main">${icon('plus')}<span>Create a README</span></a>`
+    ? html`<a class="btn btn-primary" href="${base}/new/main">${icon('plus')}<span>Create a README</span></a>`
     : '';
-  const content = `${repoHeader(ctx, 'code')}
+  const content = html`${repoHeader(ctx, 'code')}
 <div class="box">
   <div class="box-header">${icon('repo')}Quick setup, if you have done this before</div>
   <div class="box-body">
-    <div class="cmd-row"><code>${esc(url)}</code>${copyButton()}</div>
+    <div class="cmd-row"><code>${url}</code>${copyButton()}</div>
     <p class="muted">Cloning is anonymous. Pushing asks for your username and a token; <span class="mono">cofferdam login</span> hands the token to git once so it stops asking.</p>
     ${readmeBtn}
   </div>
@@ -1673,11 +1628,11 @@ ${block([`git remote add origin ${url}`, 'git branch -M main', 'git push -u orig
 
 export function errorPage(status: number, message: string, opts: PageOpts & { backUrl?: string } = {}): string {
   const back = opts.backUrl
-    ? `<p><a href="${esc(opts.backUrl)}">Go back</a></p>`
-    : `<p><a href="/">Back to home</a></p>`;
+    ? html`<p><a href="${opts.backUrl}">Go back</a></p>`
+    : html`<p><a href="/">Back to home</a></p>`;
   return layout(
     `${status}`,
-    `<div class="error-page"><div class="code">${status}</div><p>${esc(message)}</p>${back}</div>`,
+    html`<div class="error-page"><div class="code">${status}</div><p>${message}</p>${back}</div>`,
     opts
   );
 }
