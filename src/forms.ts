@@ -611,7 +611,9 @@ ${snap.history
 ${flashBanner(opts.msg)}
 ${banner}
 <p class="muted">Bytes this server has written to clients, counted per repository and totalled per UTC day. A site served
-from its own hostname is counted against the repository it belongs to, on a row of its own.</p>
+from its own hostname is counted against the repository it belongs to, on a row of its own. Bytes that belong to no
+repository are two rows: <span class="mono">(vault)</span> for the vault's own pages and API, and
+<span class="mono">(unmatched)</span> for requests that named a repository this vault does not have.</p>
 <div class="egress-total">
 <b class="mono">${esc(formatSize(snap.total))}</b>
 <span class="muted">${

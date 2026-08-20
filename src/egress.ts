@@ -3,7 +3,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { withFileLock, writeFileAtomic } from './atomic';
 import { loadConfig } from './config';
-import { isValidName } from './scan';
+import { resolveRepoRedirect } from './redirects';
+import { findRepo, isValidName } from './scan';
 import { isUnderSitesHost, parseSiteHost } from './siteshost';
 
 // Outgoing bytes, counted and capped.
@@ -45,10 +46,11 @@ export const EGRESS_FILE = 'egress.json';
 const HISTORY_DAYS = 30;
 
 /**
- * The most repositories one day may be broken down by. The key space is derived
- * from request paths, so it is influenced by whoever is making the requests:
- * `GET /a1/b1`, `/a2/b2`, ... would otherwise grow the map and the file without
- * bound. Beyond the ceiling, bytes are still counted, under one overflow row.
+ * The most repositories one day may be broken down by. Attribution only ever
+ * names repositories that exist, so the key space is bounded by the vault's own
+ * contents rather than by whoever is making requests; the ceiling remains as a
+ * backstop for a vault that genuinely holds more repositories than this.
+ * Beyond it, bytes are still counted, under one overflow row.
  */
 const MAX_KEYS = 2000;
 
@@ -57,6 +59,15 @@ const OVERFLOW_KEY = '(other)';
 
 /** The row for everything that belongs to no repository: the front page, the admin pages, assets, the API. */
 const VAULT_KEY = '(vault)';
+
+/**
+ * The row for a repository-shaped path that resolves to no repository: a 404,
+ * a crawler probing names, a link to something since deleted. One row rather
+ * than one per path, so an anonymous visitor cannot grow the admin page by
+ * asking for made-up names, and so the rows that do name a repository can be
+ * trusted to be one.
+ */
+const UNMATCHED_KEY = '(unmatched)';
 
 /** How a site's row is spelled, so the parser and the page agree on one thing. */
 const SITE_SUFFIX = ':site';
@@ -89,7 +100,7 @@ interface DayRecord {
 }
 
 export interface EgressRow {
-  /** `collection/repo`, or one of the two bracketed pseudo-rows. */
+  /** `collection/repo` of a repository that exists, or one of the bracketed pseudo-rows. */
   repo: string;
   /** Whether these are the bytes of that repository's site rather than of the repository itself. */
   site: boolean;
@@ -226,21 +237,84 @@ function isEgressExempt(root: string, req: Request): boolean {
 }
 
 /**
+ * How long a resolved name is believed before the filesystem is asked again.
+ * The cache is what keeps resolution off the hot path: attribution runs once
+ * per response, and paying a handful of stats per distinct name per half
+ * minute is nothing, where a stat per response for every 404 a crawler sends
+ * would not be. Thirty seconds matches the flush interval, and bounds how long
+ * a rename or a deletion is attributed under the old answer.
+ */
+const RESOLVE_TTL_MS = 30000;
+
+const resolveCache = new Map<string, { at: number; to: string | null }>();
+
+/**
+ * The `collection/repo` a name actually reaches, following rename redirects,
+ * or null when it reaches no repository at all. This is what keys the rows:
+ * bytes are attributed to the repository a request resolved to, never to the
+ * raw path string, so a made-up path cannot mint a row and a renamed
+ * repository keeps one row rather than one per name it has had.
+ */
+function resolveRepoKey(root: string, collection: string, repo: string): string | null {
+  if (!isValidName(collection) || !isValidName(repo)) return null;
+  const cacheKey = `${root}\0${collection}/${repo}`;
+  const hit = resolveCache.get(cacheKey);
+  const now = Date.now();
+  if (hit && now - hit.at < RESOLVE_TTL_MS) return hit.to;
+  let to: string | null = null;
+  if (findRepo(root, collection, repo)) {
+    to = `${collection}/${repo}`;
+  } else {
+    const moved = resolveRepoRedirect(root, collection, repo);
+    if (moved) to = `${moved.collection}/${moved.repo}`;
+  }
+  // Dropped wholesale rather than evicted by age, so the map cannot grow
+  // without bound under a crawler inventing names.
+  if (resolveCache.size > 4096) resolveCache.clear();
+  resolveCache.set(cacheKey, { at: now, to });
+  return to;
+}
+
+/**
+ * Re-bucket one day's keys through resolution: a key naming a former name of a
+ * repository joins that repository's row, and a key naming nothing joins the
+ * unmatched row. No bytes are gained or lost, only moved, so the day's total
+ * is untouched. Returns null when every key already stands.
+ */
+function normalizeKeys(root: string, keys: Record<string, number>): Record<string, number> | null {
+  let changed = false;
+  const out: Record<string, number> = {};
+  for (const [key, bytes] of Object.entries(keys)) {
+    let to = key;
+    if (!key.startsWith('(')) {
+      const site = key.endsWith(SITE_SUFFIX);
+      const base = site ? key.slice(0, -SITE_SUFFIX.length) : key;
+      const slash = base.indexOf('/');
+      const resolved = slash > 0 ? resolveRepoKey(root, base.slice(0, slash), base.slice(slash + 1)) : null;
+      to = resolved === null ? UNMATCHED_KEY : `${resolved}${site ? SITE_SUFFIX : ''}`;
+      if (to !== key) changed = true;
+    }
+    out[to] = (out[to] ?? 0) + bytes;
+  }
+  return changed ? out : null;
+}
+
+/**
  * Which row a request's bytes belong to.
  *
  * A site on its own hostname is recognised from the hostname; on the forge host
  * every repository surface lives under /:collection/:repo, so one regex covers
  * browsing, the git wire protocol, LFS, releases, issues, and CI alike, and
- * /:collection/:repo/site is the site. isValidName is what keeps /api/... and
- * /admin/... out of the repository rows: it refuses the reserved names.
- *
- * Nothing here touches the filesystem. Attribution is not authorization, and
- * paying a stat per response to learn that a 404 named no real repository would
- * be paying it on every response.
+ * /:collection/:repo/site is the site. What the path names is then resolved to
+ * a repository that exists, through rename redirects, and a name that resolves
+ * to none is one unmatched row rather than a row of its own.
  */
 function keyFor(root: string, req: Request): string {
   const site = parseSiteHost(loadConfig(root).sites.host, req.hostname);
-  if (site) return `${site.collection}/${site.repo}${SITE_SUFFIX}`;
+  if (site) {
+    const resolved = resolveRepoKey(root, site.collection, site.repo);
+    return resolved === null ? UNMATCHED_KEY : `${resolved}${SITE_SUFFIX}`;
+  }
   const m = /^\/([^/]+)\/([^/]+)(?:\/(.*))?$/.exec(req.path);
   if (!m) return VAULT_KEY;
   let collection: string;
@@ -252,9 +326,11 @@ function keyFor(root: string, req: Request): string {
     return VAULT_KEY;
   }
   if (!isValidName(collection) || !isValidName(repo)) return VAULT_KEY;
+  const resolved = resolveRepoKey(root, collection, repo);
+  if (resolved === null) return UNMATCHED_KEY;
   const rest = m[3] ?? '';
   const isSite = rest === 'site' || rest.startsWith('site/');
-  return `${collection}/${repo}${isSite ? SITE_SUFFIX : ''}`;
+  return `${resolved}${isSite ? SITE_SUFFIX : ''}`;
 }
 
 function splitKey(key: string): EgressRow {
@@ -292,8 +368,33 @@ export function createEgress(root: string, capGb: () => number): Egress {
 
   // Load once at startup. A vault whose file says 19 GB have gone out today
   // comes back still knowing that, which is the whole reason the file exists.
+  //
+  // The keys are re-bucketed through resolution on the way in: a file written
+  // before attribution resolved names, or before a rename, holds rows for
+  // former names and for paths that never named a repository, and this is
+  // where those join the rows they belong to. Totals are untouched, and a file
+  // whose keys all stand is not rewritten.
   {
     const days = readDays(file);
+    let migrated = false;
+    for (const d of days) {
+      const fixed = normalizeKeys(root, d.keys);
+      if (fixed) {
+        d.keys = fixed;
+        migrated = true;
+      }
+    }
+    if (migrated) {
+      try {
+        withFileLock(lock, () => {
+          writeFileAtomic(file, JSON.stringify({ version: 1, days }, null, 2) + '\n');
+        });
+      } catch (e) {
+        // The flush path merges into whatever is on disk, so nothing is lost by
+        // failing here; the migration simply happens again next start.
+        console.warn(`could not migrate ${EGRESS_FILE}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     const today = days.find((d) => d.day === day);
     if (today) {
       base = new Map(Object.entries(today.keys));
@@ -326,6 +427,11 @@ export function createEgress(root: string, capGb: () => number): Egress {
           days.push(rec);
         }
         for (const [k, v] of mine) rec.keys[k] = (rec.keys[k] ?? 0) + v;
+        // A rename mid-day leaves the file's rows under the old name; they are
+        // folded into the new one here, so every row on disk names something a
+        // link can reach. Cached resolution makes this cost nothing when
+        // nothing has moved.
+        rec.keys = normalizeKeys(root, rec.keys) ?? rec.keys;
         rec.total = sum(rec.keys);
         days.sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : 0));
         const kept = days.slice(0, HISTORY_DAYS);
@@ -440,8 +546,13 @@ export function createEgress(root: string, capGb: () => number): Egress {
 
     snapshot() {
       rollIfNeeded();
-      const merged = new Map(base);
-      for (const [k, v] of pending) merged.set(k, (merged.get(k) ?? 0) + v);
+      let mergedKeys: Record<string, number> = {};
+      for (const [k, v] of base) mergedKeys[k] = (mergedKeys[k] ?? 0) + v;
+      for (const [k, v] of pending) mergedKeys[k] = (mergedKeys[k] ?? 0) + v;
+      // Resolved again for display, so a rename made minutes ago shows one row
+      // under the new name rather than two under both.
+      mergedKeys = normalizeKeys(root, mergedKeys) ?? mergedKeys;
+      const merged = new Map(Object.entries(mergedKeys));
       const rows = [...merged.entries()]
         .map(([k, bytes]) => ({ ...splitKey(k), bytes }))
         .filter((r) => r.bytes > 0)
