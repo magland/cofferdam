@@ -4,6 +4,7 @@ import * as path from 'path';
 import { loadConfig } from './config';
 import { containedIn } from './ops';
 import { resolveRepoRedirect } from './redirects';
+import { esc } from './render';
 import { findRepo, siteDir } from './scan';
 import { isUnderSitesHost, parseSiteHost, siteHostFor } from './siteshost';
 import { send404, wildcard } from './web';
@@ -55,6 +56,25 @@ export function setSiteHeaders(res: Response, mode: SiteMode): void {
 }
 
 /**
+ * How a site request refuses.
+ *
+ * On a site's own hostname the forge's error page is the wrong answer for the
+ * same reason it is wrong for the sites host's other responses: it renders forge
+ * chrome and links a stylesheet this origin does not serve, so it arrives
+ * unstyled and points the visitor at a vault the site knows nothing about. A
+ * repository with no site directory at all is the ordinary way to reach this,
+ * so it is worth answering plainly.
+ */
+function sendSite404(res: Response, mode: SiteMode, message = 'Not found'): void {
+  if (mode !== 'host') {
+    send404(res, message);
+    return;
+  }
+  setSiteHeaders(res, mode);
+  res.status(404).type('html').send(minimalPage(404, 'Not found', esc(message)));
+}
+
+/**
  * Serve one path out of a repository's site directory.
  *
  * The site-relative path depends on the mode, because the two surfaces disagree
@@ -72,13 +92,14 @@ export function serveSite(
 ): void {
   const found = findRepo(root, collection, repo);
   if (!found) {
-    send404(res, `Repository ${collection}/${repo} not found`);
+    sendSite404(res, mode, `Repository ${collection}/${repo} not found`);
     return;
   }
   const dir = siteDir(root, found.collection, found.name);
   if (!dir) {
-    send404(
+    sendSite404(
       res,
+      mode,
       `No site for ${found.collection}/${found.name}. Create a ${found.name}.site directory next to the repository, with an index.html at its root.`
     );
     return;
@@ -90,13 +111,13 @@ export function serveSite(
   try {
     dirReal = fs.realpathSync(dir);
   } catch {
-    send404(res);
+    sendSite404(res, mode);
     return;
   }
   const relative = mode === 'host' ? req.path : wildcard(req);
   const segs = relative.split('/').filter((s) => s !== '' && s !== '.');
   if (segs.some((s) => s === '..' || s.includes('\0'))) {
-    send404(res);
+    sendSite404(res, mode);
     return;
   }
   // Site content is written by whatever published it, which may be a
@@ -143,7 +164,7 @@ export function serveSite(
       setSiteHeaders(res, mode);
       res.status(404).sendFile(notFound);
     } else {
-      send404(res, 'Page not found in this site');
+      sendSite404(res, mode, 'Page not found in this site');
     }
     return;
   }

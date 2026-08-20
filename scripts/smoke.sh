@@ -2302,6 +2302,15 @@ check "the bare sites host names no site" 404 "$BASE/" -H 'Host: sites.localhost
 body_lacks "and does not render forge chrome" 'assets/style.css'
 check "a deeper name under the sites host names no site" 404 "$BASE/" -H 'Host: a.b.sites.localhost'
 check "a hostname naming no repository is a 404" 404 "$BASE/" -H "Host: nosuchrepo--pushed.sites.localhost"
+body_lacks "answering for itself rather than with forge chrome" 'assets/style.css'
+# The ordinary way to reach a sites hostname that has nothing behind it: the
+# repository is real and simply has no site directory. The forge's error page
+# would arrive here unstyled, since this origin serves none of its assets.
+check "a repository with no site directory is a plain 404 on its hostname" 404 "$BASE/" -H "Host: proj--demo.sites.localhost"
+body_lacks "with no forge stylesheet to load from this origin" 'assets/style.css'
+body_has "saying what is missing" 'No site for demo/proj'
+check "and a path inside that absent site too" 404 "$BASE/anything.html" -H "Host: proj--demo.sites.localhost"
+body_lacks "still without forge chrome" 'assets/style.css'
 # A site's hostname is built from the repository's name, so a rename moves the
 # site to a different origin. The hostname it had is redirected, on the same
 # terms as a path on the forge host: only while no repository answers to it.
