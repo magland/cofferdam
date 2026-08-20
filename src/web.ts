@@ -5,7 +5,7 @@ import { GitRepo, RefInfo } from './git';
 import { issueCounts } from './issues';
 import { BUSY_RETRY_SECONDS } from './limit';
 import { pullCounts } from './pulls';
-import { listReleases } from './releases';
+import { releaseTags } from './releases';
 import { findRepo, forkParent, siteDir } from './scan';
 import { Viewer, checkCsrf, getViewer } from './session';
 import { siteHostUrl } from './site';
@@ -149,7 +149,7 @@ export async function makeCtx(
     siteUrl: siteOrigin
       ? `${siteOrigin}/`
       : `/${encodeURIComponent(loaded.repo.collection)}/${encodeURIComponent(loaded.repo.name)}/site/`,
-    releases: listReleases(root, loaded.repo.collection, loaded.repo.name).map((r) => r.tag),
+    releases: releaseTags(root, loaded.repo.collection, loaded.repo.name),
     hasCi: await hasCiState(root, loaded.repo, loaded.defaultBranch, loaded.branches),
     openIssues: issueCounts(root, loaded.repo.collection, loaded.repo.name).open,
     openPulls: pullCounts(root, loaded.repo.collection, loaded.repo.name).open,

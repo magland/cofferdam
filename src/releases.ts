@@ -110,6 +110,35 @@ export function listReleases(root: string, collection: string, repo: string): Re
   return out;
 }
 
+/**
+ * The tag of every release, from the directory alone.
+ *
+ * A release's file is named for its tag, so counting releases and asking
+ * whether a tag has one needs no file opened and no front matter parsed --
+ * which is all that a repository page wants, and it wants it on every page.
+ * listReleases reads and YAML-parses every release to answer the same two
+ * questions, which at a hundred releases is 19ms and a hundred opens spent on
+ * bodies nobody looks at.
+ */
+export function releaseTags(root: string, collection: string, repo: string): string[] {
+  let names: string[];
+  try {
+    names = fs.readdirSync(releasesDir(root, collection, repo));
+  } catch {
+    return [];
+  }
+  const tags: string[] = [];
+  for (const name of names) {
+    if (!name.endsWith('.md')) continue;
+    try {
+      tags.push(decodeURIComponent(name.slice(0, -3)));
+    } catch {
+      // A name that is not a tag this forge wrote; listReleases skips it too.
+    }
+  }
+  return tags;
+}
+
 export function saveRelease(root: string, collection: string, repo: string, release: Release): void {
   const dir = releasesDir(root, collection, repo);
   fs.mkdirSync(dir, { recursive: true });
