@@ -115,7 +115,7 @@ jobs:
 
 Run the newest CLI and pass no `--image`, rather than pinning `--image ...:latest` on an older one. The CLI asks for the image tag matching its own version, and a version tag exists only because the release that produced it was built and smoke-tested first, so what reaches the vault is a version that passed. It also leaves `cofferdam deploy fly show` reporting a version rather than `latest`, which is the difference between knowing what is running and knowing only when it was last deployed.
 
-flyctl reads `FLY_API_TOKEN` from the environment, so nothing needs to be logged in on the runner. `fly tokens create deploy -a my-vault-name` mints the narrowest token that can do this. Note that a deploy starts by asking `fly auth whoami` and stops if that cannot answer, so if a deploy-scoped token is refused there, an org-scoped one from `fly tokens create org <org>` is the fallback.
+flyctl reads `FLY_API_TOKEN` from the environment, so nothing needs to be logged in on the runner. The action installs the binary under the name `flyctl` rather than `fly`; a deploy looks for both, so either install is fine. `fly tokens create deploy -a my-vault-name` mints the narrowest token that can do this. Note that a deploy starts by asking `fly auth whoami` and stops if that cannot answer, so if a deploy-scoped token is refused there, an org-scoped one from `fly tokens create org <org>` is the fallback.
 
 A systemd timer, a launchd job, or a cron line on any machine you keep running does the same thing with the same command. GitHub Actions is only the version of it that needs no machine of yours.
 

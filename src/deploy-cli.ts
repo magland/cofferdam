@@ -55,6 +55,41 @@ interface DeployArgs {
   yes: boolean;
 }
 
+const FLY_NOT_FOUND =
+  'Neither fly nor flyctl is on PATH. Install it from https://fly.io/docs/flyctl/install/';
+
+/**
+ * The name flyctl goes by here.
+ *
+ * A normal install provides both `fly` and `flyctl`, but not every install is
+ * normal: flyctl's own GitHub Action unpacks the release tarball, which carries
+ * `flyctl` alone. So preferring `fly` and falling back keeps a deploy from a CI
+ * runner working, which is the one place nobody is watching to fix the PATH.
+ * Either name is the same binary, so which one was found never matters again.
+ */
+function flyBin(): string {
+  if (cachedFlyBin === null) cachedFlyBin = onPath('fly') ?? onPath('flyctl') ?? 'fly';
+  return cachedFlyBin;
+}
+
+let cachedFlyBin: string | null = null;
+
+function onPath(name: string): string | null {
+  const names = process.platform === 'win32' ? [`${name}.exe`, `${name}.cmd`, name] : [name];
+  for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
+    if (!dir) continue;
+    for (const n of names) {
+      try {
+        fs.accessSync(path.join(dir, n), fs.constants.X_OK);
+        return name;
+      } catch {
+        /* not this one */
+      }
+    }
+  }
+  return null;
+}
+
 // Quiet commands, whose output this code reads rather than the user. A non-zero
 // exit is often the answer and not a failure (`fly status` on an app that does
 // not exist), so the code is reported instead of thrown.
@@ -64,10 +99,10 @@ interface DeployArgs {
 // runs, and a token is worth more than that.
 function fly(args: string[], stdin?: string): Promise<FlyResult> {
   return new Promise((resolve, reject) => {
-    const child = execFile('fly', args, { maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
+    const child = execFile(flyBin(), args, { maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
       const code = (err as NodeJS.ErrnoException | null)?.code;
       if (code === 'ENOENT') {
-        reject(new Error('flyctl is not on PATH. Install it from https://fly.io/docs/flyctl/install/'));
+        reject(new Error(FLY_NOT_FOUND));
         return;
       }
       resolve({ code: typeof code === 'number' ? code : err ? 1 : 0, stdout: String(stdout), stderr: String(stderr) });
@@ -96,11 +131,9 @@ async function flyJson<T>(args: string[]): Promise<T | null> {
 // three-minute deploy behind a spinner of our own would only lose detail.
 function flyStream(args: string[], cwd?: string): Promise<number> {
   return new Promise((resolve, reject) => {
-    const child = spawn('fly', args, { stdio: 'inherit', cwd });
+    const child = spawn(flyBin(), args, { stdio: 'inherit', cwd });
     child.on('error', (e) => {
-      reject((e as NodeJS.ErrnoException).code === 'ENOENT'
-        ? new Error('flyctl is not on PATH. Install it from https://fly.io/docs/flyctl/install/')
-        : e);
+      reject((e as NodeJS.ErrnoException).code === 'ENOENT' ? new Error(FLY_NOT_FOUND) : e);
     });
     child.on('close', (code) => resolve(code ?? 1));
   });

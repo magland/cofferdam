@@ -3711,6 +3711,48 @@ grep -q "not usable" "$TMP/short.log" || { echo "FAIL: no explanation for the re
 [ ! -e "$TMP/short-vault/vault.json" ] || { echo "FAIL: the vault was initialized despite the refused token"; exit 1; }
 PASS=$((PASS+1)); echo "ok: a too-short supplied owner token is refused"
 
+# ---- deploy finds flyctl under either of its names ----
+
+# `cofferdam deploy fly` drives flyctl as a child process, and flyctl answers to
+# two names: a normal install provides `fly` and `flyctl`, while its own GitHub
+# Action unpacks a tarball carrying `flyctl` alone. A deploy that insisted on
+# `fly` would fail on a CI runner following the recipe in docs/deploying.md,
+# which is the one place nobody is watching to fix a PATH.
+
+FLY_STUB_DIR="$TMP/fly-stub"
+NODE_DIR="$(dirname "$(command -v node)")"
+mkdir -p "$FLY_STUB_DIR"
+cat > "$FLY_STUB_DIR/flyctl" <<'STUB'
+#!/bin/sh
+echo "$*" >> "$FLY_STUB_CALLS"
+exit 1
+STUB
+chmod +x "$FLY_STUB_DIR/flyctl"
+export FLY_STUB_CALLS="$TMP/fly-stub-calls"
+: > "$FLY_STUB_CALLS"
+
+# The stub refuses every command, so the deploy stops at the login check. That
+# it got that far is the point: the name was resolved and the child ran.
+PATH="$FLY_STUB_DIR:$NODE_DIR:/usr/bin:/bin" node dist/index.js deploy fly a-vault \
+  --image example.invalid/image:tag > "$TMP/fly-stub.log" 2>&1 && {
+  echo "FAIL: a deploy driving a flyctl that refuses everything reported success"
+  cat "$TMP/fly-stub.log"; exit 1; }
+grep -q "not on PATH" "$TMP/fly-stub.log" && {
+  echo "FAIL: flyctl was on PATH under its own name and the deploy did not find it"
+  cat "$TMP/fly-stub.log"; exit 1; }
+grep -q "auth whoami" "$FLY_STUB_CALLS" || {
+  echo "FAIL: the deploy did not run flyctl at all"; cat "$TMP/fly-stub.log"; exit 1; }
+PASS=$((PASS+1)); echo "ok: a deploy finds flyctl installed as flyctl rather than fly"
+
+# And with neither name present it says so, rather than reporting whatever a
+# missing binary looks like from the inside.
+PATH="$NODE_DIR:/usr/bin:/bin" node dist/index.js deploy fly a-vault \
+  --image example.invalid/image:tag > "$TMP/fly-missing.log" 2>&1 && {
+  echo "FAIL: a deploy with no flyctl at all reported success"; exit 1; }
+grep -q "Neither fly nor flyctl is on PATH" "$TMP/fly-missing.log" || {
+  echo "FAIL: no useful message when flyctl is absent"; cat "$TMP/fly-missing.log"; exit 1; }
+PASS=$((PASS+1)); echo "ok: a deploy with no flyctl says which names it looked for"
+
 # ---- rate limits and abuse controls ----
 
 # A test that trips a limit leaves the limiter tripped for everything after it,
