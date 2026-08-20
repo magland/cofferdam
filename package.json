@@ -47,6 +47,7 @@
   "dependencies": {
     "@vscode/markdown-it-katex": "^1.1.2",
     "aws4fetch": "^1.0.20",
+    "compression": "^1.8.1",
     "express": "^4.21.2",
     "highlight.js": "^11.11.1",
     "katex": "^0.18.4",
@@ -57,6 +58,7 @@
     "yaml": "^2.9.0"
   },
   "devDependencies": {
+    "@types/compression": "^1.8.1",
     "@types/express": "^4.17.23",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.10.0",

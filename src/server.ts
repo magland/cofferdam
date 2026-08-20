@@ -1,3 +1,4 @@
+import compression from 'compression';
 import express, { NextFunction, Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -35,6 +36,23 @@ import { registerWebOps } from './webops';
 //
 // The asset prefixes are exempt on the forge's own hostname only: on a sites
 // hostname those paths belong to the site being served, and are ordinary traffic.
+// Responses that must reach the client exactly as written, so compression is
+// not offered on them.
+//
+// The git wire protocol and LFS carry their own compression -- a packfile is
+// already deflated -- and both stream, so wrapping them costs CPU to make the
+// body no smaller and delays the first bytes of a clone. The backup stream is
+// the same bargain over a much bigger body.
+//
+// Everything else is HTML, CSS, JSON or plain text, where the saving is large:
+// a repository page goes from 133 KB to 11 KB.
+const UNCOMPRESSED = /^\/[^/]+\/[^/]+\/(info\/refs|git-upload-pack|git-receive-pack|info\/lfs\/)|^\/api\/backup\//;
+
+function isCompressible(req: Request, res: Response): boolean {
+  if (UNCOMPRESSED.test(req.path)) return false;
+  return compression.filter(req, res);
+}
+
 function isRateExempt(root: string, req: Request): boolean {
   if (req.path.startsWith('/api/runner/')) return true;
   if (isUnderSitesHost(loadConfig(root).sites.host, req.hostname)) return false;
@@ -58,6 +76,11 @@ export function createApp(root: string) {
   // colour scheme is not. The same goes for the limits below, which hold live
   // counts that cannot be rebuilt per request without discarding them.
   app.set('trust proxy', config.network.trustProxy);
+
+  // Ahead of every route and every other middleware, because it works by
+  // wrapping the response: anything mounted earlier would answer uncompressed.
+  // That includes the sites served from this process and the error pages.
+  app.use(compression({ filter: isCompressible }));
 
   const gates = createGates(config.limits);
   const authLimiter = createAuthLimiter(config.limits.authFailures);
