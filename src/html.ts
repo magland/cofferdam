@@ -20,6 +20,13 @@
 // string, which the tag then escapes: `${items.join('\n')}` is the bug and
 // `${joinHtml(items, '\n')}` is the spelling. The type system cannot refuse
 // .join on an array, so this is the one place the old discipline survives.
+//
+// Where escaping is checked: layout() takes Html and nothing else, so a page
+// cannot be assembled from a plain string at all, and tests/escaping.test.ts
+// drives the real page functions with a script tag and an attribute break
+// where a name, a path, or a description goes. What it asserts is both halves:
+// that nothing executable comes out, and that the payload reached the page, so
+// a test cannot pass by rendering nothing.
 
 export function esc(s: string): string {
   return s

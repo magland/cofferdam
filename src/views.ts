@@ -39,7 +39,7 @@ export interface RepoCtx {
 }
 
 export interface PageOpts {
-  crumbs?: Html | string;
+  crumbs?: Html;
   viewer?: Viewer | null;
   // Current request path, used as the ?next= target of the Sign in link.
   path?: string;
@@ -146,17 +146,13 @@ function jumpDialog(jump: JumpContext | null): Html {
 </dialog>`;
 }
 
-// content and crumbs accept Html and string both while the view files are
-// being converted to the html`` tag; the string arm is trusted as it always
-// was, and goes away with the last manual template.
-export function layout(title: string, content: Html | string, opts: PageOpts = {}): string {
+export function layout(title: string, content: Html, opts: PageOpts = {}): string {
   // The theme name rides along as a query parameter so a changed theme busts
   // any cache in front of the stylesheets, and the stylesheet carries a tag of
   // its own contents so that an upgrade does too. Between them the sheet can
   // then be kept for good instead of revalidated on every navigation.
   const theme = activeTheme().name;
   const sheet = styleSheet(activeTheme()).tag;
-  const crumbs = opts.crumbs ?? '';
   return html`<!doctype html>
 <html lang="en">
 <head>
@@ -203,11 +199,9 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme
 </script>
 </head>
 <body>
-<header class="topbar"><div class="container"><a class="brand" href="/">${raw(WORDMARK)}</a><span class="crumbs">${
-    typeof crumbs === 'string' ? raw(crumbs) : crumbs
-  }</span><div class="userbox">${jumpButton()}${themeMenu()}${userBox(opts)}</div></div></header>
+<header class="topbar"><div class="container"><a class="brand" href="/">${raw(WORDMARK)}</a><span class="crumbs">${opts.crumbs}</span><div class="userbox">${jumpButton()}${themeMenu()}${userBox(opts)}</div></div></header>
 <main class="container">
-${typeof content === 'string' ? raw(content) : content}
+${content}
 </main>
 ${jumpDialog(opts.jump ?? null)}
 <script>
