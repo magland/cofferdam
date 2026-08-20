@@ -4,13 +4,13 @@ import { CiEngine } from './ci/engine';
 import { firePush } from './ci/trigger';
 import { renderDiff } from './diff';
 import { CommitSummary, isValidRefName } from './git';
-import { Html } from './html';
+import { Html, html, raw } from './html';
 import { icon } from './icons';
 import { renderMarkdown } from './markdown';
 import { OpError, previewMerge, MergePreview } from './ops';
 import * as pulls from './pulls';
 import { Pull, PullSummary } from './pulls';
-import { esc, timeTag } from './render';
+import { timeTag } from './render';
 import { Viewer, getViewer } from './session';
 import { RepoCtx, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from './views';
 import {
@@ -47,22 +47,24 @@ function pullsUrl(ctx: RepoCtx): string {
 
 /** Descriptions and comments are markdown, through the same sanitizing path
  * as a README, with #12 and commit ids linked as they are in an issue. */
-function body(ctx: RepoCtx, text: string): string {
+function body(ctx: RepoCtx, text: string): Html {
   const base = repoUrl(ctx);
   const ref = encPath(ctx.defaultBranch || ctx.ref || 'HEAD');
-  return renderMarkdown(text, {
-    rawBase: `${base}/raw/${ref}`,
-    blobBase: `${base}/blob/${ref}`,
-    issueBase: `${base}/issues`,
-    commitBase: `${base}/commit`,
-  });
+  return raw(
+    renderMarkdown(text, {
+      rawBase: `${base}/raw/${ref}`,
+      blobBase: `${base}/blob/${ref}`,
+      issueBase: `${base}/issues`,
+      commitBase: `${base}/commit`,
+    })
+  );
 }
 
-function stateBadge(state: PullSummary['state']): string {
-  if (state === 'merged') return `<span class="state-badge merged">${icon('git-merge')}<span>Merged</span></span>`;
+function stateBadge(state: PullSummary['state']): Html {
+  if (state === 'merged') return html`<span class="state-badge merged">${icon('git-merge')}<span>Merged</span></span>`;
   if (state === 'closed')
-    return `<span class="state-badge closed">${icon('git-pull-request-closed')}<span>Closed</span></span>`;
-  return `<span class="state-badge open">${icon('git-pull-request')}<span>Open</span></span>`;
+    return html`<span class="state-badge closed">${icon('git-pull-request-closed')}<span>Closed</span></span>`;
+  return html`<span class="state-badge open">${icon('git-pull-request')}<span>Open</span></span>`;
 }
 
 function stateIcon(state: PullSummary['state']): Html {
@@ -71,11 +73,10 @@ function stateIcon(state: PullSummary['state']): Html {
   return icon('git-pull-request', 'issue-open');
 }
 
-function branchPair(ctx: RepoCtx, pull: PullSummary): string {
+function branchPair(ctx: RepoCtx, pull: PullSummary): Html {
   const base = repoUrl(ctx);
-  const chip = (ref: string) =>
-    `<a class="chip mono" href="${base}/tree/${encPath(ref)}">${esc(ref)}</a>`;
-  return `${chip(pull.base)} <span class="muted">&larr;</span> ${chip(pull.head)}`;
+  const chip = (ref: string) => html`<a class="chip mono" href="${base}/tree/${encPath(ref)}">${ref}</a>`;
+  return html`${chip(pull.base)} <span class="muted">&larr;</span> ${chip(pull.head)}`;
 }
 
 function listPage(
@@ -86,32 +87,30 @@ function listPage(
 ): string {
   const base = pullsUrl(ctx);
   const tab = (id: string, label: string, n: number, glyph: 'git-pull-request' | 'git-merge') =>
-    `<a class="state-tab${state === id ? ' current' : ''}" href="${base}?state=${id}">${icon(
+    html`<a class="state-tab${state === id ? ' current' : ''}" href="${base}?state=${id}">${icon(
       glyph
     )}<span>${n} ${label}</span></a>`;
-  const rows = list
-    .map(
-      (p) =>
-        `<tr>
+  const rows = list.map(
+    (p) =>
+      html`<tr>
 <td class="issue-cell">${stateIcon(p.state)}<span>
-<a class="issue-link" href="${base}/${p.number}">${esc(p.title)}</a>
-<div class="muted small">#${p.number} opened ${timeTag(p.created)} by ${esc(p.author)} &middot; ${branchPair(
-          ctx,
-          p
-        )}</div></span></td>
+<a class="issue-link" href="${base}/${p.number}">${p.title}</a>
+<div class="muted small">#${p.number} opened ${timeTag(p.created)} by ${p.author} &middot; ${branchPair(
+        ctx,
+        p
+      )}</div></span></td>
 <td class="right muted small">${
-          p.comments > 0
-            ? `<a class="issue-comments" href="${base}/${p.number}" title="${p.comments} comment${
-                p.comments === 1 ? '' : 's'
-              }">${icon('comment')}<span>${p.comments}</span></a>`
-            : ''
-        }</td>
+        p.comments > 0
+          ? html`<a class="issue-comments" href="${base}/${p.number}" title="${p.comments} comment${
+              p.comments === 1 ? '' : 's'
+            }">${icon('comment')}<span>${p.comments}</span></a>`
+          : ''
+      }</td>
 </tr>`
-    )
-    .join('');
+  );
   const newBtn = ctx.viewer
-    ? `<a class="btn btn-primary" href="${base}/new">${icon('git-pull-request')}<span>New pull request</span></a>`
-    : `<a class="btn" href="/login?next=${encodeURIComponent(`${base}/new`)}">${icon(
+    ? html`<a class="btn btn-primary" href="${base}/new">${icon('git-pull-request')}<span>New pull request</span></a>`
+    : html`<a class="btn" href="/login?next=${encodeURIComponent(`${base}/new`)}">${icon(
         'git-pull-request'
       )}<span>New pull request</span></a>`;
   const empty =
@@ -120,7 +119,7 @@ function listPage(
       : state === 'open'
         ? 'No open pull requests. Push a branch and propose it here.'
         : 'No pull requests yet.';
-  const content = `${repoHeader(ctx, 'pulls')}
+  const content = html`${repoHeader(ctx, 'pulls')}
 <div class="page-head">
   <span class="state-filter">${tab('open', 'Open', counts.open, 'git-pull-request')}${tab(
     'closed',
@@ -130,21 +129,25 @@ function listPage(
   )}</span>
   ${newBtn}
 </div>
-${rows ? `<table class="listing issues"><tbody>${rows}</tbody></table>` : `<div class="empty-state">${empty}</div>`}`;
+${
+    rows.length
+      ? html`<table class="listing issues"><tbody>${rows}</tbody></table>`
+      : html`<div class="empty-state">${empty}</div>`
+  }`;
   return layout(`Pull requests - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, base));
 }
 
-function commentCard(author: string, when: string, html: string, note = ''): string {
-  return `<article class="issue-comment">
-<div class="issue-comment-head">${avatar(author, 24)}<b>${esc(author)}</b><span class="muted small">${
+function commentCard(author: string, when: string, rendered: Html, note = ''): Html {
+  return html`<article class="issue-comment">
+<div class="issue-comment-head">${avatar(author, 24)}<b>${author}</b><span class="muted small">${
     note || 'commented'
   } ${timeTag(when)}</span></div>
-<div class="issue-comment-body markdown-body">${html}</div>
+<div class="issue-comment-body markdown-body">${rendered}</div>
 </article>`;
 }
 
 /** The box that says whether this can be merged, and offers to do it. */
-function mergeBox(ctx: RepoCtx, pull: Pull, preview: MergePreview | null, canMerge: boolean): string {
+function mergeBox(ctx: RepoCtx, pull: Pull, preview: MergePreview | null, canMerge: boolean): Html {
   const viewer = ctx.viewer;
   if (pull.state === 'merged') {
     // A merged branch has done its work; GitHub offers to sweep it away here
@@ -153,54 +156,58 @@ function mergeBox(ctx: RepoCtx, pull: Pull, preview: MergePreview | null, canMer
     const stale = ctx.branches.some((b) => b.name === pull.head) && pull.head !== ctx.defaultBranch;
     const sweep =
       stale && ctx.canPush && viewer
-        ? `<form method="post" action="${pullsUrl(ctx)}/${pull.number}/delete-branch" onsubmit="return confirm('Delete the branch ${esc(
-            pull.head
-          )}?')">${csrfField(viewer)}<button class="btn" type="submit">${icon('trash')}<span>Delete branch ${esc(
-            pull.head
-          )}</span></button></form>`
+        ? html`<form method="post" action="${pullsUrl(ctx)}/${
+            pull.number
+          }/delete-branch" onsubmit="return confirm('Delete the branch ${pull.head}?')">${csrfField(
+            viewer
+          )}<button class="btn" type="submit">${icon('trash')}<span>Delete branch ${pull.head}</span></button></form>`
         : '';
-    return `<div class="merge-box merged">${icon('git-merge')}<div><b>Merged</b><div class="muted small">${esc(
+    return html`<div class="merge-box merged">${icon('git-merge')}<div><b>Merged</b><div class="muted small">${
       pull.mergedBy ?? 'someone'
-    )} merged this ${pull.mergedAt ? timeTag(pull.mergedAt) : ''}${
+    } merged this ${pull.mergedAt ? timeTag(pull.mergedAt) : ''}${
       pull.mergeSha
-        ? ` as <a class="sha" href="${repoUrl(ctx)}/commit/${esc(pull.mergeSha)}">${esc(pull.mergeSha.slice(0, 7))}</a>`
+        ? html` as <a class="sha" href="${repoUrl(ctx)}/commit/${pull.mergeSha}">${pull.mergeSha.slice(0, 7)}</a>`
         : ''
     }</div></div>${sweep}</div>`;
   }
   if (pull.state === 'closed') {
-    return `<div class="merge-box closed">${icon('git-pull-request-closed')}<div><b>Closed without merging</b><div class="muted small">${esc(
+    return html`<div class="merge-box closed">${icon(
+      'git-pull-request-closed'
+    )}<div><b>Closed without merging</b><div class="muted small">${
       pull.closedBy ?? 'someone'
-    )} closed this ${pull.closedAt ? timeTag(pull.closedAt) : ''}</div></div></div>`;
+    } closed this ${pull.closedAt ? timeTag(pull.closedAt) : ''}</div></div></div>`;
   }
   if (!preview) {
-    return `<div class="merge-box unknown">${icon('alert')}<div><b>This branch cannot be compared</b><div class="muted small">One of ${esc(
-      pull.base
-    )} and ${esc(pull.head)} no longer exists.</div></div></div>`;
+    return html`<div class="merge-box unknown">${icon(
+      'alert'
+    )}<div><b>This branch cannot be compared</b><div class="muted small">One of ${pull.base} and ${
+      pull.head
+    } no longer exists.</div></div></div>`;
   }
   if (preview.status === 'up-to-date') {
-    return `<div class="merge-box unknown">${icon('check')}<div><b>Nothing to merge</b><div class="muted small">${esc(
+    return html`<div class="merge-box unknown">${icon('check')}<div><b>Nothing to merge</b><div class="muted small">${
       pull.base
-    )} already contains everything on ${esc(pull.head)}.</div></div></div>`;
+    } already contains everything on ${pull.head}.</div></div></div>`;
   }
   if (preview.status === 'conflict') {
-    const paths = preview.paths.slice(0, 20).map((p) => `<li class="mono">${esc(p)}</li>`).join('');
-    return `<div class="merge-box conflict">${icon('x')}<div><b>This branch has conflicts that must be resolved</b>
-<div class="muted small">Merge ${esc(pull.base)} into ${esc(pull.head)} where you work, resolve them, and push.</div>
+    const paths = preview.paths.slice(0, 20).map((p) => html`<li class="mono">${p}</li>`);
+    return html`<div class="merge-box conflict">${icon('x')}<div><b>This branch has conflicts that must be resolved</b>
+<div class="muted small">Merge ${pull.base} into ${pull.head} where you work, resolve them, and push.</div>
 <ul class="merge-conflicts">${paths}</ul></div></div>`;
   }
   // How to merge is a choice, as it is on GitHub: keep both parents and the
   // shape of the branch, or land it as one commit.
   const button =
     canMerge && viewer
-      ? `<form class="merge-do" method="post" action="${pullsUrl(ctx)}/${pull.number}/merge">${csrfField(viewer)}
+      ? html`<form class="merge-do" method="post" action="${pullsUrl(ctx)}/${pull.number}/merge">${csrfField(viewer)}
 <label class="merge-method"><select name="method"><option value="merge">Merge commit</option><option value="squash">Squash and merge</option></select></label>
 <button class="btn btn-primary" type="submit">${icon('git-merge')}<span>Merge pull request</span></button></form>`
-      : `<span class="muted small">${
+      : html`<span class="muted small">${
           viewer ? 'Merging needs push access to this repository.' : 'Sign in with push access to merge.'
         }</span>`;
-  return `<div class="merge-box clean">${icon('check')}<div><b>This branch has no conflicts with ${esc(
-    pull.base
-  )}</b><div class="muted small">${
+  return html`<div class="merge-box clean">${icon(
+    'check'
+  )}<div><b>This branch has no conflicts with ${pull.base}</b><div class="muted small">${
     preview.fastForward
       ? 'It can be merged by moving the branch forward.'
       : 'Merging creates a merge commit on the base branch.'
@@ -217,58 +224,64 @@ function pullPage(
   const viewer = ctx.viewer;
   const mine = viewer !== null && viewer.auth.username === pull.author;
   const canClose = ctx.canPush || mine;
-  const comments = pull.commentList.map((c) => commentCard(c.author, c.created, body(ctx, c.body))).join('');
-  let replyBox = '';
+  const comments = pull.commentList.map((c) => commentCard(c.author, c.created, body(ctx, c.body)));
+  let replyBox: Html;
   if (viewer) {
     const toggle =
       canClose && pull.state !== 'merged'
-        ? `<button class="btn" type="submit" name="state" value="${
+        ? html`<button class="btn" type="submit" name="state" value="${
             pull.state === 'open' ? 'closed' : 'open'
           }" formaction="${base}/${pull.number}/state">${icon(
             pull.state === 'open' ? 'git-pull-request-closed' : 'git-pull-request'
           )}<span>${pull.state === 'open' ? 'Close pull request' : 'Reopen'}</span></button>`
         : '';
-    replyBox = `<form class="issue-reply" method="post" action="${base}/${pull.number}/comment">${csrfField(viewer)}
-<div class="issue-comment-head">${avatar(viewer.auth.username, 24)}<b>${esc(viewer.auth.username)}</b></div>
+    replyBox = html`<form class="issue-reply" method="post" action="${base}/${pull.number}/comment">${csrfField(
+      viewer
+    )}
+<div class="issue-comment-head">${avatar(viewer.auth.username, 24)}<b>${viewer.auth.username}</b></div>
 <textarea class="code-editor" name="body" rows="6" placeholder="Leave a comment"></textarea>
 <div class="actions">${toggle}<button class="btn btn-primary" type="submit">Comment</button></div>
 </form>`;
   } else {
-    replyBox = `<p class="muted"><a href="/login?next=${encodeURIComponent(
+    replyBox = html`<p class="muted"><a href="/login?next=${encodeURIComponent(
       `${base}/${pull.number}`
     )}">Sign in</a> to comment.</p>`;
   }
-  const commitRows = view.commits
-    .map(
-      (c) =>
-        `<div class="commit-row"><span class="commit-main"><a class="title" href="${repo}/commit/${c.sha}">${esc(
-          c.subject
-        )}</a><div class="muted small">${esc(c.author)} committed ${timeTag(c.date)}</div></span><a class="sha" href="${repo}/commit/${
-          c.sha
-        }">${c.sha.slice(0, 7)}</a></div>`
-    )
-    .join('');
-  const content = `${repoHeader(ctx, 'pulls')}
+  const commitRows = view.commits.map(
+    (c) =>
+      html`<div class="commit-row"><span class="commit-main"><a class="title" href="${repo}/commit/${c.sha}">${
+        c.subject
+      }</a><div class="muted small">${c.author} committed ${timeTag(
+        c.date
+      )}</div></span><a class="sha" href="${repo}/commit/${c.sha}">${c.sha.slice(0, 7)}</a></div>`
+  );
+  const description = body(ctx, pull.body);
+  const content = html`${repoHeader(ctx, 'pulls')}
 <div class="issue-head">
-  <h1 class="issue-title">${esc(pull.title)} <span class="muted">#${pull.number}</span></h1>
+  <h1 class="issue-title">${pull.title} <span class="muted">#${pull.number}</span></h1>
   <span class="right-group"><a class="btn" href="${base}">Back to pull requests</a></span>
 </div>
-<div class="issue-sub">${stateBadge(pull.state)}<span class="muted"><b>${esc(
+<div class="issue-sub">${stateBadge(pull.state)}<span class="muted"><b>${
     pull.author
-  )}</b> wants to merge ${view.ahead} commit${view.ahead === 1 ? '' : 's'} into </span>${branchPair(ctx, pull)}</div>
+  }</b> wants to merge ${view.ahead} commit${view.ahead === 1 ? '' : 's'} into </span>${branchPair(ctx, pull)}</div>
 ${mergeBox(ctx, pull, view.preview, ctx.canPush)}
 <div class="issue-thread">
-${commentCard(pull.author, pull.created, body(ctx, pull.body) || '<p class="muted">No description.</p>', 'opened this')}
+${commentCard(
+    pull.author,
+    pull.created,
+    description.text ? description : raw('<p class="muted">No description.</p>'),
+    'opened this'
+  )}
 ${comments}
 ${replyBox}
 </div>
 <div class="box"><div class="box-header">${icon('git-commit')}<span>${view.commits.length} commit${
     view.commits.length === 1 ? '' : 's'
   }</span></div><div class="box-body pull-commits">${
-    commitRows || '<p class="muted">Nothing to merge.</p>'
+    commitRows.length ? commitRows : raw('<p class="muted">Nothing to merge.</p>')
   }</div></div>
 <h2 class="pull-files">Files changed</h2>
-${renderDiff(view.patch, { blobBase: `${repo}/blob/${encPath(pull.head)}` })}`;
+${raw(renderDiff(view.patch, { blobBase: `${repo}/blob/${encPath(pull.head)}` }))}`;
   return layout(
     `${pull.title} · #${pull.number} - ${ctx.collection}/${ctx.repo}`,
     content,
@@ -285,11 +298,13 @@ function newPage(
 ): string {
   const base = pullsUrl(ctx);
   const options = (selected: string) =>
-    ctx.branches.map((b) => `<option value="${esc(b.name)}"${b.name === selected ? ' selected' : ''}>${esc(b.name)}</option>`).join('');
-  const content = `${repoHeader(ctx, 'pulls')}
+    ctx.branches.map(
+      (b) => html`<option value="${b.name}"${b.name === selected ? raw(' selected') : ''}>${b.name}</option>`
+    );
+  const content = html`${repoHeader(ctx, 'pulls')}
 <div class="form-box wide">
 <h1>New pull request</h1>
-${error ? `<div class="form-error">${esc(error)}</div>` : ''}
+${error ? html`<div class="form-error">${error}</div>` : ''}
 <form method="get" action="${base}/new" class="cmp-form">
 ${icon('git-compare')}<label class="cmp-picker">base <select name="base">${options(values.base)}</select></label>
 <span class="muted">&larr;</span>
@@ -298,22 +313,22 @@ ${icon('git-compare')}<label class="cmp-picker">base <select name="base">${optio
 </form>
 ${
   info
-    ? `<p class="muted">${info.ahead} commit${info.ahead === 1 ? '' : 's'} would be merged into <b>${esc(
+    ? html`<p class="muted">${info.ahead} commit${info.ahead === 1 ? '' : 's'} would be merged into <b>${
         values.base
-      )}</b> from <b>${esc(values.head)}</b>.</p>`
+      }</b> from <b>${values.head}</b>.</p>`
     : ''
 }
 <form method="post" action="${base}/new">${csrfField(viewer)}
-<input type="hidden" name="base" value="${esc(values.base)}">
-<input type="hidden" name="head" value="${esc(values.head)}">
+<input type="hidden" name="base" value="${values.base}">
+<input type="hidden" name="head" value="${values.head}">
 <div class="field"><label for="title">Title</label>
-<input type="text" id="title" name="title" value="${esc(values.title)}" maxlength="${
+<input type="text" id="title" name="title" value="${values.title}" maxlength="${
     pulls.MAX_TITLE
   }" required autofocus></div>
 <div class="field"><label for="body">Description</label>
-<textarea class="code-editor" id="body" name="body" rows="10" placeholder="What this changes, and why. Markdown is welcome.">${esc(
+<textarea class="code-editor" id="body" name="body" rows="10" placeholder="What this changes, and why. Markdown is welcome.">${
     values.body
-  )}</textarea></div>
+  }</textarea></div>
 <div class="actions"><button class="btn btn-primary" type="submit">${icon(
     'git-pull-request'
   )}<span>Create pull request</span></button><a class="btn" href="${base}">Cancel</a></div>

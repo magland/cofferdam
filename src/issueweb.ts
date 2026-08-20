@@ -4,9 +4,10 @@ import { avatar } from './avatar';
 import { IconName, icon } from './icons';
 import * as issues from './issues';
 import { Issue, IssueSummary } from './issues';
+import { Html, html, joinHtml, raw } from './html';
 import { renderMarkdown } from './markdown';
 import { OpError } from './ops';
-import { esc, timeTag } from './render';
+import { timeTag } from './render';
 import { Viewer, getViewer } from './session';
 import { RepoCtx, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from './views';
 import {
@@ -40,21 +41,23 @@ function issuesUrl(ctx: RepoCtx): string {
 /** Issue bodies are markdown, rendered by the same sanitizing pipeline as a
  * README: this is text one user writes and another reads. Relative links
  * resolve against the default branch, since an issue has no file of its own. */
-function body(ctx: RepoCtx, text: string): string {
+function body(ctx: RepoCtx, text: string): Html {
   const base = repoUrl(ctx);
   const ref = encPath(ctx.defaultBranch || ctx.ref || 'HEAD');
-  return renderMarkdown(text, {
-    rawBase: `${base}/raw/${ref}`,
-    blobBase: `${base}/blob/${ref}`,
-    issueBase: `${base}/issues`,
-    commitBase: `${base}/commit`,
-  });
+  return raw(
+    renderMarkdown(text, {
+      rawBase: `${base}/raw/${ref}`,
+      blobBase: `${base}/blob/${ref}`,
+      issueBase: `${base}/issues`,
+      commitBase: `${base}/commit`,
+    })
+  );
 }
 
-function stateBadge(state: 'open' | 'closed'): string {
+function stateBadge(state: 'open' | 'closed'): Html {
   return state === 'open'
-    ? `<span class="state-badge open">${icon('issue-opened')}<span>Open</span></span>`
-    : `<span class="state-badge closed">${icon('issue-closed')}<span>Closed</span></span>`;
+    ? html`<span class="state-badge open">${icon('issue-opened')}<span>Open</span></span>`
+    : html`<span class="state-badge closed">${icon('issue-closed')}<span>Closed</span></span>`;
 }
 
 /** What the reader has narrowed the list to, and what the links must carry. */
@@ -89,14 +92,16 @@ function labelStyle(label: string): string {
   return `background: hsl(${Math.round((hash[0] / 256) * 360)} 58% 46%); color: #fff;`;
 }
 
-function labelChips(labels: string[], base?: string, filter?: IssueFilter): string {
-  return labels
-    .map((l) =>
+function labelChips(labels: string[], base?: string, filter?: IssueFilter): Html {
+  return joinHtml(
+    labels.map((l) =>
       base && filter
-        ? `<a class="chip label" style="${labelStyle(l)}" href="${filterUrl(base, filter, { label: l })}">${esc(l)}</a>`
-        : `<span class="chip label" style="${labelStyle(l)}">${esc(l)}</span>`
+        ? html`<a class="chip label" style="${raw(labelStyle(l))}" href="${filterUrl(base, filter, {
+            label: l,
+          })}">${l}</a>`
+        : html`<span class="chip label" style="${raw(labelStyle(l))}">${l}</span>`
     )
-    .join('');
+  );
 }
 
 function listPage(
@@ -109,55 +114,55 @@ function listPage(
 ): string {
   const base = issuesUrl(ctx);
   const tab = (id: 'open' | 'closed', label: string, n: number, glyph: 'issue-opened' | 'issue-closed') =>
-    `<a class="state-tab${filter.state === id ? ' current' : ''}" href="${filterUrl(base, filter, {
+    html`<a class="state-tab${filter.state === id ? ' current' : ''}" href="${filterUrl(base, filter, {
       state: id,
     })}">${icon(glyph)}<span>${n} ${label}</span></a>`;
-  const rows = list
-    .map(
-      (i) =>
-        `<tr>
+  const rows = list.map(
+    (i) =>
+      html`<tr>
 <td class="issue-cell">${icon(i.state === 'open' ? 'issue-opened' : 'issue-closed', i.state === 'open' ? 'issue-open' : 'issue-closed')}<span>
-<a class="issue-link" href="${base}/${i.number}">${esc(i.title)}</a>${labelChips(i.labels, base, filter)}
-<div class="muted small">#${i.number} opened ${timeTag(i.created)} by ${esc(i.author)}${
-          i.state === 'closed' && i.closedAt ? ` &middot; closed ${timeTag(i.closedAt)}` : ''
-        }</div></span></td>
+<a class="issue-link" href="${base}/${i.number}">${i.title}</a>${labelChips(i.labels, base, filter)}
+<div class="muted small">#${i.number} opened ${timeTag(i.created)} by ${i.author}${
+        i.state === 'closed' && i.closedAt ? html` &middot; closed ${timeTag(i.closedAt)}` : ''
+      }</div></span></td>
 <td class="right muted small">${
-          i.comments > 0
-            ? `<a class="issue-comments" href="${base}/${i.number}" title="${i.comments} comment${
-                i.comments === 1 ? '' : 's'
-              }">${icon('comment')}<span>${i.comments}</span></a>`
-            : ''
-        }</td>
+        i.comments > 0
+          ? html`<a class="issue-comments" href="${base}/${i.number}" title="${i.comments} comment${
+              i.comments === 1 ? '' : 's'
+            }">${icon('comment')}<span>${i.comments}</span></a>`
+          : ''
+      }</td>
 </tr>`
-    )
-    .join('');
+  );
   const newBtn = ctx.viewer
-    ? `<a class="btn btn-primary" href="${base}/new">${icon('plus')}<span>New issue</span></a>`
-    : `<a class="btn" href="/login?next=${encodeURIComponent(`${base}/new`)}">${icon('plus')}<span>New issue</span></a>`;
+    ? html`<a class="btn btn-primary" href="${base}/new">${icon('plus')}<span>New issue</span></a>`
+    : html`<a class="btn" href="/login?next=${encodeURIComponent(`${base}/new`)}">${icon(
+        'plus'
+      )}<span>New issue</span></a>`;
 
   // The three menus and the search box. Each menu is a list of links carrying
   // the rest of the filter, so narrowing never loses what was already chosen
   // and nothing here needs script.
-  const menu = (label: string, current: string, glyph: IconName, items: string[]) =>
-    `<details class="dropdown">
-<summary class="btn">${icon(glyph)}<span>${esc(current || label)}</span>${icon('chevron-down', 'caret')}</summary>
-<div class="dropdown-menu"><div class="dd-scroll">${items.join('')}</div></div>
+  const menu = (label: string, current: string, glyph: IconName, items: Html[]) =>
+    html`<details class="dropdown">
+<summary class="btn">${icon(glyph)}<span>${current || label}</span>${icon('chevron-down', 'caret')}</summary>
+<div class="dropdown-menu"><div class="dd-scroll">${items}</div></div>
 </details>`;
   const labelMenu = menu(
     'Labels',
     filter.label,
     'tag',
     [
-      `<a class="dd-item${filter.label === '' ? ' current' : ''}" href="${filterUrl(base, filter, {
+      html`<a class="dd-item${filter.label === '' ? ' current' : ''}" href="${filterUrl(base, filter, {
         label: '',
       })}"><span class="dd-check"></span><span class="dd-label">Any label</span></a>`,
       ...labels.map(
         (l) =>
-          `<a class="dd-item${filter.label === l.label ? ' current' : ''}" href="${filterUrl(base, filter, {
+          html`<a class="dd-item${filter.label === l.label ? ' current' : ''}" href="${filterUrl(base, filter, {
             label: l.label,
           })}">${
-            filter.label === l.label ? icon('check', 'dd-check') : '<span class="dd-check"></span>'
-          }<span class="dd-label">${esc(l.label)}</span><span class="muted small">${l.count}</span></a>`
+            filter.label === l.label ? icon('check', 'dd-check') : raw('<span class="dd-check"></span>')
+          }<span class="dd-label">${l.label}</span><span class="muted small">${l.count}</span></a>`
       ),
     ]
   );
@@ -166,16 +171,16 @@ function listPage(
     filter.author,
     'person',
     [
-      `<a class="dd-item${filter.author === '' ? ' current' : ''}" href="${filterUrl(base, filter, {
+      html`<a class="dd-item${filter.author === '' ? ' current' : ''}" href="${filterUrl(base, filter, {
         author: '',
       })}"><span class="dd-check"></span><span class="dd-label">Anyone</span></a>`,
       ...authors.map(
         (a) =>
-          `<a class="dd-item${filter.author === a.author ? ' current' : ''}" href="${filterUrl(base, filter, {
+          html`<a class="dd-item${filter.author === a.author ? ' current' : ''}" href="${filterUrl(base, filter, {
             author: a.author,
           })}">${
-            filter.author === a.author ? icon('check', 'dd-check') : '<span class="dd-check"></span>'
-          }<span class="dd-label">${esc(a.author)}</span><span class="muted small">${a.count}</span></a>`
+            filter.author === a.author ? icon('check', 'dd-check') : raw('<span class="dd-check"></span>')
+          }<span class="dd-label">${a.author}</span><span class="muted small">${a.count}</span></a>`
       ),
     ]
   );
@@ -185,26 +190,26 @@ function listPage(
     'filter',
     issues.ISSUE_SORTS.map(
       (x) =>
-        `<a class="dd-item${filter.sort === x.key ? ' current' : ''}" href="${filterUrl(base, filter, {
+        html`<a class="dd-item${filter.sort === x.key ? ' current' : ''}" href="${filterUrl(base, filter, {
           sort: x.key,
         })}">${
-          filter.sort === x.key ? icon('check', 'dd-check') : '<span class="dd-check"></span>'
-        }<span class="dd-label">${esc(x.label)}</span></a>`
+          filter.sort === x.key ? icon('check', 'dd-check') : raw('<span class="dd-check"></span>')
+        }<span class="dd-label">${x.label}</span></a>`
     )
   );
   const hidden = [
-    filter.state === 'open' ? '' : `<input type="hidden" name="state" value="${esc(filter.state)}">`,
-    filter.label === '' ? '' : `<input type="hidden" name="label" value="${esc(filter.label)}">`,
-    filter.author === '' ? '' : `<input type="hidden" name="author" value="${esc(filter.author)}">`,
-    filter.sort === 'newest' ? '' : `<input type="hidden" name="sort" value="${esc(filter.sort)}">`,
-  ].join('');
-  const search = `<form class="issue-search" method="get" action="${base}" role="search">${hidden}
-<input class="search-input" type="search" name="q" value="${esc(
+    filter.state === 'open' ? '' : html`<input type="hidden" name="state" value="${filter.state}">`,
+    filter.label === '' ? '' : html`<input type="hidden" name="label" value="${filter.label}">`,
+    filter.author === '' ? '' : html`<input type="hidden" name="author" value="${filter.author}">`,
+    filter.sort === 'newest' ? '' : html`<input type="hidden" name="sort" value="${filter.sort}">`,
+  ];
+  const search = html`<form class="issue-search" method="get" action="${base}" role="search">${hidden}
+<input class="search-input" type="search" name="q" value="${
     filter.query
-  )}" placeholder="Search issues" aria-label="Search issues">${icon('search', 'search-glyph')}</form>`;
+  }" placeholder="Search issues" aria-label="Search issues">${icon('search', 'search-glyph')}</form>`;
   const narrowed = filter.label !== '' || filter.author !== '' || filter.query !== '';
   const clear = narrowed
-    ? `<a class="btn" href="${filterUrl(base, filter, { label: '', author: '', query: '' })}">${icon(
+    ? html`<a class="btn" href="${filterUrl(base, filter, { label: '', author: '', query: '' })}">${icon(
         'x'
       )}<span>Clear</span></a>`
     : '';
@@ -215,7 +220,7 @@ function listPage(
       : filter.state === 'open'
         ? 'No open issues. Anything that needs doing here can be written down.'
         : 'No issues yet.';
-  const content = `${repoHeader(ctx, 'issues')}
+  const content = html`${repoHeader(ctx, 'issues')}
 <div class="page-head">
   <span class="state-filter">${tab('open', 'Open', counts.open, 'issue-opened')}${tab(
     'closed',
@@ -226,15 +231,20 @@ function listPage(
   ${newBtn}
 </div>
 <div class="issue-filters">${search}<span class="right-group">${labelMenu}${authorMenu}${sortMenu}${clear}</span></div>
-${rows ? `<table class="listing issues"><tbody>${rows}</tbody></table>` : `<div class="empty-state">${empty}</div>`}`;
+${
+    rows.length
+      ? html`<table class="listing issues"><tbody>${rows}</tbody></table>`
+      : html`<div class="empty-state">${empty}</div>`
+  }`;
   return layout(`Issues - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, filterUrl(base, filter, {})));
 }
 
-function commentCard(author: string, when: string, html: string, note = ''): string {
-  return `<article class="issue-comment">
-<div class="issue-comment-head">${avatar(author, 24)}<b>${esc(author)}</b><span class="muted small">${note ||
-    'commented'} ${timeTag(when)}</span></div>
-<div class="issue-comment-body markdown-body">${html}</div>
+function commentCard(author: string, when: string, rendered: Html, note = ''): Html {
+  return html`<article class="issue-comment">
+<div class="issue-comment-head">${avatar(author, 24)}<b>${author}</b><span class="muted small">${
+    note || 'commented'
+  } ${timeTag(when)}</span></div>
+<div class="issue-comment-body markdown-body">${rendered}</div>
 </article>`;
 }
 
@@ -243,48 +253,55 @@ function issuePage(ctx: RepoCtx, issue: Issue, canWrite: boolean): string {
   const viewer = ctx.viewer;
   const mine = viewer !== null && viewer.auth.username === issue.author;
   const canClose = canWrite || mine;
-  const comments = issue.commentList
-    .map((c) => commentCard(c.author, c.created, body(ctx, c.body)))
-    .join('');
+  const comments = issue.commentList.map((c) => commentCard(c.author, c.created, body(ctx, c.body)));
   const closedNote =
     issue.state === 'closed' && issue.closedAt
-      ? `<div class="issue-event">${icon('issue-closed', 'issue-closed')}<span><b>${esc(
+      ? html`<div class="issue-event">${icon('issue-closed', 'issue-closed')}<span><b>${
           issue.closedBy ?? 'someone'
-        )}</b> closed this ${timeTag(issue.closedAt)}</span></div>`
+        }</b> closed this ${timeTag(issue.closedAt)}</span></div>`
       : '';
-  let replyBox = '';
+  let replyBox: Html;
   if (viewer) {
     const toggle = canClose
-      ? `<button class="btn" type="submit" name="state" value="${issue.state === 'open' ? 'closed' : 'open'}" formaction="${base}/${
-          issue.number
-        }/state">${icon(issue.state === 'open' ? 'issue-closed' : 'issue-opened')}<span>${
-          issue.state === 'open' ? 'Close issue' : 'Reopen issue'
-        }</span></button>`
+      ? html`<button class="btn" type="submit" name="state" value="${
+          issue.state === 'open' ? 'closed' : 'open'
+        }" formaction="${base}/${issue.number}/state">${icon(
+          issue.state === 'open' ? 'issue-closed' : 'issue-opened'
+        )}<span>${issue.state === 'open' ? 'Close issue' : 'Reopen issue'}</span></button>`
       : '';
-    replyBox = `<form class="issue-reply" method="post" action="${base}/${issue.number}/comment">${csrfField(viewer)}
-<div class="issue-comment-head">${avatar(viewer.auth.username, 24)}<b>${esc(viewer.auth.username)}</b></div>
+    replyBox = html`<form class="issue-reply" method="post" action="${base}/${issue.number}/comment">${csrfField(
+      viewer
+    )}
+<div class="issue-comment-head">${avatar(viewer.auth.username, 24)}<b>${viewer.auth.username}</b></div>
 <textarea class="code-editor" name="body" rows="6" placeholder="Leave a comment"></textarea>
 <div class="actions">${toggle}<button class="btn btn-primary" type="submit">Comment</button></div>
 </form>`;
   } else {
-    replyBox = `<p class="muted"><a href="/login?next=${encodeURIComponent(`${base}/${issue.number}`)}">Sign in</a> to comment.</p>`;
+    replyBox = html`<p class="muted"><a href="/login?next=${encodeURIComponent(
+      `${base}/${issue.number}`
+    )}">Sign in</a> to comment.</p>`;
   }
-  const edit =
-    canClose
-      ? `<a class="btn" href="${base}/${issue.number}/edit">${icon('pencil')}<span>Edit</span></a>`
-      : '';
-  const content = `${repoHeader(ctx, 'issues')}
+  const edit = canClose
+    ? html`<a class="btn" href="${base}/${issue.number}/edit">${icon('pencil')}<span>Edit</span></a>`
+    : '';
+  const description = body(ctx, issue.body);
+  const content = html`${repoHeader(ctx, 'issues')}
 <div class="issue-head">
-  <h1 class="issue-title">${esc(issue.title)} <span class="muted">#${issue.number}</span></h1>
+  <h1 class="issue-title">${issue.title} <span class="muted">#${issue.number}</span></h1>
   <span class="right-group">${edit}<a class="btn" href="${base}">Back to issues</a></span>
 </div>
-<div class="issue-sub">${stateBadge(issue.state)}<span class="muted"><b>${esc(
+<div class="issue-sub">${stateBadge(issue.state)}<span class="muted"><b>${
     issue.author
-  )}</b> opened this ${timeTag(issue.created)} &middot; ${issue.commentList.length} comment${
+  }</b> opened this ${timeTag(issue.created)} &middot; ${issue.commentList.length} comment${
     issue.commentList.length === 1 ? '' : 's'
   }</span>${labelChips(issue.labels)}</div>
 <div class="issue-thread">
-${commentCard(issue.author, issue.created, body(ctx, issue.body) || '<p class="muted">No description.</p>', 'opened this')}
+${commentCard(
+    issue.author,
+    issue.created,
+    description.text ? description : raw('<p class="muted">No description.</p>'),
+    'opened this'
+  )}
 ${comments}
 ${closedNote}
 ${replyBox}
@@ -301,21 +318,21 @@ function editPage(
 ): string {
   const base = issuesUrl(ctx);
   const action = mode === 'new' ? `${base}/new` : `${base}/${values.number}/edit`;
-  const content = `${repoHeader(ctx, 'issues')}
+  const content = html`${repoHeader(ctx, 'issues')}
 <div class="form-box wide">
 <h1>${mode === 'new' ? 'New issue' : `Edit issue #${values.number}`}</h1>
-${error ? `<div class="form-error">${esc(error)}</div>` : ''}
+${error ? html`<div class="form-error">${error}</div>` : ''}
 <form method="post" action="${action}">${csrfField(viewer)}
 <div class="field"><label for="title">Title</label>
-<input type="text" id="title" name="title" value="${esc(values.title)}" maxlength="${
+<input type="text" id="title" name="title" value="${values.title}" maxlength="${
     issues.MAX_TITLE
   }" required autofocus></div>
 <div class="field"><label for="body">Description</label>
-<textarea class="code-editor" id="body" name="body" rows="12" placeholder="Markdown is welcome">${esc(values.body)}</textarea></div>
+<textarea class="code-editor" id="body" name="body" rows="12" placeholder="Markdown is welcome">${values.body}</textarea></div>
 ${
   ctx.canPush
-    ? `<div class="field"><label for="labels">Labels</label>
-<input type="text" id="labels" name="labels" value="${esc(values.labels.join(', '))}" placeholder="bug, ui">
+    ? html`<div class="field"><label for="labels">Labels</label>
+<input type="text" id="labels" name="labels" value="${values.labels.join(', ')}" placeholder="bug, ui">
 <p class="muted small">Separated by commas. Labels are for people with push access.</p></div>`
     : ''
 }

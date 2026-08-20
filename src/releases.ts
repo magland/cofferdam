@@ -5,9 +5,10 @@ import * as YAML from 'yaml';
 import { atomFeed } from './atom';
 import { writeFileAtomic } from './atomic';
 import { RefInfo, isValidRefName } from './git';
+import { Html, html, joinHtml, raw } from './html';
 import { icon } from './icons';
 import { renderMarkdown } from './markdown';
-import { esc, timeTag } from './render';
+import { timeTag } from './render';
 import { Viewer, checkCsrf, getViewer } from './session';
 import { repoPath } from './layout';
 import { isValidName } from './scan';
@@ -178,63 +179,61 @@ function releaseTitle(release: Release): string {
 }
 
 /** The download links: the source at that tag, from the archive routes. */
-function downloads(ctx: RepoCtx, tag: string): string {
+function downloads(ctx: RepoCtx, tag: string): Html {
   const base = `${repoUrl(ctx)}/archive/${encPath(tag)}`;
   const one = (ext: string, label: string) =>
-    `<a class="release-download" href="${base}.${ext}">${icon('file-zip')}<span>${label}</span></a>`;
-  return `<div class="release-downloads">${one('zip', 'Source code (zip)')}${one(
+    html`<a class="release-download" href="${base}.${ext}">${icon('file-zip')}<span>${label}</span></a>`;
+  return html`<div class="release-downloads">${one('zip', 'Source code (zip)')}${one(
     'tar.gz',
     'Source code (tar.gz)'
   )}</div>`;
 }
 
-function releaseCard(ctx: RepoCtx, release: Release, ref: RefInfo | undefined, latest: boolean, notes: string): string {
+function releaseCard(ctx: RepoCtx, release: Release, ref: RefInfo | undefined, latest: boolean, notes: string): Html {
   const base = repoUrl(ctx);
   const chips = [
-    latest ? '<span class="chip chip-latest">Latest</span>' : '',
-    release.prerelease ? '<span class="chip chip-pre">Pre-release</span>' : '',
-  ].join('');
+    latest ? raw('<span class="chip chip-latest">Latest</span>') : '',
+    release.prerelease ? raw('<span class="chip chip-pre">Pre-release</span>') : '',
+  ];
   const edit = ctx.canPush
-    ? `<a class="btn" href="${base}/releases/new?tag=${encodeURIComponent(release.tag)}">${icon(
+    ? html`<a class="btn" href="${base}/releases/new?tag=${encodeURIComponent(release.tag)}">${icon(
         'pencil'
       )}<span>Edit</span></a>`
     : '';
-  return `<div class="release">
+  return html`<div class="release">
   <div class="release-side">
-    <a class="release-tag" href="${base}/tree/${encPath(release.tag)}">${icon('tag')}<b>${esc(release.tag)}</b></a>
-    ${ref ? `<div class="small muted">${timeTag(ref.date)}</div>` : ''}
-    ${ref ? `<a class="sha" href="${base}/commit/${ref.sha}">${ref.sha.slice(0, 7)}</a>` : ''}
+    <a class="release-tag" href="${base}/tree/${encPath(release.tag)}">${icon('tag')}<b>${release.tag}</b></a>
+    ${ref ? html`<div class="small muted">${timeTag(ref.date)}</div>` : ''}
+    ${ref ? html`<a class="sha" href="${base}/commit/${ref.sha}">${ref.sha.slice(0, 7)}</a>` : ''}
   </div>
   <div class="release-main">
-    <div class="release-head"><h2><a href="${base}/releases/tag/${encPath(release.tag)}">${esc(
-      releaseTitle(release)
+    <div class="release-head"><h2><a href="${base}/releases/tag/${encPath(release.tag)}">${releaseTitle(
+      release
     )}</a></h2>${chips}<span class="release-actions">${edit}</span></div>
-    <div class="muted small">${release.author ? `${esc(release.author)} released this` : 'Released'} ${
+    <div class="muted small">${release.author ? html`${release.author} released this` : 'Released'} ${
       release.created ? timeTag(release.created) : ''
     }</div>
-    ${notes ? `<div class="markdown-body release-notes">${notes}</div>` : '<p class="muted">No notes.</p>'}
+    ${notes ? html`<div class="markdown-body release-notes">${raw(notes)}</div>` : raw('<p class="muted">No notes.</p>')}
     ${downloads(ctx, release.tag)}
   </div>
 </div>`;
 }
 
-function releasesPage(
-  ctx: RepoCtx,
-  cards: string,
-  count: number
-): string {
+function releasesPage(ctx: RepoCtx, cards: Html, count: number): string {
   const base = repoUrl(ctx);
   const newBtn = ctx.canPush
-    ? `<a class="btn btn-primary" href="${base}/releases/new">${icon('plus')}<span>Draft a release</span></a>`
+    ? html`<a class="btn btn-primary" href="${base}/releases/new">${icon('plus')}<span>Draft a release</span></a>`
     : '';
-  const feed = `<a class="btn" href="${base}/releases.atom" title="Atom feed of releases">${icon('rss')}<span>Feed</span></a>`;
+  const feed = html`<a class="btn" href="${base}/releases.atom" title="Atom feed of releases">${icon(
+    'rss'
+  )}<span>Feed</span></a>`;
   const body =
     count === 0
-      ? `<div class="empty-state"><p>No releases yet.</p><p class="small">A release is notes attached to a tag. ${
+      ? html`<div class="empty-state"><p>No releases yet.</p><p class="small">A release is notes attached to a tag. ${
           ctx.canPush ? 'Draft one above,' : 'Someone with push access can draft one,'
         } or browse the <a href="${base}/tags">tags</a>.</p></div>`
       : cards;
-  const content = `${repoHeader(ctx, 'releases')}
+  const content = html`${repoHeader(ctx, 'releases')}
 <div class="page-head"><h1>Releases</h1><span class="right-group">${feed}${newBtn}</span></div>
 ${body}`;
   return layout(`Releases - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, `${base}/releases`));
@@ -248,41 +247,39 @@ function releaseFormPage(
   error?: string
 ): string {
   const base = repoUrl(ctx);
-  const options = tags
-    .map(
-      (t) => `<option value="${esc(t.name)}"${editing && t.name === editing.tag ? ' selected' : ''}>${esc(t.name)}</option>`
-    )
-    .join('');
+  const options = tags.map(
+    (t) => html`<option value="${t.name}"${editing && t.name === editing.tag ? raw(' selected') : ''}>${t.name}</option>`
+  );
   const del =
     editing && ctx.canPush
-      ? `<form method="post" action="${base}/releases/delete" onsubmit="return confirm('Delete the notes for ${esc(
+      ? html`<form method="post" action="${base}/releases/delete" onsubmit="return confirm('Delete the notes for ${
           editing.tag
-        )}? The tag itself is not touched.')">${csrfField(viewer)}<input type="hidden" name="tag" value="${esc(
+        }? The tag itself is not touched.')">${csrfField(viewer)}<input type="hidden" name="tag" value="${
           editing.tag
-        )}"><button type="submit" class="btn btn-danger-outline">${icon('trash')}<span>Delete release</span></button></form>`
+        }"><button type="submit" class="btn btn-danger-outline">${icon('trash')}<span>Delete release</span></button></form>`
       : '';
-  const content = `${repoHeader(ctx, 'releases')}
+  const content = html`${repoHeader(ctx, 'releases')}
 <div class="form-box wide">
 <h1>${editing ? 'Edit release' : 'Draft a release'}</h1>
-${error ? `<div class="form-error">${esc(error)}</div>` : ''}
+${error ? html`<div class="form-error">${error}</div>` : ''}
 <form method="post" action="${base}/releases/new">
 ${csrfField(viewer)}
 <div class="field"><label for="tag">Tag</label>
 ${
   editing
-    ? `<input type="hidden" name="tag" value="${esc(editing.tag)}"><p class="mono">${esc(editing.tag)}</p>`
-    : `<select id="tag" name="tag" required>${options}</select>
+    ? html`<input type="hidden" name="tag" value="${editing.tag}"><p class="mono">${editing.tag}</p>`
+    : html`<select id="tag" name="tag" required>${options}</select>
 <p class="muted small">Releases attach to a tag that already exists. Create one on the <a href="${base}/tags">tags page</a> first.</p>`
 }
 </div>
 <div class="field"><label for="name">Title</label>
-<input type="text" id="name" name="name" maxlength="${MAX_NAME}" value="${esc(editing?.name ?? '')}" placeholder="Leave empty to use the tag name"></div>
+<input type="text" id="name" name="name" maxlength="${MAX_NAME}" value="${editing?.name ?? ''}" placeholder="Leave empty to use the tag name"></div>
 <div class="field"><label for="body">Notes</label>
-<textarea class="code-editor" id="body" name="body" rows="16" placeholder="What changed, and what it means for anyone upgrading. Markdown.">${esc(
+<textarea class="code-editor" id="body" name="body" rows="16" placeholder="What changed, and what it means for anyone upgrading. Markdown.">${
     editing?.body ?? ''
-  )}</textarea></div>
+  }</textarea></div>
 <div class="field"><label class="checkbox"><input type="checkbox" name="prerelease" value="1"${
-    editing?.prerelease ? ' checked' : ''
+    editing?.prerelease ? raw(' checked') : ''
   }> This is a pre-release</label></div>
 <div class="actions"><button type="submit" class="btn btn-primary">${
     editing ? 'Save release' : 'Publish release'
@@ -341,11 +338,11 @@ export function registerReleases(app: Express, root: string): void {
       if (!loaded) return;
       const ctx = await makeCtx(root, req, loaded, loaded.defaultBranch ?? '', viewer);
       const rows = ordered(root, ctx);
-      const cards = rows
-        .map(({ release, ref }, i) =>
+      const cards = joinHtml(
+        rows.map(({ release, ref }, i) =>
           releaseCard(ctx, release, ref, i === 0 && !release.prerelease, notesHtml(ctx, release))
         )
-        .join('');
+      );
       res.type('html').send(releasesPage(ctx, cards, rows.length));
     })
   );
@@ -469,7 +466,7 @@ export function registerReleases(app: Express, root: string): void {
       const ref = ctx.tags.find((t) => t.name === tag);
       const rows = ordered(root, ctx);
       const latest = rows.length > 0 && rows[0].release.tag === tag && !release.prerelease;
-      const content = `${repoHeader(ctx, 'releases')}
+      const content = html`${repoHeader(ctx, 'releases')}
 <div class="page-head"><h1><a href="${repoUrl(ctx)}/releases">Releases</a></h1></div>
 ${releaseCard(ctx, release, ref, latest, notesHtml(ctx, release))}`;
       res
