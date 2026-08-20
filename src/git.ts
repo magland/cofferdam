@@ -231,23 +231,133 @@ export class GitRepo {
 
   /**
    * The newest commit touching each of `paths`, keyed by path: what fills the
-   * message and age columns of a directory listing. One `git log -1` per path
-   * is what git itself would do to answer this, so the work is bounded by
-   * running a few at a time and by the caller capping how many paths it asks
-   * about. A path with no commit (a submodule gitlink, say) is simply absent
-   * from the map.
+   * message and age columns of a directory listing. A path with no commit (a
+   * submodule gitlink, say) is simply absent from the map.
+   *
+   * One `git log -1 -- path` per path is the obvious way to ask, and it is what
+   * this did, but it costs a process per row: a 150-entry listing spent about a
+   * second in `fork` alone. Instead one `git log --name-status` walks the
+   * history once, newest first, and each path takes the first commit whose
+   * changeset touches it. The walk is bounded twice over: git is asked only
+   * about the directory being listed, and the stream is closed as soon as the
+   * last path has an answer, which for a listing whose files are all recent is
+   * a handful of commits rather than the whole history.
+   *
+   * Attribution follows the diff, so a merge that carries no changes of its own
+   * is not the answer for anything -- the commit that made the change is, which
+   * is what `git log -- path` reports too. A rename counts for both of its
+   * names, so the row for either one dates from the rename.
    */
-  async lastCommits(ref: string, paths: string[], concurrency = 8): Promise<Map<string, CommitSummary>> {
+  async lastCommits(ref: string, paths: string[]): Promise<Map<string, CommitSummary>> {
     const found = new Map<string, CommitSummary>();
-    let next = 0;
-    const worker = async () => {
-      for (let i = next++; i < paths.length; i = next++) {
-        const [commit] = await this.log(ref, 0, 1, paths[i]);
-        if (commit) found.set(paths[i], commit);
+    if (paths.length === 0) return found;
+    const want = new Set(paths);
+
+    // A changed file is claimed by whichever requested path contains it, so a
+    // directory row shows the newest commit under it. Walking up the file's own
+    // ancestors keeps this independent of where the requested paths sit.
+    const claim = (file: string): string | null => {
+      if (want.has(file)) return file;
+      for (let cut = file.lastIndexOf('/'); cut > 0; cut = file.lastIndexOf('/', cut - 1)) {
+        const dir = file.slice(0, cut);
+        if (want.has(dir)) return dir;
       }
+      return null;
     };
-    await Promise.all(Array.from({ length: Math.min(concurrency, paths.length) }, worker));
+
+    // The listed paths share a parent, so naming it keeps git from walking
+    // commits that cannot possibly touch any of them.
+    const first = paths[0];
+    const cut = first.lastIndexOf('/');
+    const scope = cut < 0 ? null : first.slice(0, cut);
+    const sharedScope = scope !== null && paths.every((p) => p.startsWith(`${scope}/`));
+
+    const args = [
+      '-C',
+      this.dir,
+      'log',
+      '-z',
+      '--name-status',
+      // Renames are wanted as renames rather than as an add and a delete, so
+      // that both names date from the same commit.
+      '--find-renames',
+      '--format=%x01%H%x00%an%x00%aI%x00%s',
+      ref,
+      '--',
+    ];
+    if (sharedScope) args.push(scope as string);
+
+    await new Promise<void>((resolve) => {
+      const child = spawn('git', args, { stdio: ['ignore', 'pipe', 'ignore'] });
+      let done = false;
+      // Closing the pipe is what stops git; it takes a SIGPIPE on its next
+      // write. Resolving here rather than on 'close' means a listing satisfied
+      // by the first commit does not wait for a walk it no longer needs.
+      const finish = () => {
+        if (done) return;
+        done = true;
+        child.stdout.destroy();
+        child.kill('SIGKILL');
+        resolve();
+      };
+      let buf = '';
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk: string) => {
+        buf += chunk;
+        // The last record may still be growing, so hold it back until the
+        // marker that begins the next one has arrived.
+        const end = buf.lastIndexOf('\x01');
+        if (end <= 0) return;
+        const ready = buf.slice(0, end);
+        buf = buf.slice(end);
+        if (this.takeCommits(ready, claim, found, want)) finish();
+      });
+      child.stdout.on('end', () => {
+        if (!done) this.takeCommits(buf, claim, found, want);
+        finish();
+      });
+      child.on('error', finish);
+      child.on('close', finish);
+    });
     return found;
+  }
+
+  /**
+   * Read whole `\x01`-led records out of a chunk of `git log --name-status`
+   * output, recording the first commit seen for each still-wanted path.
+   * Returns true once nothing is left to look for.
+   */
+  private takeCommits(
+    chunk: string,
+    claim: (file: string) => string | null,
+    found: Map<string, CommitSummary>,
+    want: Set<string>
+  ): boolean {
+    for (const record of chunk.split('\x01')) {
+      if (!record) continue;
+      const parts = record.split('\0');
+      const [sha, author, date, subject] = parts;
+      if (!sha) continue;
+      const commit: CommitSummary = { sha, author, date, subject: subject ?? '' };
+      // parts[4] onwards is the diff: a status, then the one path it renames
+      // from and to, or the one path it touches.
+      for (let i = 4; i < parts.length; i++) {
+        const status = parts[i].replace(/^\n/, '');
+        if (!status) continue;
+        const twoPaths = status[0] === 'R' || status[0] === 'C';
+        const files = twoPaths ? [parts[i + 1], parts[i + 2]] : [parts[i + 1]];
+        i += twoPaths ? 2 : 1;
+        for (const file of files) {
+          if (!file) continue;
+          const path = claim(file);
+          if (path === null || found.has(path)) continue;
+          found.set(path, commit);
+          want.delete(path);
+        }
+      }
+      if (want.size === 0) return true;
+    }
+    return want.size === 0;
   }
 
   async commitCount(ref: string, path?: string, author?: string): Promise<number> {
