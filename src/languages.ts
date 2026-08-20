@@ -6,9 +6,12 @@
 // file contents, resolves ambiguous extensions with heuristics, and consults
 // .gitattributes; we look at the tree once and go by extension (or by
 // filename, for the files that have none). That is a good deal cheaper — one
-// `git ls-tree` and no blob reads at all, since the tree already carries every
-// blob's size — and it agrees with Linguist on the ordinary repository. Where
-// it cannot agree is noted at each rule below.
+// `git ls-tree`, since the tree already carries every blob's size — and it
+// agrees with Linguist on the ordinary repository. Two exceptions read
+// contents, both bounded: `.m` files, whose extension names two languages
+// (see decideMFiles), and a root .gitattributes carrying linguist-language
+// overrides. Where the rules still cannot agree with Linguist is noted at
+// each one below.
 
 import { execGit } from './git';
 
@@ -49,13 +52,13 @@ const LANGUAGES: LanguageDef[] = [
   { name: 'Java', color: '#b07219', type: 'programming', ext: ['java'] },
   { name: 'Kotlin', color: '#A97BFF', type: 'programming', ext: ['kt', 'kts'] },
   { name: 'Swift', color: '#F05138', type: 'programming', ext: ['swift'] },
-  { name: 'Objective-C', color: '#438eff', type: 'programming', ext: ['m', 'mm'] },
+  { name: 'Objective-C', color: '#438eff', type: 'programming', ext: ['mm'] },
   { name: 'PHP', color: '#4F5D95', type: 'programming', ext: ['php'] },
   { name: 'Perl', color: '#0298c3', type: 'programming', ext: ['pl', 'pm'] },
   { name: 'Lua', color: '#000080', type: 'programming', ext: ['lua'] },
   { name: 'R', color: '#198CE7', type: 'programming', ext: ['r'] },
   { name: 'Julia', color: '#a270ba', type: 'programming', ext: ['jl'] },
-  { name: 'MATLAB', color: '#e16737', type: 'programming', ext: ['mat'] },
+  { name: 'MATLAB', color: '#e16737', type: 'programming' },
   { name: 'Scala', color: '#c22d40', type: 'programming', ext: ['scala', 'sc'] },
   { name: 'Clojure', color: '#db5855', type: 'programming', ext: ['clj', 'cljs', 'cljc', 'edn'] },
   { name: 'Elixir', color: '#6e4a7e', type: 'programming', ext: ['ex', 'exs'] },
@@ -161,6 +164,8 @@ const OTHER_COLOR = '#8f8f8f';
  */
 const MAX_FILES = 20000;
 
+const BY_LANG_NAME = new Map<string, LanguageDef>(LANGUAGES.map((l) => [l.name.toLowerCase(), l]));
+
 function classify(filePath: string): LanguageDef | null {
   const name = filePath.slice(filePath.lastIndexOf('/') + 1);
   const byName = BY_NAME.get(name);
@@ -169,6 +174,163 @@ function classify(filePath: string): LanguageDef | null {
   // A leading dot is the start of a dotfile's name, not an extension.
   if (dot <= 0) return null;
   return BY_EXT.get(name.slice(dot + 1).toLowerCase()) ?? null;
+}
+
+// ---- the .m problem ----
+//
+// One extension, two languages: `.m` is Objective-C and it is MATLAB, and an
+// extension table cannot tell them apart. Going by extension alone called a
+// vault of MATLAB code Objective-C across the board. So `.m` is the one place
+// contents are read: the files are sampled with a single `git cat-file
+// --batch` and told apart by markers no editor of the other language writes.
+// A file the markers cannot decide is MATLAB, the likelier answer for what a
+// research vault holds.
+
+const MATLAB = BY_LANG_NAME.get('matlab')!;
+const OBJC = BY_LANG_NAME.get('objective-c')!;
+
+/** The most `.m` files read per breakdown; the rest take the sampled majority. */
+const MAX_SNIFF = 20;
+
+/** A `.m` file bigger than this is not read; the first bytes of a smaller one decide it. */
+const MAX_SNIFF_BYTES = 100 * 1024;
+
+/** How much of each sampled file the markers are scored over. */
+const SNIFF_WINDOW = 4096;
+
+function sniffM(text: string): LanguageDef {
+  let objc = 0;
+  let matlab = 0;
+  for (const line of text.split('\n', 200)) {
+    const t = line.trimStart();
+    if (/^#(import|include)\b/.test(t)) objc += 2;
+    else if (/^@(interface|implementation|protocol|property|synthesize|end)\b/.test(t)) objc += 2;
+    else if (/^[-+]\s*\(/.test(t)) objc += 2;
+    else if (t.startsWith('//') || t.startsWith('/*')) objc += 1;
+    else if (/^(function|classdef)\b/.test(t)) matlab += 2;
+    else if (t.startsWith('%')) matlab += 1;
+    else if (/^end\s*;?\s*$/.test(t)) matlab += 1;
+  }
+  return objc > matlab ? OBJC : MATLAB;
+}
+
+/**
+ * Decide each `.m` file, reading up to MAX_SNIFF of them in one batched git
+ * call. Files beyond the sample, and files too large to sample, follow the
+ * majority of what was read; a repository that genuinely mixes the two
+ * languages gets its sampled files right and its tail approximated, which is
+ * the honest limit of sampling.
+ */
+async function decideMFiles(
+  dir: string,
+  ref: string,
+  files: { path: string; size: number }[]
+): Promise<Map<string, LanguageDef>> {
+  const out = new Map<string, LanguageDef>();
+  const sample = files.filter((f) => f.size <= MAX_SNIFF_BYTES).slice(0, MAX_SNIFF);
+  let objcBytes = 0;
+  let matlabBytes = 0;
+  if (sample.length > 0) {
+    let batch: Buffer;
+    try {
+      batch = await execGit(dir, ['cat-file', '--batch'], {
+        input: sample.map((f) => `${ref}:${f.path}`).join('\n') + '\n',
+      });
+    } catch {
+      batch = Buffer.alloc(0);
+    }
+    // <oid> <type> <size>\n<contents>\n per object, "<input> missing" for one
+    // that is not there. Walked by size rather than split, since contents can
+    // hold anything.
+    let pos = 0;
+    let i = 0;
+    while (pos < batch.length && i < sample.length) {
+      const nl = batch.indexOf(0x0a, pos);
+      if (nl === -1) break;
+      const header = batch.toString('utf8', pos, nl);
+      pos = nl + 1;
+      const m = header.match(/^\S+ (\S+) (\d+)$/);
+      if (!m || m[1] !== 'blob') {
+        i++;
+        continue;
+      }
+      const size = parseInt(m[2], 10);
+      const text = batch.toString('utf8', pos, Math.min(pos + SNIFF_WINDOW, pos + size));
+      pos += size + 1;
+      const def = sniffM(text);
+      out.set(sample[i].path, def);
+      if (def === OBJC) objcBytes += sample[i].size;
+      else matlabBytes += sample[i].size;
+      i++;
+    }
+  }
+  const rest = objcBytes > matlabBytes ? OBJC : MATLAB;
+  for (const f of files) if (!out.has(f.path)) out.set(f.path, rest);
+  return out;
+}
+
+// ---- .gitattributes overrides ----
+//
+// The escape hatch for a repository the heuristics still get wrong: the same
+// directive Linguist honours, `<pattern> linguist-language=<name>`, read from
+// the .gitattributes at the root of the ref. A named language not in the
+// table means the files match nothing and are simply not counted, which is
+// also what naming a data language amounts to.
+
+interface LanguageOverride {
+  pattern: RegExp;
+  /** Match the basename anywhere, as gitattributes does for a pattern with no slash. */
+  basename: boolean;
+  lang: LanguageDef | null;
+}
+
+function attrPatternToRegex(pattern: string): RegExp | null {
+  let p = pattern;
+  if (p.startsWith('/')) p = p.slice(1);
+  let rx = '';
+  for (let i = 0; i < p.length; i++) {
+    const c = p[i];
+    if (c === '*') {
+      if (p[i + 1] === '*') {
+        rx += '.*';
+        i++;
+      } else rx += '[^/]*';
+    } else if (c === '?') rx += '[^/]';
+    else rx += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  }
+  try {
+    return new RegExp(`^${rx}$`);
+  } catch {
+    return null;
+  }
+}
+
+function parseOverrides(text: string): LanguageOverride[] {
+  const out: LanguageOverride[] = [];
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (line === '' || line.startsWith('#')) continue;
+    const m = line.match(/^(\S+)\s+.*\blinguist-language=(\S+)/);
+    if (!m) continue;
+    const rx = attrPatternToRegex(m[1]);
+    if (!rx) continue;
+    out.push({
+      pattern: rx,
+      basename: !m[1].includes('/'),
+      lang: BY_LANG_NAME.get(m[2].toLowerCase().replace(/-/g, ' ')) ?? BY_LANG_NAME.get(m[2].toLowerCase()) ?? null,
+    });
+  }
+  return out;
+}
+
+/** The last matching override wins, as in gitattributes; null means no override. */
+function overrideFor(overrides: LanguageOverride[], filePath: string): LanguageOverride | null {
+  const base = filePath.slice(filePath.lastIndexOf('/') + 1);
+  let hit: LanguageOverride | null = null;
+  for (const o of overrides) {
+    if (o.pattern.test(o.basename ? base : filePath)) hit = o;
+  }
+  return hit;
 }
 
 /**
@@ -188,7 +350,9 @@ export async function languageBreakdown(dir: string, ref: string): Promise<Langu
   } catch {
     return [];
   }
-  const bytes = new Map<string, { def: LanguageDef; total: number }>();
+  const counted: { path: string; size: number }[] = [];
+  const mFiles: { path: string; size: number }[] = [];
+  let hasAttributes = false;
   let files = 0;
   for (const item of out.split('\0')) {
     if (!item) continue;
@@ -198,14 +362,32 @@ export async function languageBreakdown(dir: string, ref: string): Promise<Langu
     if (!m) continue;
     const [, mode, type, , sizeText, filePath] = m;
     if (type !== 'blob' || mode === '120000') continue;
+    if (filePath === '.gitattributes') hasAttributes = true;
     const size = parseInt(sizeText, 10);
     if (!Number.isFinite(size) || size === 0) continue;
     if (VENDORED.test(filePath) || GENERATED.test(filePath)) continue;
-    const def = classify(filePath);
+    counted.push({ path: filePath, size });
+    if (/\.m$/i.test(filePath)) mFiles.push({ path: filePath, size });
+  }
+  const overrides = hasAttributes
+    ? parseOverrides(
+        await execGit(dir, ['cat-file', 'blob', `${ref}:.gitattributes`]).then(
+          (b) => b.toString('utf8'),
+          () => ''
+        )
+      )
+    : [];
+  const mLang = mFiles.length > 0 ? await decideMFiles(dir, ref, mFiles) : new Map<string, LanguageDef>();
+  const bytes = new Map<string, { def: LanguageDef; total: number }>();
+  for (const f of counted) {
+    let def: LanguageDef | null;
+    const o = overrideFor(overrides, f.path);
+    if (o) def = o.lang;
+    else def = mLang.get(f.path) ?? classify(f.path);
     if (!def || (def.type !== 'programming' && def.type !== 'markup')) continue;
     const entry = bytes.get(def.name);
-    if (entry) entry.total += size;
-    else bytes.set(def.name, { def, total: size });
+    if (entry) entry.total += f.size;
+    else bytes.set(def.name, { def, total: f.size });
   }
   const total = [...bytes.values()].reduce((sum, e) => sum + e.total, 0);
   if (total === 0) return [];
