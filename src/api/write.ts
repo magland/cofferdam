@@ -26,7 +26,7 @@ import {
   writeFile,
 } from '../ops';
 import { findRepo, isValidName, reservedRepoSuffix } from '../scan';
-import { canAdmin, canPush } from '../vault';
+import { canPush, repoRenameBlocker } from '../vault';
 import {
   Actor,
   ReadContext,
@@ -456,8 +456,11 @@ export function registerWriteApi(
       apiError(res, 400, '"name" and "collection" must be usable names');
       return;
     }
-    if (!canAdmin(ctx.auth, [`${collection}/${name}`])) {
-      apiError(res, 403, `your admin scope does not cover ${collection}/${name}`);
+    // The same rule the web settings page applies: admin over what is moving
+    // (which requireRepoAdmin has established), push over where it lands.
+    const blocker = repoRenameBlocker(ctx.auth, ctx.repo.collection, ctx.repo.name, collection, name);
+    if (blocker) {
+      apiError(res, 403, `renaming this repository needs ${blocker}`);
       return;
     }
     try {

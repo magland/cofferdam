@@ -231,6 +231,57 @@ export function canAdminCollection(auth: AuthResult, collection: string, repos: 
   );
 }
 
+// The three rules below are composites of the primitives above, and each is
+// asked by the web interface and by the JSON API. They live here, once,
+// because two surfaces spelling one rule out by hand is how the surfaces
+// drift apart: the API asked for admin scope over a rename's destination for
+// as long as the web and the documentation asked for push. The blockers
+// return the missing ability as a phrase rather than answering false, so
+// each surface can word its own refusal around the same rule.
+
+/**
+ * Admin over everything a user can reach, which is what touching the user
+ * asks: their tokens open every door their scope and admin globs name, so
+ * listing, revoking, or deleting is touching all of it. Whether someone may
+ * touch themselves is the caller's question, since the surfaces answer it
+ * differently: a user may read their own record and revoke their own tokens,
+ * and may not delete themselves.
+ */
+export function canAdminUser(auth: AuthResult, user: UserRecord): boolean {
+  return canAdmin(auth, [...user.scope, ...user.admin]);
+}
+
+/**
+ * The ability a repository rename is missing, or null when none is. Two
+ * abilities, because a move is a deletion here and a creation there: admin
+ * scope over what is moving, push scope over where it lands.
+ */
+export function repoRenameBlocker(
+  auth: AuthResult,
+  collection: string,
+  repo: string,
+  toCollection: string,
+  toRepo: string
+): string | null {
+  if (!canAdmin(auth, [`${collection}/${repo}`])) return `admin scope over ${collection}/${repo}`;
+  if (!canPush(auth, toCollection, toRepo)) return `push scope over ${toCollection}/${toRepo}`;
+  return null;
+}
+
+/**
+ * The push half of renaming a collection: every repository lands in the new
+ * collection, so push scope has to cover each of them there, and an empty
+ * collection is the weaker question canCreateCollection answers. The admin
+ * half is canAdminCollection, asked separately because it also gates the
+ * settings page where no destination exists yet.
+ */
+export function collectionMoveBlocker(auth: AuthResult, repos: string[], to: string): string | null {
+  const unpushable = repos.find((r) => !canPush(auth, to, r));
+  if (unpushable !== undefined) return `push scope over ${to}/${unpushable}`;
+  if (!canCreateCollection(auth, to)) return `push scope over ${to}`;
+  return null;
+}
+
 function writeVault(file: string, vault: Vault): void {
   writeFileAtomic(file, JSON.stringify(vault, null, 2) + '\n', { mode: 0o600 });
 }

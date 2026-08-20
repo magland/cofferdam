@@ -14,8 +14,8 @@ import { DEFAULT_THEME, findTheme, themeNames } from '../themes';
 import {
   canAdmin,
   canAdminCollection,
-  canCreateCollection,
-  canPush,
+  canAdminUser,
+  collectionMoveBlocker,
   loadVault,
   removeUser,
   revokeToken,
@@ -93,13 +93,9 @@ export function registerAdminApi(
       apiError(res, 400, 'a valid "name" is required (letters, digits, dot, underscore, dash; not a reserved word)');
       return;
     }
-    // Every repository lands in the new collection, so push scope has to cover
-    // each of them there; an empty collection is the weaker question
-    // canCreateCollection answers.
-    const unpushable = repos.filter((r) => !canPush(auth, to, r));
-    if (unpushable.length > 0 || !canCreateCollection(auth, to)) {
-      const what = unpushable.length > 0 ? `${to}/${unpushable[0]}` : to;
-      apiError(res, 403, `your push scope does not cover ${what}`);
+    const blocker = collectionMoveBlocker(auth, repos, to);
+    if (blocker) {
+      apiError(res, 403, `renaming this collection needs ${blocker}`);
       return;
     }
     try {
@@ -179,7 +175,7 @@ export function registerAdminApi(
     }
     // A user may read their own record; reading anyone else's needs admin scope
     // over what that user can reach.
-    if (req.params.name !== auth.username && !canAdmin(auth, [...user.scope, ...user.admin])) {
+    if (req.params.name !== auth.username && !canAdminUser(auth, user)) {
       apiError(res, 403, `your admin scope does not cover user ${req.params.name}`);
       return;
     }
@@ -204,7 +200,7 @@ export function registerAdminApi(
       apiError(res, 404, `no user ${req.params.name}`);
       return;
     }
-    if (req.params.name !== auth.username && !canAdmin(auth, [...user.scope, ...user.admin])) {
+    if (req.params.name !== auth.username && !canAdminUser(auth, user)) {
       apiError(res, 403, `your admin scope does not cover user ${req.params.name}`);
       return;
     }
@@ -229,7 +225,7 @@ export function registerAdminApi(
       return;
     }
     const ownToken = req.params.name === auth.username && tokenId(auth.token) === req.params.id;
-    if (req.params.name !== auth.username && !canAdmin(auth, [...user.scope, ...user.admin])) {
+    if (req.params.name !== auth.username && !canAdminUser(auth, user)) {
       apiError(res, 403, `your admin scope does not cover user ${req.params.name}`);
       return;
     }
@@ -262,7 +258,7 @@ export function registerAdminApi(
       apiError(res, 404, `no user ${req.params.name}`);
       return;
     }
-    if (!canAdmin(auth, [...user.scope, ...user.admin])) {
+    if (!canAdminUser(auth, user)) {
       apiError(res, 403, `your admin scope does not cover user ${req.params.name}`);
       return;
     }

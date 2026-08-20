@@ -1681,6 +1681,26 @@ api "api renames it" 200 -H "$JSON_CT" --data '{"name":"renamed"}' "$BASE/api/re
 check "at its new address" 200 "$BASE/apiforks/renamed"
 no_trace_of "and nothing of it is left under the old name" apiforks made
 
+# One rename rule on both surfaces: admin scope over what is moving, push
+# scope over where it lands. mover holds exactly those two abilities and
+# nothing more, which the API used to refuse by asking for admin scope over
+# the destination where the web and the documentation ask for push.
+check "admin users page for the mover setup" 200 -b "$JAR" "$BASE/admin/users"
+CSRF="$(csrf_of)"
+check "create user mover" 200 -b "$JAR" "$BASE/admin/users" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode username=mover \
+  --data-urlencode "scope=apiforks2/*" --data-urlencode "admin=apiforks/*"
+MOVER_TOKEN="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+[ -n "$MOVER_TOKEN" ] || { echo "FAIL: no token for mover"; exit 1; }
+api_as "a move outside the mover's push scope is refused" 403 "$MOVER_TOKEN" -X POST -H "$JSON_CT" \
+  --data '{"collection":"elsewhere"}' "$BASE/api/repos/apiforks/renamed/rename"
+body_has "naming the missing ability" 'push scope over elsewhere/renamed'
+api_as "admin over the source and push over the destination is enough" 200 "$MOVER_TOKEN" -X POST -H "$JSON_CT" \
+  --data '{"collection":"apiforks2"}' "$BASE/api/repos/apiforks/renamed/rename"
+check "the repository serves at its new home" 200 "$BASE/apiforks2/renamed"
+api "moved back for the checks below" 200 -X POST -H "$JSON_CT" \
+  --data '{"collection":"apiforks"}' "$BASE/api/repos/apiforks2/renamed/rename"
+
 # The API's equivalent of the web's typed confirmation. It costs nothing and it
 # makes an accidental DELETE from a loop over a listing impossible.
 api "deleting without a confirmation is refused" 400 -X DELETE "$BASE/api/repos/apiforks/renamed"

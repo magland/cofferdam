@@ -37,12 +37,15 @@ import {
   authenticate,
   canAdmin,
   canAdminCollection,
+  canAdminUser,
   canCreateCollection,
   canPush,
+  collectionMoveBlocker,
   loadVault,
   addUserToken,
   grantScope,
   removeUser,
+  repoRenameBlocker,
   revokeToken,
   setUserEmails,
   tokenId,
@@ -372,9 +375,7 @@ export function registerWebOps(
       const toName = field(req, 'name').trim();
       // Two abilities, as for a repository move: admin over what is moving,
       // which loadCollection has already established, and push over where it
-      // lands. Every repository lands there, so push scope has to cover each
-      // of them under the new name, and an empty collection is the weaker
-      // question canCreateCollection answers.
+      // lands, which collectionMoveBlocker below asks.
       if (!isValidName(toName)) {
         fail(
           res,
@@ -385,10 +386,9 @@ export function registerWebOps(
         );
         return;
       }
-      const unpushable = loaded.repos.filter((r) => !canPush(viewer.auth, toName, r));
-      if (unpushable.length > 0 || !canCreateCollection(viewer.auth, toName)) {
-        const what = unpushable.length > 0 ? `${toName}/${unpushable[0]}` : toName;
-        fail(res, 403, `You have no push scope over ${what}.`, viewer, backUrl);
+      const blocker = collectionMoveBlocker(viewer.auth, loaded.repos, toName);
+      if (blocker) {
+        fail(res, 403, `Renaming this collection needs ${blocker}.`, viewer, backUrl);
         return;
       }
       try {
@@ -1107,14 +1107,9 @@ export function registerWebOps(
       const backUrl = `${urlOf(loaded.repo)}/settings`;
       const toCollection = field(req, 'collection').trim() || loaded.repo.collection;
       const toName = field(req, 'name').trim();
-      // Two abilities, because a move is a deletion here and a creation there:
-      // admin over what is being moved, push over where it is going.
-      if (!canAdmin(viewer.auth, [from])) {
-        fail(res, 403, `Renaming or moving a repository requires admin scope over ${from}.`, viewer, backUrl);
-        return;
-      }
-      if (!canPush(viewer.auth, toCollection, toName)) {
-        fail(res, 403, `You have no push scope over ${toCollection}/${toName}.`, viewer, backUrl);
+      const blocker = repoRenameBlocker(viewer.auth, loaded.repo.collection, loaded.repo.name, toCollection, toName);
+      if (blocker) {
+        fail(res, 403, `Renaming or moving this repository needs ${blocker}.`, viewer, backUrl);
         return;
       }
       try {
@@ -1345,7 +1340,7 @@ export function registerWebOps(
       fail(res, 404, `No user ${name}.`, viewer, backUrl);
       return null;
     }
-    if (name !== viewer.auth.username && !canAdmin(viewer.auth, [...user.scope, ...user.admin])) {
+    if (name !== viewer.auth.username && !canAdminUser(viewer.auth, user)) {
       fail(res, 403, `Your admin scope does not cover user ${name}.`, viewer, backUrl);
       return null;
     }
@@ -1484,7 +1479,7 @@ export function registerWebOps(
       fail(res, 404, `User ${username} does not exist.`, viewer, backUrl);
       return;
     }
-    if (!canAdmin(viewer.auth, [...existing.scope, ...existing.admin])) {
+    if (!canAdminUser(viewer.auth, existing)) {
       fail(res, 403, `Your admin scope does not cover user ${username}.`, viewer, backUrl);
       return;
     }

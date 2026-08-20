@@ -10,9 +10,12 @@ import {
   bootstrapVault,
   canAdmin,
   canAdminCollection,
+  canAdminUser,
   canCreateCollection,
   canPush,
+  collectionMoveBlocker,
   globMatch,
+  repoRenameBlocker,
   hashToken,
   loadVault,
   mergeContributors,
@@ -79,6 +82,32 @@ test('canAdminCollection asks for a glob naming the collection even when it is e
   assert.ok(!canAdminCollection(makeAuth(makeUser([], ['demo/*'])), 'other', []));
   assert.ok(canAdminCollection(makeAuth(makeUser([], ['*'])), 'demo', ['a', 'b']));
   assert.ok(!canAdminCollection(makeAuth(makeUser([], ['*']), ['*']), 'demo', []));
+});
+
+test('canAdminUser asks for admin over everything the user reaches', () => {
+  const target = makeUser(['demo/*'], ['demo/x']);
+  assert.ok(canAdminUser(makeAuth(makeUser([], ['demo/*'])), target));
+  assert.ok(!canAdminUser(makeAuth(makeUser([], ['demo/x'])), target));
+  assert.ok(canAdminUser(makeAuth(makeUser([], ['*'])), target));
+  assert.ok(!canAdminUser(makeAuth(makeUser([], ['*']), ['*']), target));
+});
+
+test('a repository rename needs admin over the source and push over the destination', () => {
+  const mover = makeAuth(makeUser(['dest/*'], ['src/*']));
+  assert.equal(repoRenameBlocker(mover, 'src', 'a', 'dest', 'a'), null);
+  assert.equal(repoRenameBlocker(mover, 'other', 'a', 'dest', 'a'), 'admin scope over other/a');
+  assert.equal(repoRenameBlocker(mover, 'src', 'a', 'elsewhere', 'a'), 'push scope over elsewhere/a');
+  // Push scope over the destination is enough; admin there is not asked for.
+  assert.ok(!canAdmin(mover, ['dest/a']));
+});
+
+test('a collection move needs push over each repository at the new name', () => {
+  const mover = makeAuth(makeUser(['dest/a', 'dest/b']));
+  assert.equal(collectionMoveBlocker(mover, ['a', 'b'], 'dest'), null);
+  assert.equal(collectionMoveBlocker(mover, ['a', 'c'], 'dest'), 'push scope over dest/c');
+  // An empty collection falls back to the weaker create question.
+  assert.equal(collectionMoveBlocker(mover, [], 'dest'), null);
+  assert.equal(collectionMoveBlocker(mover, [], 'elsewhere'), 'push scope over elsewhere');
 });
 
 // ---- authentication ----
