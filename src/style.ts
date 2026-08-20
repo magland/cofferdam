@@ -729,6 +729,17 @@ textarea {
 .card-list a.card:hover { background: var(--surface); text-decoration: none; }
 .card-list a.card b { display: block; }
 
+/* The day's egress against its budget: the number first, then one bar in the
+   proportion used, coloured only as it gets close. Amber at four fifths rather
+   than at the line, since the reason to look at this page is to act before the
+   vault stops answering. */
+.egress-total { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.egress-total b { font-size: 20px; }
+.egress-meter { height: 6px; background: var(--chip-bg); border-radius: 3px; overflow: hidden; max-width: 620px; }
+.egress-meter .fill { display: block; height: 100%; background: var(--fg-subtle); }
+.egress-meter .fill.near { background: var(--alert-warning); }
+.egress-meter .fill.over { background: var(--danger); }
+
 .theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-bottom: 20px; }
 .theme-card { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .theme-card.current { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }

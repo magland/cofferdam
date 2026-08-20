@@ -6,6 +6,7 @@ import { collectionDir } from './layout';
 import { displayName, isValidName, listCollections, listRepoDirs } from './scan';
 import { addUserToken, canAdmin, canCreateCollection, grantScope, loadVault } from './vault';
 import { apiError, requireApiAuth as authenticateRequest } from './api/auth';
+import { Egress } from './egress';
 import { AuthLimiter, Gates } from './limit';
 import { LfsContext } from './lfsstore';
 import { CiEngine } from './ci/engine';
@@ -28,7 +29,8 @@ export function registerApi(
   authLimiter: AuthLimiter,
   gates: Gates,
   lfs: LfsContext | null = null,
-  engine?: CiEngine
+  engine?: CiEngine,
+  egress?: Egress
 ): void {
   // A write route carries a file in its body, so the limit is the one the upload
   // route already applies rather than express's 100 kB default. Anything larger
@@ -49,7 +51,7 @@ export function registerApi(
   // workflows to answer about.
   if (engine) registerCiRunApi(app, root, authLimiter, engine);
   registerReleaseApi(app, root, authLimiter);
-  registerAdminApi(app, root, authLimiter, lfs, engine);
+  registerAdminApi(app, root, authLimiter, lfs, engine, egress);
   // Reading a whole vault out over HTTP, for `cofferdam backup`. Admin over the
   // whole vault, and behind the same gate a file listing holds.
   registerBackupApi(app, root, authLimiter, gates);

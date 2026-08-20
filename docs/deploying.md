@@ -161,6 +161,8 @@ cofferdam deploy fly my-vault-name --lfs-bucket
 
 Tigris' secrets are the ones the server already reads, so there is nothing further to configure (see [Git LFS](lfs.md)). Note that this provisions a billable resource in your Fly organization, and that `deploy fly destroy` leaves the bucket alone: destroying it, and its contents, is `fly storage destroy <name>`.
 
+Tigris is the convenient choice rather than the recommended one. It is here because `fly storage create` provisions a bucket and injects its credentials in one step, which no other provider can be driven to do from a Fly deploy. If what you are trying to bound is the cost of people downloading large files, **Cloudflare R2 is the better bucket**: it charges no egress fees at all, so the bytes are free however many times an object is pulled. Setting it up is four `fly secrets set` values rather than one flag, and [Git LFS](lfs.md#storage-providers) gives them. Check Tigris' own pricing page for what its data transfer costs; this document does not restate it, because a number copied into a document is a number that goes stale.
+
 ### What the deploy does, in flyctl terms
 
 There is nothing magic in the above, and no state anywhere but Fly. The equivalent by hand, if you would rather run it yourself or adapt it to another host:
@@ -309,13 +311,15 @@ Backing up a vault is copying a directory, and moving it to another host is copy
 
 ## Limits
 
-Two kinds of load are bounded in the server, and a third is the reverse proxy's job.
+Three kinds of load are bounded in the server, one bill is bounded alongside them, and a fourth kind of load is the reverse proxy's job.
 
 **Concurrent git work.** A clone, a push, a content search, a file listing, and a source archive each spawn git, and each holds a subprocess and a socket for as long as the client cares to read. Counting requests per minute does not bound that, because the requests are slow rather than frequent, so what is bounded is how many may run at once. There are four separate gates, so that a flood of anonymous clones cannot stop an authorized push, which is the operation whose failure costs a person their work. Beyond a gate a request waits briefly and is then refused with `503` and a `Retry-After`.
 
 **Failed credential checks.** `/login`, the API, git push, Git LFS, and the runner endpoints are throttled per address, and per address and username together, but only on failure: a working credential is never throttled however often it is used, which matters because a runner calls the vault continuously with a valid one. Refusals are `429` with a `Retry-After`. Nothing is ever locked per account, because anyone could then lock an owner out by presenting wrong tokens for their username; the source is throttled, never the target.
 
 **Ordinary traffic** has a coarse per-address ceiling, so that one misbehaving crawler cannot saturate the process with cheap page renders. It is high on purpose: one page load of a static site can be dozens of requests, and a limit that makes a site feel broken gets turned off and takes the useful limits with it. `/api/runner/*`, `/assets/*`, and the favicons are exempt.
+
+**Outgoing bytes** are counted and capped per day, which is the one limit here that is about money rather than about load. See [Outgoing bytes](#outgoing-bytes) below.
 
 **Connection limits, request timeouts, slow-loris defence, and body-size limits** are not here. They belong to the reverse proxy, which the `docker-compose.yml` deployment already has, and duplicating them in the server would mean two places to get them wrong.
 
@@ -329,13 +333,30 @@ The numbers live in `config.json`:
     "clone": 4,
     "push": 4,
     "search": 2,
-    "tree": 4
+    "tree": 4,
+    "egressGbPerDay": 20
   }
 }
 ```
 
 Those are the defaults, chosen for the small VPS this document describes. `requestsPerMinute` is per address over everything not exempt, and `0` disables it, which is what a vault behind a proxy that already does this wants. `authFailures` is failed credential checks per address per username per fifteen minutes, and `0` disables it; the more generous per-address window that catches an attacker spreading attempts over many usernames is derived from it rather than configured, so there is one number to think about. The four concurrencies are git subprocesses in flight per class. Queue depths and timeouts are constants in the code rather than settings.
 
-Unlike `theme` and `ci`, these are read **once at startup**, because they hold live counts and slot tallies that cannot be rebuilt per request without discarding them. Changing them needs a restart. The same is true of `network.trustProxy`, which is what makes any per-address limit meaningful in the first place: without it the address a limit is charged to is whatever the client said it was.
+Unlike `theme` and `ci`, these are read **once at startup**, because they hold live counts and slot tallies that cannot be rebuilt per request without discarding them. Changing them needs a restart. The same is true of `network.trustProxy`, which is what makes any per-address limit meaningful in the first place: without it the address a limit is charged to is whatever the client said it was. `egressGbPerDay` is the one exception, for the reason given below.
 
-Two limitations, stated plainly rather than engineered around. The counters live in process memory and nowhere else, because rate-limit state is high-frequency and worthless once stale and does not belong in a vault directory whose whole design is durable plain files. So a restart forgives every offender, and two servers pointed at one vault count separately.
+Two limitations, stated plainly rather than engineered around. The counters live in process memory and nowhere else, because rate-limit state is high-frequency and worthless once stale and does not belong in a vault directory whose whole design is durable plain files. So a restart forgives every offender, and two servers pointed at one vault count separately. Outgoing bytes are the exception on both counts, and the next section says why.
+
+## Outgoing bytes
+
+Fly bills for egress and does not cap it. Neither do most hosts, and none of the limits above bound it: a request for a 2 GB release asset costs the same one request as a request for the front page, so a crawler, a popular repository, or a CI loop that clones in a tight retry can run a bill nobody chose. So the server counts the bytes it writes to clients, per repository per UTC day, and stops sending once the day's budget is spent.
+
+`limits.egressGbPerDay` is that budget, **20 GB by default**, and `0` sends without one. Once a day's total reaches it, every ordinary request is answered with `503` and a `Retry-After` naming the next UTC midnight. `/admin`, `/login`, `/api/config`, `/api/egress`, and the stylesheet and icon those pages need keep working, within a further 64 MB, so the cap can be raised from the vault itself rather than by reaching its volume; past that allowance nothing is served at all. That is also why this one setting is read per request and is writable over the API, unlike the rest of the block: the moment it needs changing is the moment the vault has stopped answering.
+
+`/admin/egress` shows today's total against the budget, the breakdown by repository, and up to 30 earlier days, and is where the number is set. `cofferdam config set --egress-gb-per-day 50` and `cofferdam api /api/egress` are the same two things from a shell. A repository's static site is counted against that repository on a row of its own, since a site's traffic behaves nothing like a clone's; everything belonging to no repository (the front page, the API, the administration pages) is counted under `(vault)`.
+
+The counts live in `egress.json` at the root of the vault, written atomically at most every 30 seconds and again on the way out. That is the other difference from the rate limiters: a budget a restart forgives is not a budget, and a crash loop would otherwise send 20 GB per restart. A hard kill loses at most half a minute of counting. Two servers sharing one vault add their counts together at each write, so the budget is shared rather than doubled, though each may send up to 30 seconds past the line before it sees the other's bytes.
+
+What the numbers are not: they are bytes written to sockets by this process, so they include response headers and are counted after compression, and a host's own metering will be a little higher because it also carries TCP and TLS framing.
+
+They also do not include Git LFS objects served from a configured bucket. Those downloads are presigned URLs the client fetches from the bucket directly, so the bytes cross neither this process nor the machine it runs on: they leave the bucket's provider and are metered by it, on its own terms, rather than by the app. `/admin/egress` says so on the page whenever a bucket is configured. This is the reason to prefer a provider that charges nothing for transfer, which is why [Cloudflare R2](lfs.md#storage-providers) is the recommended bucket and the Tigris bucket `--lfs-bucket` provisions is merely the convenient one.
+
+The cap still reaches those downloads, one step earlier than the bytes. A client cannot fetch an object without first asking this server for a presigned URL, and that request is an ordinary route, refused with everything else once the day's budget is spent. What keeps working afterwards is only the URLs signed in the previous hour, which is how long one lasts. So a bucket makes the accounting incomplete without making the limit unenforceable.

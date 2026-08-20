@@ -132,10 +132,15 @@ export function isBinary(buf: Buffer): boolean {
   return false;
 }
 
+// Past a gigabyte the unit keeps going: a release asset or a day's outgoing
+// traffic is routinely larger than that, and "20480.0 MB" is a number a reader
+// has to divide before it means anything.
 export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  return `${(bytes / (1024 * 1024 * 1024 * 1024)).toFixed(2)} TB`;
 }
 
 export function formatDate(iso: string): string {

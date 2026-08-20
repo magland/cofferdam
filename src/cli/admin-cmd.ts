@@ -202,13 +202,18 @@ refused rather than emptied.`,
         ['network.trustProxy', String(network.trustProxy)],
         ['limits.requestsPerMinute', String(limits.requestsPerMinute)],
         ['limits.authFailures', String(limits.authFailures)],
+        [
+          'limits.egressGbPerDay',
+          Number(limits.egressGbPerDay) > 0 ? String(limits.egressGbPerDay) : '0 (no daily limit on outgoing bytes)',
+        ],
       ]);
       console.log('');
       console.log(`themes: ${(data.themes as string[]).join(', ')}`);
       // Saying which of these a write can reach saves a caller discovering it by
       // being refused.
-      console.log('theme, ci, and sites.host can be set with `cofferdam config set`.');
-      console.log('network and limits are read once at startup: edit config.json in the vault and restart.');
+      console.log('theme, ci, sites.host, and limits.egressGbPerDay can be set with `cofferdam config set`.');
+      console.log('network and the rest of limits are read once at startup: edit config.json in the vault and restart.');
+      console.log('`cofferdam api /api/egress` shows what has gone out today, per repository.');
     },
   },
   {
@@ -223,9 +228,15 @@ vault's own hostname. Set it only once that hostname resolves to this vault and 
 wildcard certificate covers it, since sites stop being served anywhere else the
 moment it is set. --sites-host '' puts them back.
 
-network.trustProxy and the limits block are not here. They are read once when the
-server starts, so a command that changed them would report a change the running
-server had not made. Edit config.json in the vault and restart.`,
+--egress-gb-per-day caps the bytes the vault may send in one UTC day, over
+everything. Once a day's total reaches it, ordinary requests are refused with a
+503 until 00:00 UTC; administration and signing in keep working, so the cap can
+be raised from the vault itself. 0 sends without a limit. It is read per request,
+so a change is in force immediately.
+
+network.trustProxy and the rest of the limits block are not here. They are read
+once when the server starts, so a command that changed them would report a change
+the running server had not made. Edit config.json in the vault and restart.`,
     options: [
       { name: 'theme', type: 'string', value: '<t>', summary: 'Theme name' },
       {
@@ -237,6 +248,12 @@ server had not made. Edit config.json in the vault and restart.`,
       { name: 'ci-runs', type: 'int', value: '<n>', summary: 'Completed runs to keep per repository' },
       { name: 'ci-days', type: 'int', value: '<n>', summary: 'Also drop runs older than this; 0 disables' },
       { name: 'ci-artifact-mb', type: 'int', value: '<n>', summary: 'Largest artifact a job may upload' },
+      {
+        name: 'egress-gb-per-day',
+        type: 'string',
+        value: '<gb>',
+        summary: 'Gigabytes the vault may send per UTC day; 0 for no limit',
+      },
       JSON_OPTION,
       ...TARGET_OPTIONS,
     ],
@@ -249,9 +266,28 @@ server had not made. Edit config.json in the vault and restart.`,
       const runs = inv.int('ci-runs');
       const days = inv.int('ci-days');
       const artifactMb = inv.int('ci-artifact-mb');
-      if (theme === null && sitesHost === null && runs === null && days === null && artifactMb === null) {
+      // Taken as a string and parsed here rather than declared as an int: half a
+      // gigabyte is a reasonable budget to give a vault, and the option parser
+      // has no float type.
+      const egressRaw = inv.str('egress-gb-per-day');
+      let egressGbPerDay: number | null = null;
+      if (egressRaw !== null) {
+        const gb = Number(egressRaw.trim());
+        if (egressRaw.trim() === '' || !Number.isFinite(gb) || gb < 0) {
+          throw new CliError('--egress-gb-per-day takes a number of gigabytes, or 0 for no limit.', EXIT_USAGE);
+        }
+        egressGbPerDay = gb;
+      }
+      if (
+        theme === null &&
+        sitesHost === null &&
+        runs === null &&
+        days === null &&
+        artifactMb === null &&
+        egressGbPerDay === null
+      ) {
         throw new CliError(
-          'Nothing to change. Pass --theme, --sites-host, --ci-runs, --ci-days, or --ci-artifact-mb.',
+          'Nothing to change. Pass --theme, --sites-host, --ci-runs, --ci-days, --ci-artifact-mb, or --egress-gb-per-day.',
           EXIT_USAGE
         );
       }
@@ -271,6 +307,9 @@ server had not made. Edit config.json in the vault and restart.`,
         theme: theme ?? undefined,
         ci,
         sites: sitesHost === null ? undefined : { host: sitesHost },
+        // The route merges this into the block it is part of, since the rest of
+        // it is not writable from here.
+        limits: egressGbPerDay === null ? undefined : { egressGbPerDay },
       });
       const json = jsonMode(inv);
       if (json.enabled) {
@@ -289,7 +328,9 @@ server had not made. Edit config.json in the vault and restart.`,
       // Every reader of this setting calls loadConfig per request, so there is
       // nothing further to do; saying so is worth a line, because the settings
       // next to it in the same file do need a restart.
-      if (sitesHost !== null) console.log('In effect now; no restart needed.');
+      const gb = Number(((data.limits ?? {}) as Record<string, unknown>).egressGbPerDay ?? 0);
+      console.log(gb > 0 ? `egress: up to ${gb} GB per UTC day` : 'egress: no daily limit');
+      if (sitesHost !== null || egressGbPerDay !== null) console.log('In effect now; no restart needed.');
     },
   },
 ];

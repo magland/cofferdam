@@ -522,8 +522,18 @@ export async function deployFlyCmd(args: string[], usage: () => never): Promise<
 
   if (a.lfsBucket && !secrets.includes('BUCKET_NAME')) {
     // Tigris' own secret names are the ones the LFS store already reads, so
-    // provisioning a bucket is the whole configuration step.
+    // provisioning a bucket is the whole configuration step. It is the only
+    // provider a deploy can set up unattended, which is why this flag uses it
+    // and not the one the documentation recommends.
     console.log('==> Provisioning a Tigris bucket for Git LFS objects');
+    // Said here rather than only in the documentation, because this is the
+    // moment the choice is being made. LFS bytes leave the bucket rather than
+    // the app, so they are outside the vault's daily egress cap and are billed
+    // on the bucket's own terms; R2 charges nothing for them.
+    console.log('    Tigris is what a deploy can provision unattended, not what costs least to');
+    console.log('    serve from: LFS downloads leave the bucket, so they are billed by the bucket');
+    console.log('    and are not covered by the vault\'s daily egress limit. Cloudflare R2 charges');
+    console.log('    no egress fees; see docs/lfs.md#storage-providers to point this vault there.');
     const code = await flyStream(['storage', 'create', '-a', app, '-n', `${app}-lfs`, '--yes']);
     if (code !== 0) {
       die(

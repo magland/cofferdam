@@ -8,6 +8,7 @@ A vault is a plain directory. Its collections are in `collections/`, and a colle
 <vault>/
   vault.json                    (users and hashed tokens; created on first start)
   config.json                   (vault settings: theme, sites host, CI retention, limits)
+  egress.json                   (bytes sent out, per repository per day; created on first request)
   .secret                       (session-cookie signing key; created on first need)
   runners.json                  (registered workflow runners; created when you add one)
   redirects.json                (where renamed things used to be; created on the first rename)

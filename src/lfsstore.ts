@@ -55,6 +55,14 @@ export interface LfsContext {
   maxSize: number;
   // One line for the startup log; names the backend but never the credentials.
   label: string;
+  /**
+   * Whether object bytes leave through the store rather than through this
+   * server. A bucket hands the client a presigned URL, so those downloads never
+   * touch the process and are not in anything it counts; the local store streams
+   * them itself. Egress accounting says so on the page rather than quietly
+   * under-reporting, which is the only reason this is here.
+   */
+  offloaded: boolean;
 }
 
 export class LfsConfigError extends Error {}
@@ -430,6 +438,7 @@ export function createLfsStore(root: string, env: NodeJS.ProcessEnv = process.en
     store: new LocalLfsStore(root),
     maxSize,
     label: 'local (objects stored inside the vault)',
+    offloaded: false,
   });
   if (env.COFFERDAM_LFS === 'off') return local();
 
@@ -466,5 +475,5 @@ export function createLfsStore(root: string, env: NodeJS.ProcessEnv = process.en
     prefix,
     addressing,
   });
-  return { store, maxSize, label: `s3 (endpoint ${endpoint}, bucket ${bucket})` };
+  return { store, maxSize, label: `s3 (endpoint ${endpoint}, bucket ${bucket})`, offloaded: true };
 }

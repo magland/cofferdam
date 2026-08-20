@@ -3990,6 +3990,60 @@ check "the stylesheet is exempt" 200 "$LIMIT_BASE/assets/style.css"
 check "and the favicon" 200 "$LIMIT_BASE/favicon.svg"
 stop_limited
 
+# ---- outgoing bytes ----
+
+# The one limit here that is about money rather than about load, and the one read
+# per request rather than at startup, so that the cap can be raised from a vault
+# that has stopped answering. Counted bytes persist in egress.json, so the file
+# is cleared first: a count left by an earlier server would decide this.
+rm -f "$VAULT/egress.json"
+start_limited <<'CONFIG'
+{
+  "theme": "paper",
+  "limits": { "requestsPerMinute": 0, "egressGbPerDay": 0.00001 }
+}
+CONFIG
+# About 10 kB, which one page of HTML passes. The first request is answered
+# because the budget still had room when it arrived; the bytes it sends are what
+# spend it.
+check "the first page is served" 200 "$LIMIT_BASE/"
+check "and then the day's budget is spent" 503 -D "$TMP/headers" "$LIMIT_BASE/"
+header_has "with a Retry-After naming the wait" 'retry-after: [0-9]'
+body_has "saying which limit was reached" 'daily limit'
+body_has "and when it resets" '00:00 UTC'
+check "a repository page is refused too" 503 "$LIMIT_BASE/pushed/created"
+# The way back in. An operator locked out of the page that raises the cap would
+# have to reach the vault's disk, which is what this setting exists to avoid.
+check "signing in still works" 200 "$LIMIT_BASE/login"
+check "the stylesheet it needs is still served" 200 "$LIMIT_BASE/assets/style.css"
+check "the administration pages are still reachable" 302 "$LIMIT_BASE/admin"
+api "and the counts can still be read" 200 "$LIMIT_BASE/api/egress"
+body_has "broken down per repository" '"repo":"pushed/created"'
+body_has "with the day's total" '"total":'
+body_has "and the state it is in" '"overBudget":true'
+api "raising the cap is allowed while everything else is refused" 200 -X PATCH -H "$JSON_CT" \
+  --data '{"limits":{"egressGbPerDay":20}}' "$LIMIT_BASE/api/config"
+body_has "reporting the new value" '"egressGbPerDay":20'
+check "and the vault answers again, with no restart" 200 "$LIMIT_BASE/"
+# The rest of the block is read at startup, so a route that changed it would
+# report a change the running server had not made.
+api "another limit is refused rather than quietly stored" 400 -X PATCH -H "$JSON_CT" \
+  --data '{"limits":{"clone":8}}' "$LIMIT_BASE/api/config"
+body_has "saying which field can be set here" 'egressGbPerDay'
+api "a cap that is not a number is refused" 400 -X PATCH -H "$JSON_CT" \
+  --data '{"limits":{"egressGbPerDay":"lots"}}' "$LIMIT_BASE/api/config"
+# 0 is a value rather than a mistake: it sends without a limit.
+api "0 disables the cap" 200 -X PATCH -H "$JSON_CT" \
+  --data '{"limits":{"egressGbPerDay":0}}' "$LIMIT_BASE/api/config"
+check "which serves without one" 200 "$LIMIT_BASE/"
+stop_limited
+# Written on the way out, and what a restart has to come back knowing: a budget
+# a restart forgives is not a budget.
+grep -q '"days"' "$VAULT/egress.json" || { echo "FAIL: no egress counts were written"; exit 1; }
+grep -q '"pushed/created"' "$VAULT/egress.json" || { echo "FAIL: the counts name no repository"; exit 1; }
+PASS=$((PASS+2)); echo "ok: the counts were written out, per repository"
+rm -f "$VAULT/egress.json"
+
 # Leave the vault as the still-running first server expects to find it.
 printf '{\n  "theme": "paper"\n}\n' > "$VAULT/config.json"
 

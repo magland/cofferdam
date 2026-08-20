@@ -69,14 +69,20 @@ A user may read their own record and their own token ids without admin scope. Re
 ```
 GET    /api/config                     theme, CI retention, sites, network, and limits
                                                                       (admin over everything)
-PATCH  /api/config                     {theme?, ci?, sites?}          (admin over everything)
+PATCH  /api/config                     {theme?, ci?, sites?, limits?} (admin over everything)
+GET    /api/egress                     bytes sent today, per repository, and earlier days
+                                                                      (admin over everything)
 ```
 
-Both take admin scope over the whole vault, not merely some admin scope: a delegated collection administrator should not read or change a vault-wide setting.
+All three take admin scope over the whole vault, not merely some admin scope: a delegated collection administrator should not read or change a vault-wide setting, nor read which repositories the vault is sending most of its bytes for.
 
 `theme`, `ci`, and `sites` are writable. Every reader of them consults `config.json` per request, so a change is in effect on the next one and no restart is involved. `sites` takes a `host` string, and `""` puts sites back on the forge's own hostname under the sandbox; a value that is not a plausible hostname is refused with 400 rather than stored. See [Sites](sites.md) for what a sites host does, and [Deploying a vault](deploying.md#a-hostname-for-each-site) for the DNS and certificates it needs.
 
-`network.trustProxy` and the `limits` block are readable and not writable. They are read once when the server starts (see [Deploying a vault](deploying.md)), so a route that changed them would report a change the running server had not made. Edit `config.json` in the vault and restart.
+`network.trustProxy` and the rest of the `limits` block are readable and not writable. They are read once when the server starts (see [Deploying a vault](deploying.md)), so a route that changed them would report a change the running server had not made. Edit `config.json` in the vault and restart.
+
+`limits.egressGbPerDay` is the exception, and the only field `limits` accepts here: it caps the bytes the vault may send in one UTC day and is read per request, so a change is in force on the next one. That it is writable over HTTP is the point. The moment an operator wants to raise it is the moment the vault has stopped answering ordinary requests, and telling them to restart it then is telling them to reach the volume by hand. `0` sends without a limit. Any other field in the block is refused with 400 rather than quietly ignored.
+
+`GET /api/egress` returns the same numbers `/admin/egress` shows: `day` and `total` for today in UTC, `rows` of `{repo, site, bytes}` largest first, `capBytes` and `capGb`, `overBudget`, `resetsIn` seconds, and `history` of up to 30 earlier days. A row whose `repo` is `(vault)` is everything belonging to no repository, and `(other)` appears only once a day's breakdown has reached its 2000-row ceiling. `lfsBucketExcluded` says whether LFS downloads are bypassing this server through presigned bucket URLs, in which case those bytes are not in the totals, though the batch endpoint that mints those URLs is refused past the cap like any other route. See [Deploying a vault](deploying.md#outgoing-bytes) for what the cap does and what it does not count.
 
 ## Repositories
 
