@@ -121,6 +121,43 @@ locking yourself out is your business, and vault.json remains hand-editable.`,
     },
   },
   {
+    path: ['collection', 'rename'],
+    summary: 'Rename a collection, with every repository in it',
+    description: `Everything the collection holds moves with it: the repositories, their issues,
+pull requests, releases, sites, run histories, and LFS objects. Two things do
+not. Clones and remotes pointing at the old address stop working until their
+remote is changed, and token scopes naming the old collection cover nothing
+afterwards and have to be granted again under the new name.
+
+Takes admin scope over every repository in the collection, and push scope over
+each of them at the new name. No --yes: a rename is undone by renaming back.`,
+    args: [
+      { name: 'name', required: true },
+      { name: 'new-name', required: true },
+    ],
+    options: [JSON_OPTION, ...TARGET_OPTIONS],
+    async run(inv) {
+      const target = await targetFrom(inv);
+      const data = await api(target, 'POST', `/api/collections/${encodeURIComponent(inv.args[0])}/rename`, {
+        name: inv.args[1],
+      });
+      const json = jsonMode(inv);
+      if (json.enabled) {
+        printJson(pickObject(data, json.fields));
+        return;
+      }
+      // A rename to the name it already has is a success with nothing done,
+      // which the API answers as changed:false rather than as an error.
+      if (data.changed === false) {
+        console.log(String(data.message ?? 'Nothing changed.'));
+        return;
+      }
+      const repos = Number(data.repos ?? 0);
+      console.log(`Now ${data.name}, with ${repos} ${repos === 1 ? 'repository' : 'repositories'} in it`);
+      console.log('Remotes pointing at the old name, and token scopes naming it, need changing.');
+    },
+  },
+  {
     path: ['collection', 'delete'],
     summary: 'Remove an empty collection',
     description: `A collection is a directory, so this is an rmdir: one holding anything at all is

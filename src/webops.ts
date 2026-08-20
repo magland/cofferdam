@@ -1,16 +1,26 @@
 import express, { Express, Request, Response } from 'express';
+import * as fs from 'fs';
 import { CiEngine } from './ci/engine';
 import { loadConfig, saveConfig } from './config';
 import { isValidRefName, isValidRepoPath, isValidSha } from './git';
 import { firePush } from './ci/trigger';
 import { AuthLimiter } from './limit';
 import { LfsContext } from './lfsstore';
+import { collectionDir } from './layout';
 import { looksLikePointer } from './pointer';
 import { THEMES, findTheme, setActiveTheme } from './themes';
 import * as forms from './forms';
 import * as ops from './ops';
 import { MAX_EDIT_SIZE, MAX_UPLOAD_SIZE, OpError, opErrorStatus } from './ops';
-import { findRepo, isValidName, listCollections, repoDescription, reservedRepoSuffix } from './scan';
+import {
+  displayName,
+  findRepo,
+  isValidName,
+  listCollections,
+  listRepoDirs,
+  repoDescription,
+  reservedRepoSuffix,
+} from './scan';
 import {
   Viewer,
   checkCsrf,
@@ -20,7 +30,16 @@ import {
   setSessionCookie,
   viewerIsAdmin,
 } from './session';
-import { authenticate, canAdmin, canCreateCollection, canPush, loadVault, addUserToken, grantScope } from './vault';
+import {
+  authenticate,
+  canAdmin,
+  canAdminCollection,
+  canCreateCollection,
+  canPush,
+  loadVault,
+  addUserToken,
+  grantScope,
+} from './vault';
 import { encPath, repoUrl } from './views';
 import {
   LoadedRepo,
@@ -261,6 +280,108 @@ export function registerWebOps(
     }
     res.redirect(`/${encodeURIComponent(name)}`);
   });
+
+  // ---- a collection's own settings ----
+  //
+  // These sit at /:collection/settings, one segment shallower than a
+  // repository's, and are registered here rather than in browse.ts so that
+  // they are matched ahead of /:collection/:repo. Nothing is shadowed by
+  // them: `settings` is a reserved name, so no repository can be called it.
+
+  /**
+   * The collection named in the path, with the repositories it holds, or null
+   * once a response has been sent. Renaming needs the repository names twice
+   * over - to decide the actor's abilities, and to say in the page what moves
+   * with the collection - so both handlers start here.
+   */
+  function loadCollection(
+    req: Request,
+    res: Response,
+    viewer: Viewer,
+    post: boolean
+  ): { name: string; repos: string[] } | null {
+    const name = req.params.collection;
+    let isDir = false;
+    try {
+      isDir = fs.statSync(collectionDir(root, name)).isDirectory();
+    } catch {
+      isDir = false;
+    }
+    if (!isValidName(name) || !isDir) {
+      if (post) fail(res, 404, `Collection ${name} not found`, viewer, '/');
+      else send404(res, `Collection ${name} not found`, viewer);
+      return null;
+    }
+    const repos = listRepoDirs(root, name).map(displayName);
+    if (!canAdminCollection(viewer.auth, name, repos)) {
+      fail(
+        res,
+        403,
+        `Collection settings require admin scope over ${name} and everything in it.`,
+        viewer,
+        `/${encodeURIComponent(name)}`
+      );
+      return null;
+    }
+    return { name, repos };
+  }
+
+  app.get('/:collection/settings', (req, res) => {
+    const viewer = requireViewerPage(root, req, res);
+    if (!viewer) return;
+    const loaded = loadCollection(req, res, viewer, false);
+    if (!loaded) return;
+    const msg = typeof req.query.msg === 'string' ? req.query.msg : undefined;
+    res.type('html').send(forms.collectionSettingsPage(viewer, loaded.name, loaded.repos.length, msg));
+  });
+
+  app.post(
+    '/:collection/settings/rename',
+    form,
+    ah(async (req, res) => {
+      const viewer = requireViewerPost(root, req, res);
+      if (!viewer) return;
+      const loaded = loadCollection(req, res, viewer, true);
+      if (!loaded) return;
+      const from = loaded.name;
+      const backUrl = `/${encodeURIComponent(from)}/settings`;
+      const toName = field(req, 'name').trim();
+      // Two abilities, as for a repository move: admin over what is moving,
+      // which loadCollection has already established, and push over where it
+      // lands. Every repository lands there, so push scope has to cover each
+      // of them under the new name, and an empty collection is the weaker
+      // question canCreateCollection answers.
+      if (!isValidName(toName)) {
+        fail(
+          res,
+          400,
+          'A collection name may use letters, digits, dot, underscore, and dash, and must not be a reserved word.',
+          viewer,
+          backUrl
+        );
+        return;
+      }
+      const unpushable = loaded.repos.filter((r) => !canPush(viewer.auth, toName, r));
+      if (unpushable.length > 0 || !canCreateCollection(viewer.auth, toName)) {
+        const what = unpushable.length > 0 ? `${toName}/${unpushable[0]}` : toName;
+        fail(res, 403, `You have no push scope over ${what}.`, viewer, backUrl);
+        return;
+      }
+      try {
+        // The engine indexes runs under each repository's old identity; drop
+        // them before the directories move out from under it.
+        for (const repo of loaded.repos) engine?.forgetRepo(from, repo);
+        await ops.renameCollection(root, from, toName, lfs?.store);
+      } catch (e) {
+        const message = e instanceof OpError ? e.message : 'Could not rename the collection.';
+        fail(res, e instanceof OpError ? opErrorStatus(e.kind) : 400, message, viewer, backUrl);
+        return;
+      }
+      res.redirect(
+        `/${encodeURIComponent(toName)}/settings?msg=${encodeURIComponent(`Renamed from ${from}.`)}`
+      );
+    })
+  );
 
   app.get('/new', (req, res) => {
     const viewer = requireViewerPage(root, req, res);

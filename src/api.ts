@@ -7,6 +7,7 @@ import { displayName, isValidName, listCollections, listRepoDirs } from './scan'
 import { addUserToken, canAdmin, canCreateCollection, grantScope, loadVault } from './vault';
 import { apiError, requireApiAuth as authenticateRequest } from './api/auth';
 import { AuthLimiter, Gates } from './limit';
+import { LfsContext } from './lfsstore';
 import { CiEngine } from './ci/engine';
 import { registerContentsApi } from './api/contents';
 import { registerIssueApi } from './api/issues';
@@ -26,6 +27,7 @@ export function registerApi(
   root: string,
   authLimiter: AuthLimiter,
   gates: Gates,
+  lfs: LfsContext | null = null,
   engine?: CiEngine
 ): void {
   // A write route carries a file in its body, so the limit is the one the upload
@@ -41,13 +43,13 @@ export function registerApi(
   registerContentsApi(app, root, authLimiter, gates);
   registerIssueApi(app, root, authLimiter);
   registerPullApi(app, root, authLimiter, engine);
-  registerWriteApi(app, root, authLimiter, engine);
+  registerWriteApi(app, root, authLimiter, lfs, engine);
   // The engine is constructed in createApp and already handed to registerCiApi,
   // so these routes take it the same way. A vault serving with no engine has no
   // workflows to answer about.
   if (engine) registerCiRunApi(app, root, authLimiter, engine);
   registerReleaseApi(app, root, authLimiter);
-  registerAdminApi(app, root, authLimiter);
+  registerAdminApi(app, root, authLimiter, lfs, engine);
   // Reading a whole vault out over HTTP, for `cofferdam backup`. Admin over the
   // whole vault, and behind the same gate a file listing holds.
   registerBackupApi(app, root, authLimiter, gates);

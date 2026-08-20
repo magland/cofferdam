@@ -798,7 +798,10 @@ export function collectionPage(
   collection: string,
   repoList: RepoCard[],
   sort: 'recent' | 'name',
-  viewer: Viewer | null
+  viewer: Viewer | null,
+  // Whether the viewer may reach the collection's settings, which is the only
+  // way to the rename. A control nobody can use is not shown, as elsewhere.
+  canAdminCollection: boolean
 ): string {
   const body =
     repoList.length === 0
@@ -810,6 +813,9 @@ export function collectionPage(
           sort,
           sortBase: `/${encodeURIComponent(collection)}`,
         });
+  const settingsBtn = canAdminCollection
+    ? `<a class="btn" href="/${encodeURIComponent(collection)}/settings">${icon('sliders')}<span>Settings</span></a>`
+    : '';
   const newBtn = viewer
     ? `<a class="btn" href="/import?collection=${encodeURIComponent(collection)}">${icon(
         'download'
@@ -819,7 +825,7 @@ export function collectionPage(
     : '';
   const content = `<div class="page-head"><h1 class="with-avatar">${avatar(collection, 28, 'square')}${esc(
     collection
-  )}</h1><span class="right-group">${newBtn}</span></div>${body}`;
+  )}</h1><span class="right-group">${settingsBtn}${newBtn}</span></div>${body}`;
   return layout(collection, content, {
     crumbs: ` / <a href="/${encodeURIComponent(collection)}">${esc(collection)}</a>`,
     viewer,

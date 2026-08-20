@@ -215,6 +215,7 @@ cofferdam user view alice
 cofferdam user token list alice
 cofferdam user token revoke alice <token-id> --yes
 cofferdam user delete alice --yes
+cofferdam collection rename mycollection newname
 cofferdam collection delete emptyone --yes
 
 cofferdam config view
@@ -226,6 +227,8 @@ cofferdam config set --sites-host vault-sites.example.org
 A release hangs on a tag that already exists: notes for a tag nobody can check out are notes about nothing, so `cofferdam tag create` comes first. Creating and editing are the same call underneath, since a release is keyed by its tag, which takes a whole class of "already exists, retry as an edit" logic out of a caller. Deleting a release deletes its notes and leaves the tag; the two are separate operations.
 
 There is no `release upload`. A release's downloads are the archive routes, so there is nothing to upload and no asset endpoints exist.
+
+`cofferdam collection rename` moves everything the collection holds: the repositories, their issues, pull requests, releases, sites, run histories, and LFS objects. It is one directory rename, so it costs the same on a collection of a hundred gigabytes as on an empty one. There is no `--yes`, since a rename that was a mistake is undone by renaming back; what it takes is admin scope over every repository in the collection and push scope over each of them at the new name. Two things do not move with it: remotes pointing at the old address, and token scopes naming the old collection, which cover nothing afterwards and have to be granted again under the new name. `cofferdam repo rename` is the same operation one level down, and can move a repository to another collection with `--collection`.
 
 Tokens are named by an id rather than by their hash, and neither a token nor its hash is ever returned: only a SHA-256 hash is stored, so there is nothing to return. An id, a creation time, and any scope of its own is what a listing gives, which is what revocation takes. Revoking the token you are using is allowed and reported rather than refused; locking yourself out is your business, and `vault.json` remains hand-editable.
 
@@ -363,9 +366,12 @@ A collection is a directory of repositories, and most of them come into being on
 ```bash
 cofferdam collection add mycollection
 cofferdam collection list
+cofferdam collection rename mycollection newname
 ```
 
 Creating one needs push scope over something inside it. An empty collection is an empty directory, so removing it again is `rmdir` in the vault.
+
+Renaming one is a single directory rename, since a collection holds everything of its own inside its directory, and the same operation is on the collection's **Settings** page in the web interface. Everything moves with it; token scopes naming the old collection do not, and have to be granted again under the new name. See [Renaming a repository or a collection](vault.md#renaming-a-repository-or-a-collection).
 
 ### Users, tokens, and scopes
 

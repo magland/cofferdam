@@ -7,7 +7,14 @@ import { GitRepo, execGit, execGitStatus, isValidRefName, isValidRepoPath, isVal
 import type { LfsStore } from './lfsstore';
 import { looksLikePointer } from './pointer';
 import { REPOS_DIR, collectionDir, repoPath, reposDir } from './layout';
-import { displayName, findRepo, isValidName, repoSiblingSuffixes, reservedRepoSuffix } from './scan';
+import {
+  displayName,
+  findRepo,
+  isValidName,
+  listRepoDirs,
+  repoSiblingSuffixes,
+  reservedRepoSuffix,
+} from './scan';
 
 // The shared write-operations layer. Every function takes explicit arguments
 // and enforces no authorization: the route layer knows the actor and decides.
@@ -670,6 +677,58 @@ export async function renameRepo(
   // moves them itself. Unlike deletion this is not best-effort: an object left
   // behind is one a clone of the moved repository cannot fetch.
   if (lfs) await lfs.renameRepo(collection, name, toCollection, toName);
+}
+
+/**
+ * Rename a collection.
+ *
+ * A collection holds everything of its own inside its directory, so unlike a
+ * repository move this is a single rename and not a sequence of them: the
+ * repositories, the directories each of them keeps beside it, and locally
+ * stored LFS objects all sit under the directory being moved and arrive at
+ * the new name together. Only objects in a bucket have to be dealt with
+ * separately, since their keys name the collection rather than living in it,
+ * and the store is asked to move each repository's for that reason.
+ *
+ * Two things a rename does not carry with it, and the interface says so
+ * before it is done: token scopes in vault.json still name the old
+ * collection, and remotes pointing at the old address stop working until
+ * they are changed.
+ */
+export async function renameCollection(
+  root: string,
+  name: string,
+  toName: string,
+  lfs?: LfsStore | null
+): Promise<void> {
+  if (!isValidName(name) || !isValidName(toName)) throw new OpError('invalid collection name');
+  const dir = collectionDir(root, name);
+  let isDir = false;
+  try {
+    isDir = fs.statSync(dir).isDirectory();
+  } catch {
+    isDir = false;
+  }
+  if (!isDir) throw new OpError(`collection ${name} not found`, 'notfound');
+  if (toName === name) throw new OpError('that is already its name', 'nochange');
+  const dest = collectionDir(root, toName);
+  if (fs.existsSync(dest)) throw new OpError(`collection ${toName} already exists`, 'exists');
+  const rootReal = fs.realpathSync(root);
+  if (!containedIn(rootReal, dir)) {
+    throw new OpError('collection directory is outside the vault; refusing to move it');
+  }
+  // Read the repositories before the move, since afterwards they are only
+  // findable under the new name and the store still has to be told the old
+  // one.
+  const repos = listRepoDirs(root, name).map(displayName);
+  fs.renameSync(dir, dest);
+  // Objects in a bucket, as for a repository move: not best-effort, since an
+  // object left behind is one a clone of the moved repository cannot fetch.
+  // The local backend finds nothing to move, its directories having travelled
+  // with the collection already.
+  if (lfs) {
+    for (const repo of repos) await lfs.renameRepo(name, repo, toName, repo);
+  }
 }
 
 /**

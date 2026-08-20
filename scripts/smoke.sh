@@ -733,6 +733,40 @@ check "move it back" 302 -b "$JAR" "$BASE/moved/proj/settings/rename" \
   --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=proj
 check "back at its old address" 200 "$BASE/demo/proj"
 
+# ---- renaming a collection ----
+
+check "a collection to rename" 302 -b "$JAR" "$BASE/new" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=oldname --data-urlencode name=thing \
+  --data-urlencode init=1
+check "the collection page" 200 -b "$JAR" "$BASE/oldname"
+body_has "it offers its settings" 'href="/oldname/settings"'
+check "anonymous sees the collection" 200 "$BASE/oldname"
+body_lacks "but no settings link" 'href="/oldname/settings"'
+check "anonymous collection settings redirect to login" 302 "$BASE/oldname/settings"
+check "collection settings page" 200 -b "$JAR" "$BASE/oldname/settings"
+body_has "it offers a rename" 'action="/oldname/settings/rename"'
+body_has "it says what moves with the collection" 'moves with it'
+check "rename the collection" 302 -b "$JAR" "$BASE/oldname/settings/rename" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode name=newname
+check "the new name serves the collection" 200 "$BASE/newname"
+check "and the repository in it" 200 "$BASE/newname/thing"
+check "the old name is gone" 404 "$BASE/oldname"
+dir_exists "the repository moved with the collection" "$VAULT/collections/newname/repos/thing.git"
+[ -d "$VAULT/collections/oldname" ] && { echo "FAIL: the old collection directory is still there"; exit 1; }
+PASS=$((PASS+1)); echo "ok: nothing is left under the old collection name"
+check "renaming onto an existing collection is refused" 409 -b "$JAR" "$BASE/newname/settings/rename" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode name=demo
+check "renaming a collection to its own name is refused" 400 -b "$JAR" "$BASE/newname/settings/rename" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode name=newname
+check "a reserved collection name is refused" 400 -b "$JAR" "$BASE/newname/settings/rename" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode name=settings
+check "settings for a collection that is not there 404s" 404 -b "$JAR" "$BASE/nosuch/settings"
+check "an empty collection to rename" 302 -b "$JAR" "$BASE/new/collection" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode name=emptyold
+check "rename the empty collection" 302 -b "$JAR" "$BASE/emptyold/settings/rename" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode name=emptynew
+check "the renamed empty collection serves" 200 "$BASE/emptynew"
+
 # ---- forking inside the vault ----
 
 check "anonymous fork form redirects to login" 302 "$BASE/demo/proj/fork"
@@ -932,6 +966,9 @@ check "alice cannot rename repo" 403 -b "$ALICE_JAR" "$BASE/demo/proj/settings/r
   --data-urlencode "csrf=$ALICE_CSRF" --data-urlencode collection=demo --data-urlencode name=nope
 check "alice cannot delete repo" 403 -b "$ALICE_JAR" "$BASE/demo/proj/settings/delete" \
   --data-urlencode "csrf=$ALICE_CSRF" --data-urlencode confirm=demo/proj
+check "alice cannot reach collection settings" 403 -b "$ALICE_JAR" "$BASE/demo/settings"
+check "alice cannot rename a collection" 403 -b "$ALICE_JAR" "$BASE/demo/settings/rename" \
+  --data-urlencode "csrf=$ALICE_CSRF" --data-urlencode name=nope
 check "alice cannot import out of scope" 403 -b "$ALICE_JAR" \
   --get "$BASE/import" --data-urlencode collection=other
 check "alice cannot create a collection out of scope" 403 -b "$ALICE_JAR" "$BASE/new/collection" \
@@ -953,6 +990,16 @@ body_lacks "no appearance card for delegated admin" '/admin/appearance'
 check "collectionadmin cannot open appearance" 403 -b "$TMP/collectionadmin.jar" "$BASE/admin/appearance"
 check "collectionadmin cannot set the theme" 403 -b "$TMP/collectionadmin.jar" "$BASE/admin/appearance" \
   --data-urlencode "csrf=$CSRF" --data-urlencode theme=terminal
+# Admin over demo/* is admin over the collection, so its settings are theirs to
+# open; where a rename would land is a separate question, and their push scope
+# does not reach outside demo.
+check "collectionadmin reaches collection settings" 200 -b "$TMP/collectionadmin.jar" "$BASE/demo/settings"
+CA_CSRF="$(csrf_of)"
+check "collectionadmin cannot rename it out of their push scope" 403 -b "$TMP/collectionadmin.jar" \
+  "$BASE/demo/settings/rename" --data-urlencode "csrf=$CA_CSRF" --data-urlencode name=elsewhere
+check "and the collection is still there" 200 "$BASE/demo"
+check "collectionadmin cannot reach another collection's settings" 403 -b "$TMP/collectionadmin.jar" \
+  "$BASE/newname/settings"
 
 # ---- anonymous sees no controls ----
 
@@ -1532,6 +1579,35 @@ api_as "removing a collection needs admin scope over it" 403 "$ALICE_TOKEN" -X D
 api_as "and a collection admin may remove one inside their scope" 409 "$COLLECTION_TOKEN" -X DELETE "$BASE/api/collections/demo"
 body_has "getting as far as the emptiness check" 'not empty'
 
+# Renaming a collection over the API, which is the same operation the web offers
+# on a collection's settings page.
+api "a collection to rename over the api" 201 -H "$JSON_CT" \
+  --data '{"collection":"apiold","name":"moving","initReadme":true}' "$BASE/api/repos"
+api "api renames a collection" 200 -X POST -H "$JSON_CT" \
+  --data '{"name":"apinew"}' "$BASE/api/collections/apiold/rename"
+body_has "saying where it came from" '"renamedFrom":"apiold"'
+body_has "and how much moved with it" '"repos":1'
+api "the collection is at the new name" 200 "$BASE/api/collections/apinew"
+body_has "with its repository" '"moving"'
+api "and gone from the old one" 404 "$BASE/api/collections/apiold"
+api "the repository moved with it" 200 "$BASE/api/repos/apinew/moving"
+api "renaming onto an existing collection is refused" 409 -X POST -H "$JSON_CT" \
+  --data '{"name":"apis"}' "$BASE/api/collections/apinew/rename"
+# nochange is a success with a body saying nothing happened, as everywhere else
+# in this API, rather than a 400.
+api "renaming to its own name changes nothing" 200 -X POST -H "$JSON_CT" \
+  --data '{"name":"apinew"}' "$BASE/api/collections/apinew/rename"
+body_has "and says so" '"changed":false'
+api "a name that is not usable is refused" 400 -X POST -H "$JSON_CT" \
+  --data '{"name":"settings"}' "$BASE/api/collections/apinew/rename"
+api "renaming a collection that is not there is a 404" 404 -X POST -H "$JSON_CT" \
+  --data '{"name":"whatever"}' "$BASE/api/collections/nosuchcollection/rename"
+api_as "renaming a collection needs admin scope over it" 403 "$ALICE_TOKEN" -X POST -H "$JSON_CT" \
+  --data '{"name":"alicesnow"}' "$BASE/api/collections/apinew/rename"
+api_as "and push scope over where it lands" 403 "$COLLECTION_TOKEN" -X POST -H "$JSON_CT" \
+  --data '{"name":"elsewhere"}' "$BASE/api/collections/demo/rename"
+body_has "naming what is out of reach" 'push scope'
+
 
 api "api reads the vault settings" 200 "$BASE/api/config"
 body_has "with the theme" '"theme":'
@@ -1844,7 +1920,17 @@ run_code "user delete refuses without --yes" 2 cli user delete spare
 run_ok "user delete with --yes" cli user delete spare --yes
 run_code "and the user is gone" 4 cli user view spare
 
-run_ok "collection add, to have one to remove" cli collection add throwaway
+run_ok "collection add, to have one to rename and remove" cli collection add throwaway
+run_ok "collection rename" cli collection rename throwaway keptaway
+body_has "reporting the new name and what moved" 'Now keptaway, with 0 repositories'
+check "the collection is at the new name" 200 "$BASE/keptaway"
+check "and gone from the old one" 404 "$BASE/throwaway"
+run_ok "collection rename to its own name reports no change" cli collection rename keptaway keptaway
+body_has "rather than a rename that did not happen" 'already its name'
+run_code "collection rename onto an existing one is a conflict" 5 cli collection rename keptaway demo
+run_code "collection rename of one that is not there is a 404" 4 cli collection rename nosuchone x
+run_ok "collection rename --json" cli collection rename keptaway throwaway --json
+body_has "with the fields a program reads" '"renamedFrom": "keptaway"'
 run_code "collection delete refuses without --yes" 2 cli collection delete throwaway
 run_ok "collection delete with --yes" cli collection delete throwaway --yes
 check "and the collection is gone" 404 "$BASE/throwaway"

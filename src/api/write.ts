@@ -3,6 +3,7 @@ import { CiEngine } from '../ci/engine';
 import { firePush } from '../ci/trigger';
 import { isValidRefName, isValidRepoPath } from '../git';
 import { AuthLimiter } from '../limit';
+import { LfsContext } from '../lfsstore';
 import {
   FileAction,
   MAX_EDIT_SIZE,
@@ -128,7 +129,13 @@ function reportWriteError(res: Response, e: unknown): void {
   sendOpError(res, e, 'the write failed');
 }
 
-export function registerWriteApi(app: Express, root: string, limiter: AuthLimiter, engine?: CiEngine): void {
+export function registerWriteApi(
+  app: Express,
+  root: string,
+  limiter: AuthLimiter,
+  lfs: LfsContext | null = null,
+  engine?: CiEngine
+): void {
   const fire = (ctx: WriteContext, branch: string, before: string | null, after: string, actor: Actor) =>
     firePush(root, engine, { collection: ctx.repo.collection, name: ctx.repo.name }, branch, before, after, actor.username);
 
@@ -454,7 +461,12 @@ export function registerWriteApi(app: Express, root: string, limiter: AuthLimite
       return;
     }
     try {
-      await renameRepo(root, ctx.repo.collection, ctx.repo.name, collection, name);
+      // The store is handed the move, and the engine is told to forget the old
+      // identity first, exactly as the web handler does. Without the store an
+      // LFS object in a bucket would be left at the old key, which is an
+      // object a clone of the moved repository cannot fetch.
+      engine?.forgetRepo(ctx.repo.collection, ctx.repo.name);
+      await renameRepo(root, ctx.repo.collection, ctx.repo.name, collection, name, lfs?.store);
       res.json({ collection, name, renamed: true });
     } catch (e) {
       sendOpError(res, e, 'could not rename the repository');
@@ -473,7 +485,8 @@ export function registerWriteApi(app: Express, root: string, limiter: AuthLimite
       return;
     }
     try {
-      await deleteRepo(root, ctx.repo.collection, ctx.repo.name);
+      engine?.forgetRepo(ctx.repo.collection, ctx.repo.name);
+      await deleteRepo(root, ctx.repo.collection, ctx.repo.name, lfs?.store);
       res.json({ deleted: full });
     } catch (e) {
       sendOpError(res, e, 'could not delete the repository');
