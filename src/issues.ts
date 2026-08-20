@@ -124,33 +124,73 @@ function summaryFrom(n: number, dir: string, doc: { meta: Record<string, unknown
  * titles alone would miss the issue whose subject is in its first paragraph,
  * and reading every file twice to find it would be silly.
  */
+/** Read every issue once, handing each to `visit` with its body. */
+function scanIssues(
+  root: string,
+  collection: string,
+  repo: string,
+  visit: (summary: IssueSummary, body: string) => void
+): void {
+  const dir = issuesDir(root, collection, repo);
+  if (!dir) return;
+  for (const n of numericDirs(dir)) {
+    const sub = path.join(dir, String(n));
+    const doc = readDoc(path.join(sub, 'issue.md'));
+    if (!doc) continue;
+    visit(summaryFrom(n, sub, doc), doc.body);
+  }
+}
+
+/** Whether a reader's query, already lowercased and trimmed, finds an issue. */
+function matchesQuery(summary: IssueSummary, body: string, needle: string): boolean {
+  if (needle === '') return true;
+  return (
+    summary.title.toLowerCase().includes(needle) ||
+    body.toLowerCase().includes(needle) ||
+    summary.labels.some((l) => l.toLowerCase().includes(needle))
+  );
+}
+
+// Newest first, which is how a list of issues is read.
+const newestFirst = (a: IssueSummary, b: IssueSummary) => b.number - a.number;
+
 export function listIssues(
   root: string,
   collection: string,
   repo: string,
   opts: { match?: string } = {}
 ): IssueSummary[] {
-  const dir = issuesDir(root, collection, repo);
-  if (!dir) return [];
   const needle = (opts.match ?? '').trim().toLowerCase();
   const out: IssueSummary[] = [];
-  for (const n of numericDirs(dir)) {
-    const sub = path.join(dir, String(n));
-    const doc = readDoc(path.join(sub, 'issue.md'));
-    if (!doc) continue;
-    const summary = summaryFrom(n, sub, doc);
-    if (
-      needle !== '' &&
-      !summary.title.toLowerCase().includes(needle) &&
-      !doc.body.toLowerCase().includes(needle) &&
-      !summary.labels.some((l) => l.toLowerCase().includes(needle))
-    ) {
-      continue;
-    }
-    out.push(summary);
-  }
-  // Newest first, which is how a list of issues is read.
-  return out.sort((a, b) => b.number - a.number);
+  scanIssues(root, collection, repo, (summary, body) => {
+    if (matchesQuery(summary, body, needle)) out.push(summary);
+  });
+  return out.sort(newestFirst);
+}
+
+/**
+ * Every issue, and the ones a query finds, from one pass over the directory.
+ *
+ * The list page needs both, because the tab counts and the label and author
+ * menus are of the whole repository while the rows are of the query. Asking
+ * listIssues twice read and YAML-parsed every issue twice -- and that parse is
+ * nine tenths of what the page costs -- so the query is applied here instead,
+ * while the issue is already in hand. No body is kept afterwards.
+ */
+export function listIssuesAndMatches(
+  root: string,
+  collection: string,
+  repo: string,
+  query: string
+): { all: IssueSummary[]; matched: IssueSummary[] } {
+  const needle = query.trim().toLowerCase();
+  const all: IssueSummary[] = [];
+  const matched: IssueSummary[] = [];
+  scanIssues(root, collection, repo, (summary, body) => {
+    all.push(summary);
+    if (matchesQuery(summary, body, needle)) matched.push(summary);
+  });
+  return { all: all.sort(newestFirst), matched: matched.sort(newestFirst) };
 }
 
 export type IssueSort = 'newest' | 'oldest' | 'updated' | 'comments';

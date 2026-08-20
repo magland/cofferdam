@@ -366,12 +366,11 @@ export function registerIssues(app: Express, root: string): void {
       };
       // Counts on the state tabs are of the whole repository, as GitHub's are,
       // so they do not move as the other filters narrow the list.
-      const all = issues.listIssues(root, ctx.collection, ctx.repo);
+      const { all, matched } = issues.listIssuesAndMatches(root, ctx.collection, ctx.repo, filter.query);
       const counts = {
         open: all.filter((i) => i.state === 'open').length,
         closed: all.filter((i) => i.state === 'closed').length,
       };
-      const matched = filter.query === '' ? all : issues.listIssues(root, ctx.collection, ctx.repo, { match: filter.query });
       const list = issues.selectIssues(matched, filter);
       res
         .type('html')
