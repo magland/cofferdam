@@ -702,6 +702,9 @@ textarea {
 .admin-layout { display: flex; align-items: flex-start; gap: 32px; }
 .admin-main { flex: 1 1 auto; min-width: 0; }
 .admin-side { flex: 0 0 220px; }
+/* At the top of the page rather than beside content, so the block's ruled top
+   would read as a stray line under the header; the heading carries it. */
+.admin-side .side-block:first-child { border-top: 0; padding-top: var(--s2); }
 .admin-side .side-links a { padding: 6px 8px; border-radius: var(--radius); }
 .admin-side .side-links a:hover { background: var(--surface); }
 .admin-side .side-links a.current { background: var(--surface); font-weight: 600; }

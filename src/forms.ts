@@ -619,9 +619,21 @@ ${item('runners', '/admin/runners', 'Runners', 'server')}
 ${canVault ? item('egress', '/admin/egress', 'Egress', 'upload') : ''}
 ${canVault ? item('appearance', '/admin/appearance', 'Appearance', 'appearance') : ''}
 </div></div></aside>`;
+  // The bar locates an admin page the way it locates a repository page: the
+  // trail up from here, for after the heading has scrolled away.
+  const sections: Record<typeof active, { href: string; label: string } | null> = {
+    index: null,
+    users: { href: '/admin/users', label: 'Users' },
+    runners: { href: '/admin/runners', label: 'Runners' },
+    egress: { href: '/admin/egress', label: 'Egress' },
+    appearance: { href: '/admin/appearance', label: 'Appearance' },
+  };
+  const section = sections[active];
+  const crumbs = ` / <a href="/admin">admin</a>${section ? ` / <a href="${section.href}">${section.label}</a>` : ''}`;
   return layout(title, `<div class="admin-layout">${nav}<div class="admin-main">${body}</div></div>`, {
     viewer,
     path,
+    crumbs,
   });
 }
 
