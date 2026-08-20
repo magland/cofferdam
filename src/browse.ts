@@ -14,6 +14,7 @@ import { collectionDir, repoPath } from './layout';
 import { displayName, isValidName, listCollections, listRepoDirs, repoDescription, siteDir } from './scan';
 import { getViewer } from './session';
 import { serveSite, siteHostUrl } from './site';
+import { canAdminCollection } from './vault';
 import * as views from './views';
 import { encPath, repoUrl } from './views';
 import { LoadedRepo, ah, baseUrlOf, loadRepo, makeCtx, send404, sendBusy, wildcard } from './web';
@@ -108,9 +109,17 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
         send404(res, `Collection ${collection} not found`, viewer);
         return;
       }
+      const cards = await repoCards(req, collection);
+      const canSettings =
+        viewer !== null &&
+        canAdminCollection(
+          viewer.auth,
+          collection,
+          cards.map((c) => c.name)
+        );
       res
         .type('html')
-        .send(views.collectionPage(collection, await repoCards(req, collection), sortParam(req), viewer));
+        .send(views.collectionPage(collection, cards, sortParam(req), viewer, canSettings));
     })
   );
 

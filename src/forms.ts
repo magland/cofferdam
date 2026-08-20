@@ -178,6 +178,52 @@ ${csrfField(viewer)}
 }
 
 /**
+ * A collection's own settings, which today is one operation: its name.
+ *
+ * Repository settings live under the repository, so a collection's live under
+ * the collection, at the same place in the path. The rename is graded amber
+ * rather than red for the same reason a repository's is: what it breaks can be
+ * put back by renaming it again.
+ */
+export function collectionSettingsPage(
+  viewer: Viewer,
+  collection: string,
+  repoCount: number,
+  msg?: string,
+  error?: string
+): string {
+  const base = `/${encodeURIComponent(collection)}`;
+  const holds =
+    repoCount === 0
+      ? 'This collection is empty.'
+      : `Every one of its ${
+          repoCount === 1 ? 'repository' : `${repoCount} repositories`
+        } moves with it, along with their sites, workflow runs, issues, pull requests, releases, and LFS objects.`;
+  const content = `<div class="page-head"><h1 class="with-avatar">${avatar(collection, 28, 'square')}${esc(
+    collection
+  )}</h1></div>
+<h2>Settings</h2>
+${flashBanner(msg)}
+${errorBanner(error)}
+<div class="danger-zone caution">
+<h3>Rename</h3>
+<p>${holds} Clones and remotes pointing at the old address stop working until they are changed, and token scopes naming the old collection have to be granted again under the new name.</p>
+<form method="post" action="${base}/settings/rename" class="inline-form">
+${csrfField(viewer)}
+<label for="toName">Collection name</label><input type="text" id="toName" name="name" value="${esc(
+    collection
+  )}" required>
+<button type="submit" class="btn">${icon('pencil')}<span>Rename</span></button>
+</form>
+</div>`;
+  return layout(`Settings - ${collection}`, content, {
+    crumbs: ` / <a href="${base}">${esc(collection)}</a>`,
+    viewer,
+    path: `${base}/settings`,
+  });
+}
+
+/**
  * The commit box: a summary and an optional extended description, which is
  * GitHub's shape and git's own (the two are joined by a blank line before the
  * commit is made). The face beside the heading is whose commit it will be.

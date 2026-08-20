@@ -207,6 +207,26 @@ export function canAdmin(auth: AuthResult, globs: string[]): boolean {
   return globs.every((g) => auth.user.admin.some((a) => globMatch(a, g)));
 }
 
+/**
+ * Whether a user may administer a collection as a whole, which is what
+ * renaming one asks. A rename moves every repository in the collection, so
+ * admin scope has to cover each of them one by one; asking that alone would
+ * be too weak for an empty collection, where there is nothing to cover and
+ * `canAdmin` would answer yes to any administrator, so at least one of the
+ * actor's admin globs must also name this collection. The collection part of
+ * each glob is what is matched, as in canCreateCollection, and a glob with no
+ * slash in it (`*`) covers every collection.
+ */
+export function canAdminCollection(auth: AuthResult, collection: string, repos: string[]): boolean {
+  const collectionOf = (glob: string) => (glob.includes('/') ? glob.slice(0, glob.indexOf('/')) : glob);
+  if (auth.token.scope !== undefined) return false;
+  if (!auth.user.admin.some((a) => globMatch(collectionOf(a), collection))) return false;
+  return canAdmin(
+    auth,
+    repos.map((r) => `${collection}/${r}`)
+  );
+}
+
 function writeVault(file: string, vault: Vault): void {
   writeFileAtomic(file, JSON.stringify(vault, null, 2) + '\n', { mode: 0o600 });
 }
