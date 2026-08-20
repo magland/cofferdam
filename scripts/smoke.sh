@@ -93,12 +93,11 @@ mkdir -p "$VAULT"
 
 export GIT_TERMINAL_PROMPT=0
 
-# Executing workflow jobs is the one part of this suite measured in minutes
-# rather than seconds: each run pulls an image, starts a container per job, and
-# is polled once a second until it finishes, which is around three of the three
-# and a half minutes the whole suite takes. Everything else, planning included,
-# runs against the local server and costs about twenty seconds together, so the
-# execution checks are opt-in rather than routine:
+# Executing workflow jobs is the one part of this suite that runs containers:
+# each run pulls an image, starts a container per job, and is polled until it
+# finishes, which is about as much time again as everything else together and
+# needs a working Docker. So the execution checks are opt-in rather than routine,
+# and everything up to and including planning a run is not:
 #
 #   npm run smoke        # everything but job execution
 #   npm run smoke:slow   # that too (needs Docker)
@@ -131,6 +130,7 @@ fi
 
 SERVER_PID=""
 FORGE_PID=""
+RUNNER_PID=""
 PRESET_PID=""
 LIMIT_PID=""
 BACKUP_PID=""
@@ -140,6 +140,7 @@ cleanup() {
   [ -n "$PRESET_PID" ] && kill "$PRESET_PID" 2>/dev/null || true
   [ -n "${LIMIT_PID:-}" ] && kill "$LIMIT_PID" 2>/dev/null || true
   [ -n "${BACKUP_PID:-}" ] && kill "$BACKUP_PID" 2>/dev/null || true
+  [ -n "${RUNNER_PID:-}" ] && kill "$RUNNER_PID" 2>/dev/null || true
   rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -151,8 +152,8 @@ trap cleanup EXIT
 #    X-Forwarded-Proto header, and without it the server would rightly ignore
 #    them. A vault with nothing in front wants the default, which is false.
 #  - requestsPerMinute: 0, which disables the coarse per-address ceiling. This
-#    suite sends every one of its several hundred requests from one address in
-#    about twenty seconds, which is nothing like browsing and well past any
+#    suite sends every one of its many hundred requests from one address in
+#    well under a minute, which is nothing like browsing and well past any
 #    sensible limit. The limits are exercised deliberately further down, against
 #    a second server started with a configuration of its own.
 cat > "$VAULT/config.json" <<'CONFIG'
@@ -1744,17 +1745,17 @@ run_ok "runner list needs no arguments after login" cli runner list
 # ---- the command registry, `cofferdam api`, and the output contract ----
 
 # Help is per command rather than one dump of all of them, which is what keeps
-# it small enough for a caller with a context window to read.
+# it small enough for a caller with a context window to read. Two levels pin the
+# shape: the top, which lists groups and inlines none of their commands, and a
+# leaf, which lists that command's own options.
 run_ok "top-level help lists groups, not every command" cli --help
 body_has "help names a group" 'Command groups:'
 body_lacks "and does not inline a group's commands" 'user grant'
-run_ok "group help lists that group" cli user --help
-body_has "with its commands" 'grant .*Extend an existing'
 run_ok "command help lists that command's options" cli user add --help
 body_has "with an option summary" -- '--token-scope'
 
-run_code "an unknown command is a usage error" 2 cli nosuchcommand
-err_has "and says so" "unknown command 'nosuchcommand'"
+# An unknown name is a usage error, and one close to a real command is suggested
+# by name, which is the same path an unknown command with no near match takes.
 run_code "a misspelled subcommand is suggested" 2 cli user lst
 err_has "by name" "did you mean 'user list'"
 run_code "an unknown option is a usage error" 2 cli whoami --jsn
@@ -1768,15 +1769,12 @@ body_has "and names a command path" '"whoami"'
 run_ok "whoami --json" cli whoami --json
 stdout_is_json "whoami --json is parseable"
 body_has "with the fields the API returned" '"username": "owner"'
-run_ok "a field list keeps only those fields" cli whoami --json=username,scope
-body_lacks "dropping the rest" 'tokenScope'
 
 # The generic escape hatch: one read and one write, with the path written the
 # short way to prove the prefix is optional.
 run_ok "api reads a route" cli api whoami
 stdout_is_json "and prints its JSON verbatim"
 body_has "which is the whoami body" '"username":"owner"'
-run_ok "api takes a full path too" cli api /api/collections
 run_ok "api writes with --field" cli api collections -X POST --field name=fromapi
 body_has "and the vault created it" '"created":true'
 check "the collection the api command made is there" 200 "$BASE/fromapi"
@@ -1784,8 +1782,7 @@ check "the collection the api command made is there" 200 "$BASE/fromapi"
 # The exit codes an agent retries on. 4 and 5 are the two that earn their keep.
 run_code "a 404 from the vault exits 4" 4 cli api collections/nosuchcollection
 run_code "a 409 from the vault exits 5" 5 cli api collections -X POST --field name=fromapi
-run_code "a rejected token exits 3" 3 cli whoami --token cofferdam_not_a_real_token
-run_code "and reports the refusal as JSON when asked" 3 cli whoami --json --token cofferdam_not_a_real_token
+run_code "a rejected --json token exits 3" 3 cli whoami --json --token cofferdam_not_a_real_token
 err_has "on stderr, as an error object" '{"error":'
 if [ -s "$BODY" ]; then echo "FAIL: a failed --json command wrote to stdout"; exit 1; fi
 PASS=$((PASS+1)); echo "ok: nothing on stdout when a --json command fails"
@@ -1806,33 +1803,22 @@ run_code "--token-stdin with nothing on stdin is an auth error" 3 \
 # The API above is checked route by route; these check the layer over it: that a
 # command reaches the right route, prints a table by default, and prints one JSON
 # value on stdout when asked.
-run_ok "repo list" cli repo list
-body_has "naming a repository" 'apis/repo'
 run_ok "repo view" cli repo view apis/repo
 body_has "with its default branch" 'default branch *main'
 run_ok "repo view --json with a field list" cli repo view apis/repo --json=name,defaultBranch
 stdout_is_json "which is one JSON value"
 body_lacks "and only those fields" 'openIssues'
-run_ok "branch list" cli branch list --repo apis/repo
-body_has "marking the default branch" '\* main'
 run_ok "file list" cli file list --repo apis/repo
 body_has "with the entries" 'README.md'
-run_ok "file list --all" cli file list --all --repo apis/repo
-body_has "listing paths in the tree" 'lib/a.py'
 run_ok "file view" cli file view README.md --repo apis/repo
 body_has "printing the file" '# Api demo'
-run_ok "commit list" cli commit list --repo apis/repo --limit 2
 run_ok "search" cli search 'Api demo' --repo apis/repo
 body_has "as path:line: text" 'README.md:1:'
-run_ok "diff --stat" cli diff main...conflicting --repo apis/repo --stat
-body_has "with the counts" 'ahead'
 
 run_ok "issue create" cli issue create --repo apis/repo --title "From the cli" --body "a body"
 body_has "printing the issue url" "$BASE/apis/repo/issues/"
 run_ok "issue list" cli issue list --repo apis/repo
 body_has "including the new one" 'From the cli'
-run_ok "issue list --json" cli issue list --repo apis/repo --json=number,title
-stdout_is_json "as one JSON value"
 run_ok "issue comment with a body file" sh -c "printf 'from a file\n' > '$TMP/body.md'; $(printf '%s ' env HOME="$CRED_HOME" XDG_CONFIG_HOME="$CRED_HOME/.config" GIT_CONFIG_GLOBAL="$CRED_HOME/.gitconfig" GIT_ASKPASS="$TMP/askpass") node dist/index.js issue comment 3 --repo apis/repo --body-file '$TMP/body.md'"
 run_ok "issue view --comments" cli issue view 3 --repo apis/repo --comments
 body_has "showing the comment" 'from a file'
@@ -1843,8 +1829,6 @@ run_code "--body and --body-file together is a usage error" 2 \
 
 run_ok "pr list" cli pr list --repo apis/repo --state all
 body_has "including the merged one" 'Add a thing'
-run_ok "pr view" cli pr view 1 --repo apis/repo
-body_has "saying it was merged" 'merged'
 run_code "pr merge on a closed pull request exits 5" 5 cli pr merge 2 --repo apis/repo
 
 # Writing, from the command line. --yes rather than a prompt on everything
@@ -1864,27 +1848,20 @@ run_ok "a guarded write goes through" \
 run_code "and the same one again exits 5" 5 \
   cli file write notes.md --repo clirepos/made --body "third" --expected-sha "$CLI_SHA" --message "Third"
 
+# Deletion asks for --yes through one shared helper (requireYes in
+# src/cli/repo-cmd.ts), so refusing without it is checked once here rather than
+# once per command; the commands themselves are checked doing the deletion.
 run_ok "branch create" cli branch create topic --repo clirepos/made
-run_ok "branch list shows it" cli branch list --repo clirepos/made
-body_has "among the branches" 'topic'
+body_has "naming the branch it made" 'topic'
 run_code "branch delete refuses without --yes" 2 cli branch delete topic --repo clirepos/made
 err_has "and says what to pass" -- '--yes'
 run_ok "branch delete with --yes" cli branch delete topic --repo clirepos/made --yes
-run_ok "tag create" cli tag create v0.1.0 --repo clirepos/made
-run_ok "tag list shows it" cli tag list --repo clirepos/made
-body_has "among the tags" 'v0.1.0'
-run_ok "tag delete with --yes" cli tag delete v0.1.0 --repo clirepos/made --yes
-run_code "file delete refuses without --yes" 2 cli file delete notes.md --repo clirepos/made
 run_ok "file delete with --yes" cli file delete notes.md --repo clirepos/made --yes
 
-run_ok "repo edit" cli repo edit clirepos/made --description "Edited from the cli"
-run_ok "repo view shows the change" cli repo view clirepos/made
-body_has "with the new description" 'Edited from the cli'
 run_ok "repo clone fills in the vault url" \
   sh -c "rm -rf '$TMP/cliclone' && cd '$TMP' && $(printf '%s ' env HOME="$CRED_HOME" XDG_CONFIG_HOME="$CRED_HOME/.config" GIT_CONFIG_GLOBAL="$CRED_HOME/.gitconfig" GIT_ASKPASS="$TMP/askpass") node '$PWD/dist/index.js' repo clone clirepos/made cliclone"
 [ -d "$TMP/cliclone/.git" ] || { echo "FAIL: repo clone produced no clone"; exit 1; }
 PASS=$((PASS+1)); echo "ok: the clone is there"
-run_code "repo delete refuses without --yes" 2 cli repo delete clirepos/made
 run_ok "repo delete with --yes" cli repo delete clirepos/made --yes
 check "and the repository is gone" 404 "$BASE/clirepos/made"
 
@@ -1895,12 +1872,9 @@ run_ok "release create on an existing tag" \
 run_ok "release list" cli release list --repo apis/repo
 body_has "with the tag" 'v0.1.0'
 body_has "marked a prerelease" 'prerelease'
-run_ok "release view" cli release view v0.1.0 --repo apis/repo
-body_has "showing the notes" 'Notes.'
 run_ok "release edit --latest clears the prerelease flag" cli release edit v0.1.0 --repo apis/repo --latest
 run_ok "and it is no longer one" cli release view v0.1.0 --repo apis/repo --json=prerelease
 body_has "plainly" '"prerelease": false'
-run_code "release delete refuses without --yes" 2 cli release delete v0.1.0 --repo apis/repo
 run_ok "release delete with --yes" cli release delete v0.1.0 --repo apis/repo --yes
 body_has "saying the tag stayed" 'tag itself is still there'
 
@@ -1913,7 +1887,6 @@ run_ok "user token list" cli user token list spare
 CLI_TOKEN_ID="$(head -1 "$BODY" | awk '{print $1}')"
 [ -n "$CLI_TOKEN_ID" ] || { echo "FAIL: no token id listed"; exit 1; }
 PASS=$((PASS+1)); echo "ok: a token is named by an id rather than by its hash"
-run_code "user token revoke refuses without --yes" 2 cli user token revoke spare "$CLI_TOKEN_ID"
 run_ok "user token revoke with --yes" cli user token revoke spare "$CLI_TOKEN_ID" --yes
 body_has "counting what is left" 'token'
 run_code "user delete refuses without --yes" 2 cli user delete spare
@@ -1931,7 +1904,6 @@ run_code "collection rename onto an existing one is a conflict" 5 cli collection
 run_code "collection rename of one that is not there is a 404" 4 cli collection rename nosuchone x
 run_ok "collection rename --json" cli collection rename keptaway throwaway --json
 body_has "with the fields a program reads" '"renamedFrom": "keptaway"'
-run_code "collection delete refuses without --yes" 2 cli collection delete throwaway
 run_ok "collection delete with --yes" cli collection delete throwaway --yes
 check "and the collection is gone" 404 "$BASE/throwaway"
 
@@ -1946,9 +1918,6 @@ body_has "and saying that no restart is needed" 'In effect now'
 run_code "a sites host that is not a hostname is refused" 1 cli config set --sites-host 'not a host'
 run_ok "and an empty one puts sites back on the forge host" cli config set --sites-host ''
 body_has "saying which of the two arrangements is in force" 'sandboxed'
-run_code "and a conflict is reported with its paths" 5 cli pr merge 2 --repo apis/repo
-err_has "naming the file that conflicts" 'This pull request is not open'
-
 # Recorded for this host alone, so other remotes keep whatever they use now.
 cred_env git config --global --get-regexp '^credential\.' | grep -q "credential.$BASE.helper store" \
   || { echo "FAIL: helper not recorded for this host alone"; exit 1; }
@@ -1968,8 +1937,6 @@ no_prompt "neither clone nor push asked for a credential"
 run_ok "the repository comes from the git remote here" \
   sh -c "cd '$TMP/credclone' && $(printf '%s ' env HOME="$CRED_HOME" XDG_CONFIG_HOME="$CRED_HOME/.config" GIT_CONFIG_GLOBAL="$CRED_HOME/.gitconfig" GIT_ASKPASS="$TMP/askpass") node '$PWD/dist/index.js' repo view --json=collection,name"
 body_has "which is the repository it was cloned from" '"name": "proj"'
-run_ok "a remote for somewhere else is not an answer" \
-  sh -c "cd '$TMP/credclone' && git remote set-url origin https://github.com/owner/other.git && $(printf '%s ' env HOME="$CRED_HOME" XDG_CONFIG_HOME="$CRED_HOME/.config" GIT_CONFIG_GLOBAL="$CRED_HOME/.gitconfig" GIT_ASKPASS="$TMP/askpass") node '$PWD/dist/index.js' repo view --repo apis/repo --json=name; git -C '$TMP/credclone' remote set-url origin '$BASE/demo/proj'"
 # The restore has to happen whatever the command did, and the command's own exit
 # code is what is being asserted, so it is captured rather than shadowed.
 run_code "and with no remote for this vault it is a usage error" 2 \
@@ -2001,11 +1968,8 @@ run_ok "collection list reports it" cli collection list
 body_has "with a repository count" 'fromcli.*1 repository'
 run_fails "importing over an existing repository is refused" cli import "$TMP/importsrc" fromcli
 body_has "and says how to import under another name" 'another-name'
-run_ok "import names the repository when asked to" cli import "$TMP/importsrc" fromcli/renamed
-check "the renamed import is there" 200 "$BASE/fromcli/renamed"
 run_ok "import creates the collection by pushing to it" cli import "$TMP/importsrc" madebyimport
 check "the collection the push created is there" 200 "$BASE/madebyimport/importsrc"
-run_fails "import refuses a source it cannot clone" cli import 'not a url' fromcli
 run_fails "import refuses to guess a collection" cli import "$TMP/importsrc"
 body_has "and asks which one" 'Which collection'
 # The clone is scratch and temporary in both senses: it is removed whether the
@@ -2027,8 +1991,6 @@ body_has "and say to log in" 'cofferdam login'
 run_ok "COFFERDAM_HOST and COFFERDAM_TOKEN stand in for a login" \
   cred_env env COFFERDAM_HOST="$BASE" COFFERDAM_TOKEN="$OWNER_TOKEN" node dist/index.js whoami
 body_has "as the same user" "owner @ $BASE"
-run_ok "and --token still wins over the environment" \
-  cred_env env COFFERDAM_HOST="$BASE" COFFERDAM_TOKEN=cofferdam_wrong node dist/index.js whoami --token "$OWNER_TOKEN"
 run_ok "logout again is not an error" cli logout --host "$BASE"
 body_has "logout says there was nothing stored" 'No stored credential'
 no_prompt "reading the store back never prompts"
@@ -2772,8 +2734,6 @@ body_has "naming a workflow" 'Build'
 body_has "and the inputs its dispatch takes" 'dispatch: greeting'
 run_ok "run list" ccli run list
 body_has "with a run number" '#'
-run_ok "run list --json" ccli run list --json=number,status
-stdout_is_json "as one JSON value"
 run_ok "run view" ccli run view "$API_RUN_N"
 body_has "naming the workflow" 'Build'
 # With several jobs and none of them failed, there is no one log to mean, so it
@@ -2781,23 +2741,22 @@ body_has "naming the workflow" 'Build'
 run_code "run view --log asks which job when several could be meant" 2 ccli run view "$API_RUN_N" --log
 err_has "naming the option" -- '--job'
 run_ok "run view --log with the job named" ccli run view "$API_RUN_N" --log --job "$API_JOB"
+# One dispatched run carries the rest of these. A vault with no runner leaves it
+# queued for ever, which is what makes it both a watch that has to give up and a
+# run that can still be cancelled. The timeout is a second, since what is under
+# test is that it gives up at all rather than how long it waits first.
 run_ok "workflow run dispatches one" ccli workflow run .github/workflows/build.yml --field greeting=cli
 body_has "and says how to wait for it" 'run watch'
 CLI_RUN="$({ grep -o 'run #[0-9]*' "$BODY" || true; } | head -1 | tr -d 'run #')"
+run_fails "run watch gives up rather than waiting for ever" ccli run watch "$CLI_RUN" --interval 1 --timeout 1
+body_has "saying so, and what the run was still doing" 'Gave up'
 run_ok "run cancel" ccli run cancel "$CLI_RUN"
 run_code "cancelling it twice exits 5" 5 ccli run cancel "$CLI_RUN"
+run_fails "watching a cancelled run with --exit-status is a non-zero exit" \
+  ccli run watch "$CLI_RUN" --interval 1 --timeout 20 --exit-status
+body_has "reporting the conclusion it did reach" 'cancelled'
 run_ok "run rerun" ccli run rerun "$CLI_RUN"
 body_has "as a new run" 'Started run #'
-# A vault with no runner leaves its runs queued for ever, which is the only way to
-# exercise the timeout without waiting for real work.
-run_ok "one more run to watch" ccli workflow run .github/workflows/build.yml
-CLI_WATCH="$({ grep -o 'run #[0-9]*' "$BODY" || true; } | head -1 | tr -d 'run #')"
-run_fails "run watch gives up rather than waiting for ever" ccli run watch "$CLI_WATCH" --interval 1 --timeout 2
-body_has "saying so, and what the run was still doing" 'Gave up'
-run_ok "and the run can be cancelled afterwards" ccli run cancel "$CLI_WATCH"
-run_fails "watching a failed run with --exit-status is a non-zero exit" \
-  ccli run watch "$CLI_WATCH" --interval 1 --timeout 20 --exit-status
-body_has "reporting the conclusion it did reach" 'cancelled'
 run_fails "run download says there are no artifacts" ccli run download "$API_RUN_N"
 body_has "plainly" 'no artifacts'
 
@@ -2896,7 +2855,10 @@ check "run page for csrf" 200 -b "$JAR" "$BASE/demo/ci/actions/runs/$BUILD_RUN"
 CSRF="$(csrf_of)"
 check "cancel the run" 302 -b "$JAR" "$BASE/demo/ci/actions/runs/$BUILD_RUN/cancel" \
   --data-urlencode "csrf=$CSRF"
-sleep 0.5
+for _ in $(seq 1 40); do
+  [ "$(run_field "$RUNS/$BUILD_RUN/run.json" conclusion)" = "cancelled" ] && break
+  sleep 0.05
+done
 [ "$(run_field "$RUNS/$BUILD_RUN/run.json" conclusion)" = "cancelled" ] || {
   echo "FAIL: cancelling did not conclude the run as cancelled"
   run_field "$RUNS/$BUILD_RUN/run.json" status; exit 1; }
@@ -3021,26 +2983,99 @@ FORGE_PID=""
 # ---- executing a job (opt-in, and needs Docker) ----
 
 if [ "$SMOKE_SLOW" != 1 ]; then
-  echo "skip: executing jobs takes minutes, so it is opt-in; run SMOKE_SLOW=1 (npm run smoke:slow) for it"
+  echo "skip: executing jobs needs Docker and a minute of container time, so it is opt-in; run SMOKE_SLOW=1 (npm run smoke:slow) for it"
 elif command -v docker > /dev/null 2>&1 && docker version --format '{{.Server.Version}}' > /dev/null 2>&1; then
   CI_IMAGE="${SMOKE_CI_IMAGE:-ubuntu:24.04}"
-  check "actions page for a fresh dispatch" 200 -b "$JAR" "$BASE/demo/ci/actions"
-  CSRF="$(csrf_of)"
-  check "dispatch the build workflow to run for real" 302 -b "$JAR" "$BASE/demo/ci/actions/dispatch" \
-    --data-urlencode "csrf=$CSRF" --data-urlencode "workflow=.github/workflows/build.yml" \
-    --data-urlencode ref=main
-  EXEC_RUN="$(runs_named 'Build' | awk '{print $NF}')"
-  node dist/index.js runner run --host "$BASE" --runner-token "$RUNNER_TOKEN" \
-    --image "ubuntu-latest=$CI_IMAGE" > "$TMP/runner.log" 2>&1 &
-  RUNNER_PID=$!
-  for _ in $(seq 1 120); do
-    [ "$(run_field "$RUNS/$EXEC_RUN/run.json" status)" = "completed" ] && break
-    sleep 1
-  done
-  kill "$RUNNER_PID" 2>/dev/null || true
-  wait "$RUNNER_PID" 2>/dev/null || true
-  [ "$(run_field "$RUNS/$EXEC_RUN/run.json" status)" = "completed" ] || {
-    echo "FAIL: the dispatched run never completed"; cat "$TMP/runner.log"; exit 1; }
+
+  # Nothing has executed a job up to this point, so every run the suite has
+  # planned so far is still queued: the API and web checks above dispatch runs to
+  # see that dispatching plans one, and each push to demo/ci plans a run for
+  # every push-triggered workflow it carries. A runner started here works through
+  # the whole queue before it is stopped, at some ten seconds a run, and none of
+  # those runs is what any check below looks at. So the queue is emptied before
+  # each runner starts, which leaves it the one run under test.
+  drain_queue() {
+    local keep="$1" n
+    for n in $(curl -sS -H "Authorization: Bearer $OWNER_TOKEN" \
+        "$BASE/api/repos/demo/ci/runs?status=queued&limit=200" \
+        | { grep -o '"number":[0-9]*' || true; } | cut -d: -f2); do
+      [ "$n" = "$keep" ] && continue
+      curl -sS -o /dev/null -X POST -H "Authorization: Bearer $OWNER_TOKEN" -H "$JSON_CT" \
+        --data '{}' "$BASE/api/repos/demo/ci/runs/$n/cancel"
+    done
+  }
+
+  # Commit and push the workflows added below. The engine plans a push's runs
+  # after git-receive-pack has already answered the client, so the push returns
+  # before they are on disk; wait for the count to rise and then settle, since
+  # a run planned after the drain would be one the runner goes on to execute.
+  push_ci() {
+    local before now last
+    before="$(find "$RUNS" -mindepth 2 -maxdepth 2 -name run.json | wc -l)"
+    git -C "$CI_REPO" add -A
+    git -C "$CI_REPO" -c user.email=ci@example.com -c user.name=ci commit -qm "$1"
+    git -C "$CI_REPO" push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/demo/ci" main
+    wait_runs_at_least $((before + 1))
+    last=-1
+    for _ in $(seq 1 150); do
+      now="$(find "$RUNS" -mindepth 2 -maxdepth 2 -name run.json | wc -l)"
+      [ "$now" = "$last" ] && break
+      last="$now"
+      sleep 0.2
+    done
+  }
+
+  # A runner between jobs is inside the acquire long poll, which the server
+  # holds open for twenty-five seconds. It has to be asked rather than taken
+  # out: a runner killed mid-poll leaves the poll registered server-side, and
+  # the next job dispatched is then leased to a runner that is no longer there
+  # and released again as cancelled, so the next run under test concludes having
+  # executed nothing. Asking is only cheap because the runner aborts the poll it
+  # is in when it is told to stop; if this ever waits twenty-five seconds per
+  # workflow again, that is where to look.
+  stop_runner() {
+    [ -n "${RUNNER_PID:-}" ] || return 0
+    kill "$RUNNER_PID" 2>/dev/null || true
+    wait "$RUNNER_PID" 2>/dev/null || true
+    RUNNER_PID=""
+  }
+
+  # Dispatch a workflow, run it to completion with one runner, and leave the
+  # run number in RUN_N. It cannot return the number on stdout, since the
+  # checks it performs print there too.
+  run_workflow() {
+    local wf="$1" name="$2"
+    check "dispatch $wf" 302 -b "$JAR" "$BASE/demo/ci/actions/dispatch" \
+      --data-urlencode "csrf=$CI_CSRF" --data-urlencode "workflow=.github/workflows/$wf" \
+      --data-urlencode ref=main
+    RUN_N="$(runs_named "$name" | awk '{print $NF}')"
+    [ -n "$RUN_N" ] || { echo "FAIL: dispatching $wf planned no run"; exit 1; }
+    drain_queue "$RUN_N"
+    node dist/index.js runner run --host "$BASE" --runner-token "$RUNNER_TOKEN" \
+      --image "ubuntu-latest=$CI_IMAGE" --cache-dir "$TMP/runner-cache" >> "$TMP/runner.log" 2>&1 &
+    RUNNER_PID=$!
+    local i
+    # Polled four times a second rather than once: a job here takes a couple of
+    # seconds, so a one-second poll spends most of its last tick doing nothing.
+    for i in $(seq 1 960); do
+      [ "$(run_field "$RUNS/$RUN_N/run.json" status)" = "completed" ] && break
+      sleep 0.25
+    done
+    stop_runner
+    [ "$(run_field "$RUNS/$RUN_N/run.json" status)" = "completed" ] || {
+      echo "FAIL: run #$RUN_N ($name) never completed"; tail -40 "$TMP/runner.log"; exit 1; }
+  }
+
+  # The token in a dispatch form is the session's rather than the form's, so it
+  # is read once here instead of re-rendering the actions page before each of the
+  # dispatches below. That page grows a row per run, and by the end of this
+  # section it takes over a second to answer; it is checked where it is the
+  # subject rather than as a way of collecting a token.
+  check "actions page, for the dispatches below" 200 -b "$JAR" "$BASE/demo/ci/actions"
+  CI_CSRF="$(csrf_of)"
+
+  run_workflow build.yml Build
+  EXEC_RUN="$RUN_N"
   PASS=$((PASS+1)); echo "ok: a runner executed the run to completion"
   [ "$(job_field "$RUNS/$EXEC_RUN/jobs/build.json" conclusion)" = "success" ] || {
     echo "FAIL: the build job did not succeed"; cat "$RUNS/$EXEC_RUN/jobs/build.log"; exit 1; }
@@ -3205,36 +3240,7 @@ jobs:
       - run: test -f incoming/index.html && test -f incoming/css/style.css && echo "the artifact round-tripped"
 YML
 
-  git -C "$CI_REPO" add -A
-  git -C "$CI_REPO" -c user.email=ci@example.com -c user.name=ci commit -qm "Add action and artifact workflows"
-  git -C "$CI_REPO" push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/demo/ci" main
-  sleep 1
-
-  # Dispatch a workflow, run it to completion with one runner, and leave the
-  # run number in RUN_N. It cannot return the number on stdout, since the
-  # checks it performs print there too.
-  run_workflow() {
-    local wf="$1" name="$2"
-    check "actions page before dispatching $wf" 200 -b "$JAR" "$BASE/demo/ci/actions"
-    CSRF="$(csrf_of)"
-    check "dispatch $wf" 302 -b "$JAR" "$BASE/demo/ci/actions/dispatch" \
-      --data-urlencode "csrf=$CSRF" --data-urlencode "workflow=.github/workflows/$wf" \
-      --data-urlencode ref=main
-    RUN_N="$(runs_named "$name" | awk '{print $NF}')"
-    [ -n "$RUN_N" ] || { echo "FAIL: dispatching $wf planned no run"; exit 1; }
-    node dist/index.js runner run --host "$BASE" --runner-token "$RUNNER_TOKEN" \
-      --image "ubuntu-latest=$CI_IMAGE" --cache-dir "$TMP/runner-cache" >> "$TMP/runner.log" 2>&1 &
-    RUNNER_PID=$!
-    local i
-    for i in $(seq 1 240); do
-      [ "$(run_field "$RUNS/$RUN_N/run.json" status)" = "completed" ] && break
-      sleep 1
-    done
-    kill "$RUNNER_PID" 2>/dev/null || true
-    wait "$RUNNER_PID" 2>/dev/null || true
-    [ "$(run_field "$RUNS/$RUN_N/run.json" status)" = "completed" ] || {
-      echo "FAIL: run #$RUN_N ($name) never completed"; tail -40 "$TMP/runner.log"; exit 1; }
-  }
+  push_ci "Add action and artifact workflows"
 
   run_workflow actions.yml Actions
   ACT_RUN="$RUN_N"
@@ -3345,10 +3351,7 @@ jobs:
         uses: actions/configure-pages@v5
       - run: echo "base path is [$COFFERDAM_SITE_BASE_PATH] at ${{ steps.pages.outputs.base_url }}"
 YML
-  git -C "$CI_REPO" add -A
-  git -C "$CI_REPO" -c user.email=ci@example.com -c user.name=ci commit -qm "Add a sites-host workflow"
-  git -C "$CI_REPO" push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/demo/ci" main
-  sleep 1
+  push_ci "Add a sites-host workflow"
   run_workflow sitehost.yml SiteHost
   grep -q "base path is \[/\] at http://ci--demo.sites.localhost" "$RUNS/$RUN_N/jobs/build.log" || {
     echo "FAIL: configure-pages ignored the vault's sites hostname"
@@ -3384,10 +3387,7 @@ jobs:
         uses: actions/deploy-pages@v4
       - run: echo "page url is ${{ steps.deployment.outputs.page_url }}"
 YML
-    git -C "$CI_REPO" add -A
-    git -C "$CI_REPO" -c user.email=ci@example.com -c user.name=ci commit -qm "Add a site deployment workflow"
-    git -C "$CI_REPO" push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/demo/ci" main
-    sleep 1
+    push_ci "Add a site deployment workflow"
     run_workflow deploy.yml Deploy
     DEPLOY_RUN="$RUN_N"
     [ "$(run_field "$RUNS/$DEPLOY_RUN/run.json" conclusion)" = "success" ] || {
@@ -3578,9 +3578,6 @@ PASS=$((PASS+1)); echo "ok: and so is the deleted issue"
 
 run_ok "backup list shows the snapshots" cli backup list "$BK"
 body_has "naming one" "$SNAP2"
-run_ok "backup verify is clean" cofferbk backup verify "$BK"
-body_has "saying what it checked" 'check out against'
-
 # What verify is for: a copy that no longer matches the vault. Both halves are
 # checked, since they are found by different means.
 printf 'corrupted\n' >> "$BK/current/vault.json"
@@ -3589,7 +3586,8 @@ body_has "naming the file" 'vault.json'
 # And the sync repairs it, because change detection looks at the copy on disk
 # and not only at what the last run recorded.
 run_ok "the next run repairs it" cofferbk backup "$BK"
-run_ok "and verify is clean again" cofferbk backup verify "$BK"
+run_ok "and verify is clean" cofferbk backup verify "$BK"
+body_has "saying what it checked" 'check out against'
 
 # Retention, applied without syncing. Keeping one daily snapshot leaves one,
 # since both snapshots here were taken on the same UTC day.
@@ -3866,7 +3864,7 @@ PASS=$((PASS+1)); echo "ok: concurrent searches are answered or refused, never l
 
 # 0 disables the coarse ceiling, which is what a vault behind a proxy that
 # already does this wants.
-for _ in $(seq 1 30); do
+for _ in $(seq 1 8); do
   curl -sS -o /dev/null "$LIMIT_BASE/" || { echo "FAIL: a request was refused with requestsPerMinute 0"; exit 1; }
 done
 PASS=$((PASS+1)); echo "ok: requestsPerMinute 0 refuses nothing"

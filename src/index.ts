@@ -32,7 +32,6 @@ import { collectionAddCmd, collectionListCmd, importCmd } from './import-cli';
 import { deployDestroyCmd, deployFlyCmd, deployShowCmd } from './deploy-cli';
 import { runnerAddCmd, runnerListCommand, runnerRemoveCmd, runnerRunCmd } from './runner-cli';
 import { seedTrustProxy } from './config';
-import { createApp } from './server';
 import { isValidName } from './scan';
 import { DEFAULT_THEME, themeNames } from './themes';
 import { bootstrapVault } from './vault';
@@ -69,7 +68,7 @@ Admin > Appearance in the web interface, or write config.json by hand.`;
 
 // ---- serve ----
 
-function serveCmd(args: string[], usage: () => never) {
+async function serveCmd(args: string[], usage: () => never) {
   let dir: string | null = null;
   let port = 3000;
   let host = '127.0.0.1';
@@ -97,6 +96,11 @@ function serveCmd(args: string[], usage: () => never) {
   // cannot write to the volume before the vault exists. It only seeds the
   // setting; config.json remains the place it lives and can be edited by hand.
   const seeded = process.env.COFFERDAM_TRUST_PROXY === '1' ? seedTrustProxy(vault) : false;
+  // Imported here rather than at the top of the file: the server pulls in express
+  // and the whole rendering stack, which is most of what starting this process
+  // costs, and no other command needs any of it. A CLI a person or an agent runs
+  // in a loop should not pay for the server it is not starting.
+  const { createApp } = await import('./server');
   const app = createApp(vault);
   app.listen(port, host, () => {
     const url = `http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`;
