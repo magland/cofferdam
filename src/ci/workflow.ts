@@ -295,6 +295,19 @@ export function parseWorkflow(source: string): Workflow {
       if (!keys.has(n)) throw new WorkflowError(`job ${j.key} needs unknown job ${n}`);
     }
   }
+  // There is no secrets store, deliberately: workflows here run without
+  // credentials. A reference to one would evaluate to an empty string, and an
+  // empty credential fails somewhere far from its cause -- a push that is
+  // refused, an API that 401s mid-deploy -- so the reference is refused here,
+  // where the message can say what is actually going on.
+  const secretRef = source.match(/\$\{\{[^}]*\bsecrets\s*\.\s*([A-Za-z0-9_-]+)/);
+  if (secretRef) {
+    throw new WorkflowError(
+      `the workflow references secrets.${secretRef[1]}, and this vault has no secrets: workflows run without ` +
+        `credentials, so the value would silently be an empty string. Remove the reference, or run this job ` +
+        `somewhere that holds the secret`
+    );
+  }
   return {
     name: asScalarString(doc.name) ?? null,
     on: parseTriggers(onValue),

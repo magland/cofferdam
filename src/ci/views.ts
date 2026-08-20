@@ -132,7 +132,7 @@ export function runsPage(
 
   const body = runs.length
     ? `<table class="listing runs"><tbody>${rows}</tbody></table>`
-    : `<div class="empty-state"><p><b>No workflow runs yet.</b></p><p class="muted">Runs appear here when a push matches a workflow in <code>.github/workflows</code> or <code>.cofferdam/workflows</code>.</p></div>`;
+    : `<div class="empty-state"><p><b>No workflow runs yet.</b></p><p class="muted">Runs appear here when a push matches a workflow in <code>.github/workflows</code> or <code>.cofferdam/workflows</code>.</p><p class="muted small">Workflows run without credentials: this vault holds no secrets, and a workflow that references <code>secrets.*</code> is refused with a message saying so.</p></div>`;
 
   const content = `${repoHeader(ctx, 'actions')}
 ${flash ? `<div class="flash">${esc(flash)}</div>` : ''}
