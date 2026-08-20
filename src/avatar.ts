@@ -14,9 +14,10 @@
 // page, so one drawing serves every theme.
 
 import * as crypto from 'crypto';
+import { Html, raw } from './html';
 
 /** The identicon for a name, as an inline SVG of the given pixel size. */
-export function identicon(name: string, size = 20): string {
+export function identicon(name: string, size = 20): Html {
   const hash = crypto.createHash('sha256').update(name.trim().toLowerCase()).digest();
   const hue = Math.round((hash[0] / 256) * 360);
   const fill = `hsl(${hue} 58% 46%)`;
@@ -31,17 +32,21 @@ export function identicon(name: string, size = 20): string {
       }
     }
   }
-  return `<svg class="identicon" width="${size}" height="${size}" viewBox="0 0 5 5" role="img" aria-label="${escapeAttr(
-    name
-  )}" fill="${fill}">${cells.join('')}</svg>`;
+  return raw(
+    `<svg class="identicon" width="${size}" height="${size}" viewBox="0 0 5 5" role="img" aria-label="${escapeAttr(
+      name
+    )}" fill="${fill}">${cells.join('')}</svg>`
+  );
 }
 
 /** The identicon in the frame the interface puts round it. */
-export function avatar(name: string, size = 20, cls = ''): string {
-  return `<span class="avatar${cls ? ` ${cls}` : ''}" style="width:${size}px;height:${size}px">${identicon(
-    name,
-    size
-  )}</span>`;
+export function avatar(name: string, size = 20, cls = ''): Html {
+  return raw(
+    `<span class="avatar${cls ? ` ${cls}` : ''}" style="width:${size}px;height:${size}px">${identicon(
+      name,
+      size
+    )}</span>`
+  );
 }
 
 // Local rather than imported from render.ts: this file is about drawing, and

@@ -4,6 +4,7 @@ import { CiEngine } from './ci/engine';
 import { firePush } from './ci/trigger';
 import { renderDiff } from './diff';
 import { CommitSummary, isValidRefName } from './git';
+import { Html } from './html';
 import { icon } from './icons';
 import { renderMarkdown } from './markdown';
 import { OpError, previewMerge, MergePreview } from './ops';
@@ -64,7 +65,7 @@ function stateBadge(state: PullSummary['state']): string {
   return `<span class="state-badge open">${icon('git-pull-request')}<span>Open</span></span>`;
 }
 
-function stateIcon(state: PullSummary['state']): string {
+function stateIcon(state: PullSummary['state']): Html {
   if (state === 'merged') return icon('git-merge', 'pull-merged');
   if (state === 'closed') return icon('git-pull-request-closed', 'issue-closed');
   return icon('git-pull-request', 'issue-open');

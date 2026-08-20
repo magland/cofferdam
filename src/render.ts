@@ -1,5 +1,5 @@
 import hljs from 'highlight.js';
-import { esc } from './html';
+import { Html, esc, raw } from './html';
 
 // esc lives in html.ts now, beside the template tag that made it the
 // exception rather than the rule; re-exported here so the files that still
@@ -203,11 +203,13 @@ export function timeAgo(iso: string, now: Date = new Date()): string {
  * the datetime attribute carries the original timestamp: a reader who wants
  * precision hovers, and a machine reading the page gets ISO 8601.
  */
-export function timeTag(iso: string, cls = 'muted'): string {
-  if (!iso) return '';
+export function timeTag(iso: string, cls = 'muted'): Html {
+  if (!iso) return raw('');
   const d = new Date(iso);
-  if (isNaN(d.getTime())) return esc(iso);
-  return `<time class="${cls}" datetime="${esc(d.toISOString())}" title="${esc(formatDateFull(iso))}">${esc(
-    timeAgo(iso)
-  )}</time>`;
+  if (isNaN(d.getTime())) return raw(esc(iso));
+  return raw(
+    `<time class="${cls}" datetime="${esc(d.toISOString())}" title="${esc(formatDateFull(iso))}">${esc(
+      timeAgo(iso)
+    )}</time>`
+  );
 }

@@ -1,3 +1,5 @@
+import { Html, raw } from './html';
+
 // The icon set: drawn here, in the same language as the logo.
 //
 // cofferdam ships no static files, so an icon is a string of SVG markup rather
@@ -118,8 +120,10 @@ export type IconName = keyof typeof PATHS;
  * hidden from assistive technology; where an icon stands alone (an icon-only
  * button, say) the caller labels the control instead.
  */
-export function icon(name: IconName, cls = ''): string {
+export function icon(name: IconName, cls = ''): Html {
   const body = PATHS[name];
   if (!body) throw new Error(`unknown icon: ${name}`);
-  return `<svg class="glyph${cls ? ` ${cls}` : ''}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+  return raw(
+    `<svg class="glyph${cls ? ` ${cls}` : ''}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`
+  );
 }
