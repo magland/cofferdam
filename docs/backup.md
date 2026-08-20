@@ -22,7 +22,7 @@ The token needs admin scope over the whole vault, and must not be a token-scoped
 ```
 ~/backups/myvault/
   backup.json           which vault, what is left out, and how each run went
-  current/              a servable vault: vault.json, alice/webapp.git/, ...
+  current/              a servable vault: vault.json, collections/alice/repos/webapp.git/, ...
   snapshots/
     2026-08-19T140311Z/ a hardlinked copy of current/ at that moment
     2026-08-18T140256Z/

@@ -1,13 +1,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { writeFileAtomic } from '../atomic';
+import { repoPath } from '../layout';
 import { displayName, isValidName } from '../scan';
 
 // Run state on disk. A repository's workflow runs live in a sibling
 // directory next to the bare repository, following the same convention as
 // sites and local LFS objects:
 //
-//   <vault>/<collection>/<repo>.runs/
+//   <vault>/collections/<collection>/repos/<repo>.runs/
 //     12/
 //       run.json          the run: event, ref, sha, status, job order
 //       jobs/build.json    each job: spec, status, steps, lease
@@ -91,7 +92,7 @@ export interface RunRecord {
 
 export function runsDir(root: string, collection: string, repoName: string): string | null {
   if (!isValidName(collection) || !isValidName(repoName)) return null;
-  return path.join(root, collection, `${displayName(repoName)}.runs`);
+  return repoPath(root, collection, `${displayName(repoName)}.runs`);
 }
 
 function runDir(root: string, collection: string, repoName: string, n: number): string {

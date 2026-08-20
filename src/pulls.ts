@@ -17,6 +17,7 @@ import {
   writeDoc,
 } from './discussion';
 import { MergeMethod, OpError, deleteBranch, mergeBranch } from './ops';
+import { repoPath } from './layout';
 import { displayName, isValidName } from './scan';
 
 export { MAX_BODY, MAX_TITLE } from './discussion';
@@ -72,7 +73,7 @@ export interface Pull extends PullSummary {
 /** The pulls directory for a repository, whether or not it exists yet. */
 export function pullsDir(root: string, collection: string, repo: string): string | null {
   if (!isValidName(collection) || !isValidName(repo)) return null;
-  return path.join(root, collection, `${displayName(repo)}.pulls`);
+  return repoPath(root, collection, `${displayName(repo)}.pulls`);
 }
 
 const PULL: DiscussionKind = {

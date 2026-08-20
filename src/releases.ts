@@ -9,6 +9,7 @@ import { icon } from './icons';
 import { renderMarkdown } from './markdown';
 import { esc, timeTag } from './render';
 import { Viewer, checkCsrf, getViewer } from './session';
+import { repoPath } from './layout';
 import { isValidName } from './scan';
 import { RepoCtx, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from './views';
 import { ah, baseUrlOf, fail, field, loadRepo, makeCtx, send404, urlencodedForm, wildcard } from './web';
@@ -44,7 +45,7 @@ const MAX_NAME = 200;
 const MAX_NOTES = 64 * 1024;
 
 export function releasesDir(root: string, collection: string, repo: string): string {
-  return path.join(root, collection, `${repo}.releases`);
+  return repoPath(root, collection, `${repo}.releases`);
 }
 
 function fileFor(dir: string, tag: string): string {

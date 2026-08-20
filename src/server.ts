@@ -17,7 +17,9 @@ import { registerLfs } from './lfs';
 import { registerPulls } from './pullweb';
 import { registerReleases } from './releases';
 import { createLfsStore } from './lfsstore';
+import { COLLECTIONS_DIR, REPOS_DIR } from './layout';
 import { faviconSvg } from './logo';
+import { migrateLayout } from './migrate';
 import { displayName, listCollections, listRepoDirs } from './scan';
 import { getViewer } from './session';
 import { registerSiteHost } from './site';
@@ -60,6 +62,18 @@ function isRateExempt(root: string, req: Request): boolean {
 }
 
 export function createApp(root: string) {
+  // Before anything is served: a vault written under the older layout, with
+  // its collections directly in the root, is moved to the current one. Renames
+  // only, and a no-op on a vault already laid out this way. A vault that could
+  // not be migrated is not served, since serving it would show an empty vault
+  // to someone whose repositories are all still there.
+  const migration = migrateLayout(root);
+  if (migration) {
+    console.log(
+      `Migrated ${migration.collections.length} collection(s) to ${COLLECTIONS_DIR}/<collection>/${REPOS_DIR}/: ${migration.collections.join(', ')}`
+    );
+  }
+
   const app = express();
   app.disable('x-powered-by');
   const config = loadConfig(root);

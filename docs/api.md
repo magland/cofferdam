@@ -269,8 +269,8 @@ The manifest streams NDJSON, so a large vault costs the server no more memory th
 ```jsonl
 {"kind":"vault","lfs":"volume","excluded":[]}
 {"kind":"file","path":"vault.json","size":812,"mtime":1755600123456,"mode":384}
-{"kind":"repo","path":"alice/webapp.git","collection":"alice","repo":"webapp","refs":"3f9a...","packed":48213004}
-{"kind":"file","path":"alice/webapp.issues/7/issue.json","size":344,"mtime":1755600123456,"mode":420}
+{"kind":"repo","path":"collections/alice/repos/webapp.git","collection":"alice","repo":"webapp","refs":"3f9a...","packed":48213004}
+{"kind":"file","path":"collections/alice/repos/webapp.issues/7/issue.json","size":344,"mtime":1755600123456,"mode":420}
 {"kind":"end","files":9143,"bytes":1043221,"repos":12}
 ```
 
@@ -279,9 +279,9 @@ Paths are vault-relative and always POSIX-separated, and `mtime` is in milliseco
 `POST /api/backup/fetch` takes `{"paths": [...]}` and answers with the bytes of each, framed by a JSON line rather than packed into a tar:
 
 ```
-<line: {"path":"alice/webapp.issues/7/issue.json","size":344}\n><344 bytes>
+<line: {"path":"collections/alice/repos/webapp.issues/7/issue.json","size":344}\n><344 bytes>
 <line: {"path":...,"size":...}\n><bytes>
-<line: {"end":true,"missing":["alice/webapp.issues/9/body.md"]}\n>
+<line: {"end":true,"missing":["collections/alice/repos/webapp.issues/9/body.md"]}\n>
 ```
 
 A length-prefixed stream needs no tar on either side, has no symlink, ownership, or path-traversal cases to get wrong, and lets a file that vanished between the manifest and the fetch be reported in the `end` line rather than aborting the transfer. That last case is not hypothetical: CI retention trims run history while a backup of it is in flight. A path that is not inside the vault, including anything with a `..` segment, is a `400` rather than a `missing` entry. One request may name at most 2000 paths and 64 MB of file, over which it is a `400` naming the limit and the client asks for fewer; a request naming a single path is exempt from the byte limit, so a large file is still fetchable.

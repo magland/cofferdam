@@ -1,6 +1,5 @@
 import { Express, Request, Response } from 'express';
 import * as fs from 'fs';
-import * as path from 'path';
 import { GitRepo, isValidRefName, isValidRepoPath } from './git';
 import { languageBreakdown } from './languages';
 import { Gates } from './limit';
@@ -11,6 +10,7 @@ import { esc, highlightCode, isBinary } from './render';
 import { atomFeed } from './atom';
 import { latestRun } from './ci/runs';
 import { renderDiff } from './diff';
+import { collectionDir, repoPath } from './layout';
 import { displayName, isValidName, listCollections, listRepoDirs, repoDescription, siteDir } from './scan';
 import { getViewer } from './session';
 import { serveSite, siteHostUrl } from './site';
@@ -48,7 +48,7 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
     return Promise.all(
       listRepoDirs(root, collection).map(async (d) => {
         const name = displayName(d);
-        const repo = new GitRepo(`${root}/${collection}/${d}`, collection, name);
+        const repo = new GitRepo(repoPath(root, collection, d), collection, name);
         // A repository with a site is linked straight to it from the listing,
         // at its own origin where it has one, so a visitor scanning a
         // collection reaches the published page without stopping at the
@@ -100,7 +100,7 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
       const viewer = getViewer(req, root);
       let collectionIsDir = false;
       try {
-        collectionIsDir = fs.statSync(path.join(root, collection)).isDirectory();
+        collectionIsDir = fs.statSync(collectionDir(root, collection)).isDirectory();
       } catch {
         collectionIsDir = false;
       }

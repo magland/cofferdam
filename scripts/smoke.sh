@@ -250,7 +250,7 @@ dir_exists() {
 }
 no_trace_of() {
   local desc="$1" collection="$2" name="$3" left
-  left="$(ls -d "$VAULT/$collection/$name" "$VAULT/$collection/$name."* 2>/dev/null || true)"
+  left="$(ls -d "$VAULT/collections/$collection/repos/$name" "$VAULT/collections/$collection/repos/$name."* 2>/dev/null || true)"
   if [ -n "$left" ]; then
     echo "FAIL: $desc (left behind in the vault:)"; echo "$left"; exit 1
   fi
@@ -692,10 +692,10 @@ check "sort issues" 200 "$BASE/demo/proj/issues?state=all&sort=oldest"
 body_has "sorting keeps the filter links" 'sort=oldest'
 check "unknown issue 404s" 404 "$BASE/demo/proj/issues/99"
 check "non-numeric issue 404s" 404 "$BASE/demo/proj/issues/nope"
-ISSUE_FILE="$VAULT/demo/proj.issues/1/issue.md"
+ISSUE_FILE="$VAULT/collections/demo/repos/proj.issues/1/issue.md"
 [ -f "$ISSUE_FILE" ] || { echo "FAIL: issue not on disk at $ISSUE_FILE"; exit 1; }
 grep -q '^title: Something is still wrong$' "$ISSUE_FILE" || { echo "FAIL: issue file has no title header"; exit 1; }
-[ -f "$VAULT/demo/proj.issues/1/comments/1.md" ] || { echo "FAIL: comment not on disk"; exit 1; }
+[ -f "$VAULT/collections/demo/repos/proj.issues/1/comments/1.md" ] || { echo "FAIL: comment not on disk"; exit 1; }
 PASS=$((PASS+3)); echo "ok: issues are files in the vault"
 
 # ---- settings ----
@@ -727,7 +727,7 @@ check "renaming to its own name is refused" 400 -b "$JAR" "$BASE/demo/renamed/se
 check "move to another collection" 302 -b "$JAR" "$BASE/demo/renamed/settings/rename" \
   --data-urlencode "csrf=$CSRF" --data-urlencode collection=moved --data-urlencode name=proj
 check "the repository is in the new collection" 200 "$BASE/moved/proj"
-dir_exists "the issue directory moved to the new collection" "$VAULT/moved/proj.issues"
+dir_exists "the issue directory moved to the new collection" "$VAULT/collections/moved/repos/proj.issues"
 no_trace_of "nothing of the repository is left in the old collection" demo proj
 check "move it back" 302 -b "$JAR" "$BASE/moved/proj/settings/rename" \
   --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=proj
@@ -747,8 +747,8 @@ check "the fork carries the history" 200 "$BASE/forks/proj/commits/main"
 body_has "history came across" 'Edit README from the web'
 check "forking onto an existing repository is refused" 409 -b "$JAR" "$BASE/demo/proj/fork" \
   --data-urlencode "csrf=$CSRF" --data-urlencode collection=forks --data-urlencode name=proj
-grep -q 'forkedFrom = demo/proj' "$VAULT/forks/proj.git/config" || { echo "FAIL: the fork does not record its parent"; exit 1; }
-grep -q 'url = ' "$VAULT/forks/proj.git/config" && { echo "FAIL: the fork kept an origin remote pointing at a path"; exit 1; }
+grep -q 'forkedFrom = demo/proj' "$VAULT/collections/forks/repos/proj.git/config" || { echo "FAIL: the fork does not record its parent"; exit 1; }
+grep -q 'url = ' "$VAULT/collections/forks/repos/proj.git/config" && { echo "FAIL: the fork kept an origin remote pointing at a path"; exit 1; }
 PASS=$((PASS+2)); echo "ok: the fork records its parent and keeps no origin"
 
 # ---- empty repository README flow ----
@@ -785,7 +785,7 @@ for suffix in site runs issues pulls releases lfs git; do
   check "a repository may not be named .$suffix" 400 -b "$JAR" "$BASE/new" \
     --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode "name=ghost.$suffix"
   body_has "the refusal names the .$suffix suffix" "may not end in .$suffix"
-  [ ! -e "$VAULT/demo/ghost.$suffix" ] || { echo "FAIL: demo/ghost.$suffix was created anyway"; exit 1; }
+  [ ! -e "$VAULT/collections/demo/repos/ghost.$suffix" ] || { echo "FAIL: demo/ghost.$suffix was created anyway"; exit 1; }
   PASS=$((PASS+1)); echo "ok: nothing was created for demo/ghost.$suffix"
 done
 # The refusal is about the ending, not about dots: a name that merely contains
@@ -1448,7 +1448,7 @@ api "api commits a workflow file" 200 -X PUT -H "$JSON_CT" \
   "$BASE/api/repos/apis/made/contents/.github/workflows/api.yml"
 API_RUN=""
 for _ in $(seq 1 50); do
-  if [ -d "$VAULT/apis/made.runs" ] && [ -n "$(ls "$VAULT/apis/made.runs" 2>/dev/null)" ]; then API_RUN=1; break; fi
+  if [ -d "$VAULT/collections/apis/repos/made.runs" ] && [ -n "$(ls "$VAULT/collections/apis/repos/made.runs" 2>/dev/null)" ]; then API_RUN=1; break; fi
   sleep 0.2
 done
 [ -n "$API_RUN" ] || { echo "FAIL: a commit made over the API did not trigger a workflow run"; exit 1; }
@@ -1485,9 +1485,9 @@ body_has "where it was" '"name":"v0.1.0"'
 # way to write the one directory whose contents are served to browsers.
 api "api says a repository with no site has none" 200 "$BASE/api/repos/apis/repo/site"
 body_has "plainly" '"exists":false'
-mkdir -p "$VAULT/apis/made.site/css"
-echo '<h1>made</h1>' > "$VAULT/apis/made.site/index.html"
-echo 'body{}' > "$VAULT/apis/made.site/css/site.css"
+mkdir -p "$VAULT/collections/apis/repos/made.site/css"
+echo '<h1>made</h1>' > "$VAULT/collections/apis/repos/made.site/index.html"
+echo 'body{}' > "$VAULT/collections/apis/repos/made.site/css/site.css"
 api "api reports a repository's site" 200 "$BASE/api/repos/apis/made/site"
 body_has "saying it has one" '"exists":true'
 body_has "and how many files are in it" '"entries":2'
@@ -1978,12 +1978,12 @@ if git push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/pushed/created.issues"
 fi
 cd - >/dev/null
 grep -qi 'reserved' "$TMP/pusherr" || { echo "FAIL: the refusal did not say the name is reserved"; cat "$TMP/pusherr"; exit 1; }
-[ ! -e "$VAULT/pushed/created.issues" ] || { echo "FAIL: the refused push created the directory anyway"; exit 1; }
+[ ! -e "$VAULT/collections/pushed/repos/created.issues" ] || { echo "FAIL: the refused push created the directory anyway"; exit 1; }
 PASS=$((PASS+2)); echo "ok: push-to-create refuses a name reserved for a sibling directory"
 
 # ---- site ----
 
-SITE="$VAULT/pushed/created.site"
+SITE="$VAULT/collections/pushed/repos/created.site"
 mkdir -p "$SITE/sub"
 echo '<h1>site ok</h1>' > "$SITE/index.html"
 echo '<h1>sub index</h1>' > "$SITE/sub/index.html"
@@ -2104,8 +2104,8 @@ check "a write method on a site host is refused" 405 -X POST -H "Host: $SITE_HOS
 # lowercasing My.Repo would collide with a my-repo beside it, and hostnames are
 # case-insensitive while names on disk are not. Such a repository keeps being
 # served on the forge host, sandboxed.
-mkdir -p "$VAULT/demo/my.site.thing.site"
-echo '<h1>dotted site</h1>' > "$VAULT/demo/my.site.thing.site/index.html"
+mkdir -p "$VAULT/collections/demo/repos/my.site.thing.site"
+echo '<h1>dotted site</h1>' > "$VAULT/collections/demo/repos/my.site.thing.site/index.html"
 check "an ineligible repository is served on the forge host" 200 -D "$TMP/headers" "$BASE/demo/my.site.thing/site/"
 body_has "with its content" 'dotted site'
 header_has "sandboxed, as before" 'content-security-policy: sandbox'
@@ -2208,7 +2208,7 @@ check "expired transfer URL is 403" 403 -X PUT --data-binary "@$TMP/lfs-obj" "$L
 check "trailing junk on exp is 403" 403 -X PUT --data-binary "@$TMP/lfs-obj" \
   "$(printf '%s' "$LFS_UPLOAD_URL" | sed 's/\(exp=[0-9]*\)/\1zzz/')"
 
-LFS_STORED="$VAULT/demo/lfsdemo.lfs/${LFS_OID:0:2}/${LFS_OID:2:2}/$LFS_OID"
+LFS_STORED="$VAULT/collections/demo/repos/lfsdemo.lfs/${LFS_OID:0:2}/${LFS_OID:2:2}/$LFS_OID"
 check "upload with mismatched content is 422" 422 -X PUT --data-binary 'not the content' "$LFS_UPLOAD_URL"
 [ ! -e "$LFS_STORED" ] || { echo "FAIL: mismatched upload left an object behind"; exit 1; }
 PASS=$((PASS+1)); echo "ok: mismatched upload leaves no object"
@@ -2251,7 +2251,7 @@ check "batch upload 404s before the repository exists" 404 -u "owner:$OWNER_TOKE
   -d '{"operation":"upload","objects":[{"oid":"'"$LFS_OID"'","size":'"$LFS_SIZE"'}]}'
 check "the receive-pack advertisement creates it" 200 -u "owner:$OWNER_TOKEN" \
   "$BASE/fresh/lfsrepo.git/info/refs?service=git-receive-pack"
-[ -d "$VAULT/fresh/lfsrepo.git" ] || { echo "FAIL: advertisement did not create the repository"; exit 1; }
+[ -d "$VAULT/collections/fresh/repos/lfsrepo.git" ] || { echo "FAIL: advertisement did not create the repository"; exit 1; }
 PASS=$((PASS+1)); echo "ok: advertisement created the repository"
 check "batch upload then succeeds, as it does mid-push" 200 -u "owner:$OWNER_TOKEN" -X POST \
   "$BASE/fresh/lfsrepo.git/info/lfs/objects/batch" -H "$LFS_CT" \
@@ -2320,7 +2320,7 @@ check "editing a pointer file is refused" 400 -b "$JAR" "$BASE/demo/lfsdemo/edit
 body_has "refusal names Git LFS" 'stored with Git LFS'
 CSRF="$(csrf_of)"
 check "posting an edit to a pointer file is refused too" 400 -b "$JAR" "$BASE/demo/lfsdemo/edit/main/data.bin" \
-  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$(git -C "$VAULT/demo/lfsdemo.git" rev-parse main)" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$(git -C "$VAULT/collections/demo/repos/lfsdemo.git" rev-parse main)" \
   --data-urlencode "content=clobbered" --data-urlencode "message=clobber"
 check "delete form for a pointer file is offered" 200 -b "$JAR" "$BASE/demo/lfsdemo/delete/main/data.bin"
 
@@ -2372,7 +2372,7 @@ if git lfs version >/dev/null 2>&1; then
     git push -q origin main 2>/dev/null
   )
   PASS=$((PASS+1)); echo "ok: git lfs push"
-  git -C "$VAULT/demo/lfsdemo.git" cat-file blob main:big.dat | head -1 \
+  git -C "$VAULT/collections/demo/repos/lfsdemo.git" cat-file blob main:big.dat | head -1 \
     | grep -q '^version https://git-lfs' || { echo "FAIL: pushed blob is not an LFS pointer"; exit 1; }
   PASS=$((PASS+1)); echo "ok: repository blob is a pointer"
   # No credentials on this clone: it is the check that catches an
@@ -2399,7 +2399,7 @@ check "settings for lfs repo deletion" 200 -b "$JAR" "$BASE/demo/lfsdemo/setting
 CSRF="$(csrf_of)"
 check "delete the lfs repo" 302 -b "$JAR" "$BASE/demo/lfsdemo/settings/delete" \
   --data-urlencode "csrf=$CSRF" --data-urlencode confirm=demo/lfsdemo
-[ ! -e "$VAULT/demo/lfsdemo.lfs" ] || { echo "FAIL: .lfs directory survived repository deletion"; exit 1; }
+[ ! -e "$VAULT/collections/demo/repos/lfsdemo.lfs" ] || { echo "FAIL: .lfs directory survived repository deletion"; exit 1; }
 PASS=$((PASS+1)); echo "ok: repository deletion removed its LFS objects"
 
 # ---- Actions: planning, the runner protocol, and the UI ----
@@ -2496,7 +2496,7 @@ YML
 echo "# ci" > "$CI_REPO/README.md"
 git -C "$CI_REPO" add -A
 git -C "$CI_REPO" -c user.email=ci@example.com -c user.name=ci commit -qm "Add workflows"
-RUNS="$VAULT/demo/ci.runs"
+RUNS="$VAULT/collections/demo/repos/ci.runs"
 
 run_field() { python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2],''))" "$1" "$2"; }
 job_field() { python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2],''))" "$1" "$2"; }
@@ -2581,7 +2581,7 @@ git -C "$CI_REPO" push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/demo/ci" ma
 wait_run_named 'badjobid.yml'
 [ -z "$(runs_named 'Bad job id')" ] || { echo "FAIL: a path-shaped job id was accepted"; exit 1; }
 PASS=$((PASS+1)); echo "ok: a job id shaped like a path is refused rather than written"
-[ ! -e "$VAULT/demo/escape.json" ] && [ ! -e "$VAULT/escape.json" ] || {
+[ ! -e "$VAULT/collections/demo/repos/escape.json" ] && [ ! -e "$VAULT/escape.json" ] || {
   echo "FAIL: a job record escaped the runs directory"; exit 1; }
 PASS=$((PASS+1)); echo "ok: nothing was written outside the runs directory"
 [ -n "$(runs_named 'badjobid.yml')" ] || { echo "FAIL: the rejected workflow produced no visible run"; exit 1; }
@@ -3308,7 +3308,7 @@ YML
       echo "FAIL: the site deployment run did not succeed"
       cat "$RUNS/$DEPLOY_RUN/jobs/build.log" "$RUNS/$DEPLOY_RUN/jobs/deploy.log"; exit 1; }
     PASS=$((PASS+1)); echo "ok: a real upload-pages-artifact and deploy-pages run to completion"
-    [ -f "$VAULT/demo/ci.site/index.html" ] || {
+    [ -f "$VAULT/collections/demo/repos/ci.site/index.html" ] || {
       echo "FAIL: the site was not written to the site directory"; exit 1; }
     PASS=$((PASS+1)); echo "ok: deploy-pages published the artifact as the repository's site"
     check "the deployed site is served" 200 "$BASE/demo/ci/site/"
@@ -3368,20 +3368,20 @@ api "and an unknown exclusion is named rather than ignored" 400 "$BASE/api/backu
 # disturb nothing the rest of the suite still needs.
 run_ok "a repository to delete later" cofferbk repo create demo/gone --description 'here to be deleted'
 run_ok "a first backup of the whole vault" cofferbk backup "$BK"
-dir_exists "the backup holds a mirror of a repository" "$BK/current/demo/proj.git"
-dir_exists "and one of a repository pushed into the vault" "$BK/current/pushed/created.git"
+dir_exists "the backup holds a mirror of a repository" "$BK/current/collections/demo/repos/proj.git"
+dir_exists "and one of a repository pushed into the vault" "$BK/current/collections/pushed/repos/created.git"
 [ -f "$BK/current/vault.json" ] || { echo "FAIL: the backup has no vault.json"; exit 1; }
 PASS=$((PASS+1)); echo "ok: the backup carries the vault's own state files"
 [ -f "$BK/backup.json" ] || { echo "FAIL: no backup.json in the backup directory"; exit 1; }
 PASS=$((PASS+1)); echo "ok: the backup records what it is a backup of"
 # A mirror clone writes git's own default description and its own config, so
 # these two are the ones a backup has to carry itself.
-cmp -s "$VAULT/demo/proj.git/description" "$BK/current/demo/proj.git/description" \
+cmp -s "$VAULT/collections/demo/repos/proj.git/description" "$BK/current/collections/demo/repos/proj.git/description" \
   || { echo "FAIL: the mirror did not get the repository's description"; \
-       echo "vault:  [$(cat "$VAULT/demo/proj.git/description" 2>&1)]"; \
-       echo "backup: [$(cat "$BK/current/demo/proj.git/description" 2>&1)]"; exit 1; }
+       echo "vault:  [$(cat "$VAULT/collections/demo/repos/proj.git/description" 2>&1)]"; \
+       echo "backup: [$(cat "$BK/current/collections/demo/repos/proj.git/description" 2>&1)]"; exit 1; }
 PASS=$((PASS+1)); echo "ok: a repository's description came across"
-grep -q 'denyDeletes' "$BK/current/pushed/created.git/config" \
+grep -q 'denyDeletes' "$BK/current/collections/pushed/repos/created.git/config" \
   || { echo "FAIL: the mirror did not get the repository's receive settings"; exit 1; }
 PASS=$((PASS+1)); echo "ok: a repository's push protections came across"
 
@@ -3414,7 +3414,7 @@ run_ok "a snapshot after a sync" cofferbk backup "$BK" --snapshot
 SNAP1="$(ls "$BK/snapshots" | head -1)"
 [ -n "$SNAP1" ] || { echo "FAIL: --snapshot took no snapshot"; exit 1; }
 PASS=$((PASS+1)); echo "ok: a snapshot was taken ($SNAP1)"
-dir_exists "the snapshot is a vault of its own" "$BK/snapshots/$SNAP1/demo/proj.git"
+dir_exists "the snapshot is a vault of its own" "$BK/snapshots/$SNAP1/collections/demo/repos/proj.git"
 
 # Now change the vault in each of the ways a backup has to notice: a commit
 # (which moves a ref), an issue, a comment, and a release.
@@ -3439,17 +3439,17 @@ node -e '
   if (s.files.bytes > 100000) { console.error("the second run moved " + s.files.bytes + " bytes"); process.exit(1); }
 ' "$BODY" || { echo "FAIL: the second backup was not incremental"; head -c 2000 "$BODY"; exit 1; }
 PASS=$((PASS+1)); echo "ok: the second run skipped the quiet repositories and moved almost nothing"
-grep -rq "an issue to back up" "$BK/current/demo/proj.issues" \
+grep -rq "an issue to back up" "$BK/current/collections/demo/repos/proj.issues" \
   || { echo "FAIL: the new issue is not in the backup"; exit 1; }
 PASS=$((PASS+1)); echo "ok: the new issue is in the backup"
-grep -rq "a comment to back up" "$BK/current/demo/proj.issues" \
+grep -rq "a comment to back up" "$BK/current/collections/demo/repos/proj.issues" \
   || { echo "FAIL: the new comment is not in the backup"; exit 1; }
 PASS=$((PASS+1)); echo "ok: the new comment is in the backup"
-grep -rq "Backed up" "$BK/current/demo/proj.releases" \
+grep -rq "Backed up" "$BK/current/collections/demo/repos/proj.releases" \
   || { echo "FAIL: the new release is not in the backup"; exit 1; }
 PASS=$((PASS+1)); echo "ok: the new release is in the backup"
 run_ok "the mirror has the new commit" \
-  git --git-dir="$BK/current/demo/proj.git" cat-file -e "main:backup-note.md"
+  git --git-dir="$BK/current/collections/demo/repos/proj.git" cat-file -e "main:backup-note.md"
 
 # A second snapshot on the same UTC day replaces the first, because retention
 # keeps the newest snapshot of each day rather than every snapshot of it. That is
@@ -3460,7 +3460,7 @@ SNAP2="$(ls "$BK/snapshots" | tail -1)"
 SNAPS="$(ls "$BK/snapshots" | wc -l)"
 [ "$SNAPS" = 1 ] || { echo "FAIL: expected one snapshot per day, found $SNAPS"; ls "$BK/snapshots"; exit 1; }
 PASS=$((PASS+1)); echo "ok: a second snapshot the same day replaces the first ($SNAP2)"
-dir_exists "and it is a vault too" "$BK/snapshots/$SNAP2/demo/proj.git"
+dir_exists "and it is a vault too" "$BK/snapshots/$SNAP2/collections/demo/repos/proj.git"
 
 # A snapshot costs inodes and not bytes. Measured by asking du about current/ and
 # the snapshot together, since du counts a shared inode once: whatever the
@@ -3480,14 +3480,14 @@ PASS=$((PASS+1)); echo "ok: a snapshot hardlinks rather than copies (vault.json 
 # A deletion in the vault reaches current/ and stops there: the snapshots are
 # the only place deleted data survives, which is what retention is for.
 run_ok "delete the throwaway repository from the vault" cofferbk repo delete demo/gone --yes
-rm -rf "$VAULT/demo/proj.issues/$BACKUP_ISSUE"
+rm -rf "$VAULT/collections/demo/repos/proj.issues/$BACKUP_ISSUE"
 run_ok "back up after the deletions" cofferbk backup "$BK"
-[ ! -e "$BK/current/demo/gone.git" ] || { echo "FAIL: a deleted repository is still in current/"; exit 1; }
+[ ! -e "$BK/current/collections/demo/repos/gone.git" ] || { echo "FAIL: a deleted repository is still in current/"; exit 1; }
 PASS=$((PASS+1)); echo "ok: a repository deleted in the vault is gone from current/"
-[ ! -e "$BK/current/demo/proj.issues/$BACKUP_ISSUE" ] || { echo "FAIL: a deleted issue is still in current/"; exit 1; }
+[ ! -e "$BK/current/collections/demo/repos/proj.issues/$BACKUP_ISSUE" ] || { echo "FAIL: a deleted issue is still in current/"; exit 1; }
 PASS=$((PASS+1)); echo "ok: a deleted issue is gone from current/"
-dir_exists "but the deleted repository is still in the snapshot" "$BK/snapshots/$SNAP2/demo/gone.git"
-[ -e "$BK/snapshots/$SNAP2/demo/proj.issues/$BACKUP_ISSUE" ] || { echo "FAIL: the deleted issue is not in the snapshot either"; exit 1; }
+dir_exists "but the deleted repository is still in the snapshot" "$BK/snapshots/$SNAP2/collections/demo/repos/gone.git"
+[ -e "$BK/snapshots/$SNAP2/collections/demo/repos/proj.issues/$BACKUP_ISSUE" ] || { echo "FAIL: the deleted issue is not in the snapshot either"; exit 1; }
 PASS=$((PASS+1)); echo "ok: and so is the deleted issue"
 
 run_ok "backup list shows the snapshots" cli backup list "$BK"
@@ -3524,7 +3524,7 @@ body_has "which says so" 'stale lock'
 # An exclusion is recorded, so a later run does not have to repeat it, and it
 # removes what it excludes from a copy that already had it.
 run_ok "a backup that leaves the sites out" cofferbk backup "$BK" --no-sites
-[ ! -e "$BK/current/pushed/created.site" ] || { echo "FAIL: --no-sites left the site in the backup"; exit 1; }
+[ ! -e "$BK/current/collections/pushed/repos/created.site" ] || { echo "FAIL: --no-sites left the site in the backup"; exit 1; }
 PASS=$((PASS+1)); echo "ok: --no-sites removed the site from current/"
 run_ok "and the next run remembers" cli backup list "$BK"
 body_has "recording the exclusion" 'excluded *sites'
@@ -3535,7 +3535,7 @@ check "settings for the ci repo" 200 -b "$JAR" "$BASE/demo/ci/settings"
 CSRF="$(csrf_of)"
 check "delete the ci repo" 302 -b "$JAR" "$BASE/demo/ci/settings/delete" \
   --data-urlencode "csrf=$CSRF" --data-urlencode confirm=demo/ci
-[ ! -e "$VAULT/demo/ci.runs" ] || { echo "FAIL: .runs directory survived repository deletion"; exit 1; }
+[ ! -e "$VAULT/collections/demo/repos/ci.runs" ] || { echo "FAIL: .runs directory survived repository deletion"; exit 1; }
 PASS=$((PASS+1)); echo "ok: repository deletion removed its run history"
 
 # ---- renaming a repository that has accumulated everything ----
@@ -3546,7 +3546,7 @@ PASS=$((PASS+1)); echo "ok: repository deletion removed its run history"
 # request, and a release, so the round trip here is the one that asks whether
 # all of them travel.
 
-dir_exists "the repository has pull requests to move" "$VAULT/demo/proj.pulls"
+dir_exists "the repository has pull requests to move" "$VAULT/collections/demo/repos/proj.pulls"
 check "settings before the round trip" 200 -b "$JAR" "$BASE/demo/proj/settings"
 CSRF="$(csrf_of)"
 check "rename a repository with everything on it" 302 -b "$JAR" "$BASE/demo/proj/settings/rename" \

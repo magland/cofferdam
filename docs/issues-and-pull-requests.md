@@ -7,7 +7,7 @@ Every repository has an issue tracker at `/<collection>/<repo>/issues`. Reading 
 They are files, not rows:
 
 ```
-alice/
+collections/alice/repos/
   webapp.issues/
     1/
       issue.md          (YAML frontmatter: title, state, author, created, updated, labels)
@@ -23,7 +23,7 @@ So an issue can be read, written, grepped, and backed up without the server. Edi
 Pull requests live beside them in `<repo>.pulls/`, in deliberately the same shape, down to the frontmatter and the numbering. A pull request is a discussion with a branch pair attached: what it adds to an issue is the base and head refs, and what became of it (merged, with the merge commit and who made it, or closed, with who closed it).
 
 ```
-alice/
+collections/alice/repos/
   webapp.pulls/
     1/
       pull.md           (frontmatter: title, state, author, created, updated, base, head)

@@ -5,7 +5,7 @@ A static site per repository, served from a sibling directory.
 A repository can have a static site, served at `/<collection>/<repo>/site/`. The content is plain files in a sibling directory next to the bare repository:
 
 ```
-<root>/alice/
+<vault>/collections/alice/repos/
   webapp.git/     (the repository)
   webapp.site/    (its site; index.html at the root)
 ```

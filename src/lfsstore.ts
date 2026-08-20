@@ -3,6 +3,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { containedIn } from './ops';
+import { repoPath } from './layout';
 import { isValidName } from './scan';
 import { getSecret } from './session';
 
@@ -13,10 +14,13 @@ import { getSecret } from './session';
 // LFS works with no credentials (dev, smoke test, laptop vaults). The choice
 // is made from the environment at startup and never recorded in the vault.
 //
-// Object keys and paths are identical in both backends, using the sharding
-// convention git-lfs itself uses on the client:
+// Objects are sharded the way git-lfs itself shards them on the client:
 //   <collection>/<repo>.lfs/<oid[0:2]>/<oid[2:4]>/<oid>
-// so an operator can move a vault between backends with `rclone copy`.
+// That is a bucket key as written; on the volume the same shards sit under
+// the repository, at <vault>/collections/<collection>/repos/<repo>.lfs/. The
+// key kept its shape when the vault's layout changed, since a bucket is not
+// the vault's directory and rewriting every key would mean moving objects
+// nobody asked to move.
 
 const EXPIRES_SECONDS = 3600;
 const DEFAULT_MAX_SIZE = 5_000_000_000; // below the S3 single-PUT ceiling of 5 GB
@@ -89,7 +93,7 @@ export function lfsKey(collection: string, repo: string, oid: string): string {
 
 export function localLfsDir(root: string, collection: string, repo: string): string {
   checkRepoTarget(collection, repo);
-  return path.join(root, collection, `${repo}.lfs`);
+  return repoPath(root, collection, `${repo}.lfs`);
 }
 
 export function localObjectPath(root: string, collection: string, repo: string, oid: string): string {

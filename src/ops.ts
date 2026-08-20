@@ -6,6 +6,7 @@ import { writeFileAtomic } from './atomic';
 import { GitRepo, execGit, execGitStatus, isValidRefName, isValidRepoPath, isValidSha } from './git';
 import type { LfsStore } from './lfsstore';
 import { looksLikePointer } from './pointer';
+import { REPOS_DIR, collectionDir, repoPath, reposDir } from './layout';
 import { displayName, findRepo, isValidName, repoSiblingSuffixes, reservedRepoSuffix } from './scan';
 
 // The shared write-operations layer. Every function takes explicit arguments
@@ -90,9 +91,10 @@ function tmpFile(prefix: string): string {
  */
 export function createCollection(root: string, name: string): string {
   if (!isValidName(name)) throw new OpError('invalid collection name');
-  const dir = path.join(root, name);
+  const dir = collectionDir(root, name);
   if (fs.existsSync(dir)) throw new OpError(`collection ${name} already exists`, 'exists');
-  fs.mkdirSync(dir);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(path.join(dir, REPOS_DIR));
   return dir;
 }
 
@@ -113,8 +115,8 @@ function checkNewRepoName(name: string): void {
 export async function createRepo(root: string, collection: string, name: string): Promise<GitRepo> {
   if (!isValidName(collection) || !isValidName(name)) throw new OpError('invalid collection or repository name');
   checkNewRepoName(name);
-  fs.mkdirSync(path.join(root, collection), { recursive: true });
-  const dir = path.join(root, collection, `${name}.git`);
+  fs.mkdirSync(reposDir(root, collection), { recursive: true });
+  const dir = repoPath(root, collection, `${name}.git`);
   await execGit(root, ['init', '--bare', '--initial-branch=main', dir]);
   await execGit(dir, ['config', 'receive.denyNonFastForwards', 'true']);
   await execGit(dir, ['config', 'receive.denyDeletes', 'true']);
@@ -154,8 +156,8 @@ export async function forkRepo(
   if (findRepo(root, toCollection, toName)) {
     throw new OpError(`${toCollection}/${toName} already exists`, 'exists');
   }
-  fs.mkdirSync(path.join(root, toCollection), { recursive: true });
-  const dir = path.join(root, toCollection, `${toName}.git`);
+  fs.mkdirSync(reposDir(root, toCollection), { recursive: true });
+  const dir = repoPath(root, toCollection, `${toName}.git`);
   await execGit(root, ['clone', '--bare', source.dir, dir]);
   await execGit(dir, ['remote', 'remove', 'origin']).catch(() => undefined);
   await execGit(dir, ['config', 'cofferdam.forkedFrom', `${collection}/${name}`]);
@@ -602,7 +604,7 @@ export function containedIn(rootReal: string, target: string): boolean {
 }
 
 function siblingDir(root: string, collection: string, name: string, suffix: string): string {
-  return path.join(root, collection, `${displayName(name)}${suffix}`);
+  return repoPath(root, collection, `${displayName(name)}${suffix}`);
 }
 
 /**
@@ -645,9 +647,9 @@ export async function renameRepo(
   // The .git suffix is optional on disk and is kept as it was found, so a
   // move never changes how git-lfs derives its endpoint for this repository.
   const suffix = path.basename(repo.dir).endsWith('.git') ? '.git' : '';
-  const destCollection = path.join(root, toCollection);
-  fs.mkdirSync(destCollection, { recursive: true });
-  const destRepo = path.join(destCollection, `${toName}${suffix}`);
+  const destRepos = reposDir(root, toCollection);
+  fs.mkdirSync(destRepos, { recursive: true });
+  const destRepo = path.join(destRepos, `${toName}${suffix}`);
   if (fs.existsSync(destRepo)) throw new OpError(`${toCollection}/${toName} already exists`, 'exists');
   fs.renameSync(repo.dir, destRepo);
 
@@ -662,7 +664,7 @@ export async function renameRepo(
     fs.renameSync(from, to);
   };
   for (const suffix of repoSiblingSuffixes) {
-    move(siblingDir(root, collection, name, suffix), path.join(destCollection, `${toName}${suffix}`));
+    move(siblingDir(root, collection, name, suffix), path.join(destRepos, `${toName}${suffix}`));
   }
   // LFS objects carry the repository in their key or their path, so the store
   // moves them itself. Unlike deletion this is not best-effort: an object left

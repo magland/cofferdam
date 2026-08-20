@@ -50,23 +50,27 @@ The frontend has no build step and no client framework: the server renders plain
 
 ## The vault
 
-A vault is a plain directory. Each subdirectory of it is a collection, and each subdirectory of a collection is a bare git repository; everything else a repository accumulates sits beside it under a suffixed name:
+A vault is a plain directory. Its collections are in `collections/`, and a collection's repositories are in that collection's `repos/`; everything else a repository accumulates sits beside it there, under a suffixed name:
 
 ```
 <vault>/
-  vault.json              (users and hashed tokens; created on first start)
-  config.json             (vault settings: theme, sites host, CI retention, limits)
-  .secret                 (session-cookie signing key; created on first need)
-  runners.json            (registered workflow runners; created when you add one)
-  alice/
-    webapp.git/           (bare repository)
-    webapp.site/          (its static site)
-    webapp.issues/        (its issues, one directory each)
-    webapp.pulls/         (its pull requests)
-    webapp.releases/      (its release notes, one file per tag)
-    webapp.runs/          (its workflow runs and logs)
-    webapp.lfs/           (its Git LFS objects, when no bucket is configured)
+  vault.json                  (users and hashed tokens; created on first start)
+  config.json                 (vault settings: theme, sites host, CI retention, limits)
+  .secret                     (session-cookie signing key; created on first need)
+  runners.json                (registered workflow runners; created when you add one)
+  collections/
+    alice/
+      repos/
+        webapp.git/           (bare repository)
+        webapp.site/          (its static site)
+        webapp.issues/        (its issues, one directory each)
+        webapp.pulls/         (its pull requests)
+        webapp.releases/      (its release notes, one file per tag)
+        webapp.runs/          (its workflow runs and logs)
+        webapp.lfs/           (its Git LFS objects, when no bucket is configured)
 ```
+
+Two levels of the tree hold only things somebody named: the vault's own files sit beside its collections rather than among them, so a file added to the vault later takes no name away from a vault that already exists. A vault written before this layout, with its collections in the root, is moved to it on the first start of a server that knows it - renames only, and nothing to ask for.
 
 There is no database and no state outside this directory, so backing up a vault is `cp -a` and moving one to another machine is `rsync`, where you have a shell. Where you do not, `cofferdam backup <dir>` pulls the same copy over HTTP, incrementally, into a directory that is itself a servable vault. The server reads what is on disk on every request, so each part of a vault can be read, written, and grepped with ordinary tools while it runs. [The vault](docs/vault.md) describes the layout in full, and [Backing up a vault](docs/backup.md) the copies.
 

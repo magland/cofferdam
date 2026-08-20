@@ -48,15 +48,18 @@ own credential store. --host and --token override either for a single command,
 and COFFERDAM_HOST and COFFERDAM_TOKEN sit between the two, for a caller with
 no keyring and possibly no writable home directory.
 
-Vault layout:
-  <vault>/<collection>/<repo>.git    bare repositories (the .git suffix is optional)
-  <vault>/<collection>/<repo>.site   optional static site for a repo
-  <vault>/<collection>/<repo>.lfs    Git LFS objects, when no bucket is configured
-  <vault>/<collection>/<repo>.runs   workflow run history and logs
+Vault layout, where <repos> is <vault>/collections/<collection>/repos:
+  <repos>/<repo>.git                 bare repositories (the .git suffix is optional)
+  <repos>/<repo>.site                optional static site for a repo
+  <repos>/<repo>.lfs                 Git LFS objects, when no bucket is configured
+  <repos>/<repo>.runs                workflow run history and logs
   <vault>/vault.json                 users and hashed tokens (server-managed)
   <vault>/runners.json               registered runners (server-managed)
   <vault>/config.json                vault settings: theme, sites host, CI retention, limits
   <vault>/.secret                    session-cookie signing key (server-managed)
+
+A vault laid out the older way, with collections directly in <vault>, is moved
+to this one on the first start of a server that knows it.
 
 Backing up a hosted vault:
   cofferdam backup ~/backups/myvault --snapshot   incremental, over HTTP; see docs/backup.md

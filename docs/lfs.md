@@ -20,7 +20,7 @@ Push-to-create still works for a repository that tracks files with LFS. git fetc
 Objects are stored either in an S3-compatible bucket or inside the vault, chosen from the environment at startup. With no bucket variables set, the **local** backend stores objects in a sibling directory next to the repository, following the same convention as sites:
 
 ```
-<vault>/alice/
+<vault>/collections/alice/repos/
   webapp.git/     (the repository, holding pointer files)
   webapp.lfs/     (its LFS objects, sharded by object id)
 ```
@@ -41,7 +41,7 @@ This keeps `npm run dev` and the smoke test working with no credentials and is a
 
 Credentials are read from the environment only and are never written into `config.json` or `vault.json`: the vault is the backup unit and stays portable between deployments with different buckets. Setting some but not all of the four bucket variables is a startup error that names what is missing, rather than a silent fall back to storing large objects on the volume. The server logs which backend is active on each start.
 
-Object keys are identical in both backends (`<collection>/<repo>.lfs/<oid[0:2]>/<oid[2:4]>/<oid>`), so moving a vault between them is `rclone copy` and nothing else.
+Objects are sharded the same way in both backends, by object id: a bucket key is `<collection>/<repo>.lfs/<oid[0:2]>/<oid[2:4]>/<oid>`, and on the volume the same shards sit under the repository, in `<vault>/collections/<collection>/repos/<repo>.lfs/`. Moving a vault between the two is `rclone copy` and nothing else. Bucket keys kept their shape when the vault's layout changed, since a bucket is not the vault's directory and rewriting every key would mean moving objects nobody asked to move.
 
 ### Storage providers
 

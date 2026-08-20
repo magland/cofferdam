@@ -1,9 +1,9 @@
 import { Express } from 'express';
 import * as fs from 'fs';
-import * as path from 'path';
 import { CiConfig, SitesConfig, isPlausibleHostname, loadConfig, saveConfig } from '../config';
 import { AuthLimiter } from '../limit';
-import { isValidName, listRepoDirs } from '../scan';
+import { REPOS_DIR, collectionDir, reposDir } from '../layout';
+import { isValidName } from '../scan';
 import { normalizeHostname } from '../siteshost';
 import { DEFAULT_THEME, findTheme, themeNames } from '../themes';
 import { canAdmin, loadVault, removeUser, revokeToken, tokenId } from '../vault';
@@ -49,7 +49,7 @@ export function registerAdminApi(app: Express, root: string, limiter: AuthLimite
       apiError(res, 400, 'that is not a usable collection name');
       return;
     }
-    const dir = path.join(root, name);
+    const dir = collectionDir(root, name);
     let isDir = false;
     try {
       isDir = fs.statSync(dir).isDirectory();
@@ -60,12 +60,18 @@ export function registerAdminApi(app: Express, root: string, limiter: AuthLimite
       apiError(res, 404, `no collection ${name} in this vault`);
       return;
     }
-    if (listRepoDirs(root, name).length > 0 || fs.readdirSync(dir).length > 0) {
+    // Empty means the collection holds nothing but its own empty repos
+    // directory: no repository, nothing beside one, and nothing of the
+    // collection's own.
+    const repos = reposDir(root, name);
+    const own = fs.readdirSync(dir).filter((n) => n !== REPOS_DIR);
+    const inRepos = fs.existsSync(repos) ? fs.readdirSync(repos) : [];
+    if (own.length > 0 || inRepos.length > 0) {
       apiError(res, 409, `collection ${name} is not empty`);
       return;
     }
     try {
-      fs.rmdirSync(dir);
+      fs.rmSync(dir, { recursive: true });
     } catch (e) {
       apiError(res, 409, `could not remove ${name}: ${e instanceof Error ? e.message : String(e)}`);
       return;

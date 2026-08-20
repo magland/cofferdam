@@ -11,6 +11,12 @@ fi
 mkdir -p "$ROOT"
 ROOT="$(cd "$ROOT" && pwd)"
 
+# Where a collection keeps its repositories, and everything they keep beside
+# them. See docs/vault.md for the layout this follows.
+repos_dir() {
+  echo "$ROOT/collections/$1/repos"
+}
+
 new_workdir() {
   local tmp
   tmp="$(mktemp -d)"
@@ -21,10 +27,11 @@ new_workdir() {
 }
 
 publish() {
-  local tmp="$1" collection="$2" name="$3" desc="$4"
-  mkdir -p "$ROOT/$collection"
-  git clone --bare -q "$tmp" "$ROOT/$collection/$name.git"
-  echo "$desc" > "$ROOT/$collection/$name.git/description"
+  local tmp="$1" collection="$2" name="$3" desc="$4" dir
+  dir="$(repos_dir "$collection")"
+  mkdir -p "$dir"
+  git clone --bare -q "$tmp" "$dir/$name.git"
+  echo "$desc" > "$dir/$name.git/description"
   rm -rf "$tmp"
 }
 
@@ -202,8 +209,8 @@ git -C "$T" commit -q -m "Add TypeScript entry point"
 
 publish "$T" alice webapp "A tiny static web page (example repository)"
 
-mkdir -p "$ROOT/alice/webapp.site"
-cat > "$ROOT/alice/webapp.site/index.html" <<'EOF'
+mkdir -p "$(repos_dir alice)/webapp.site"
+cat > "$(repos_dir alice)/webapp.site/index.html" <<'EOF'
 <!doctype html>
 <html>
   <head>
@@ -218,18 +225,18 @@ cat > "$ROOT/alice/webapp.site/index.html" <<'EOF'
   </body>
 </html>
 EOF
-cat > "$ROOT/alice/webapp.site/styles.css" <<'EOF'
+cat > "$(repos_dir alice)/webapp.site/styles.css" <<'EOF'
 body { font-family: sans-serif; margin: 3rem auto; max-width: 40rem; padding: 0 1rem; }
 h1 { color: #2a6f97; }
 EOF
-cat > "$ROOT/alice/webapp.site/about.html" <<'EOF'
+cat > "$(repos_dir alice)/webapp.site/about.html" <<'EOF'
 <!doctype html>
 <html>
   <head><meta charset="utf-8"><title>About</title><link rel="stylesheet" href="styles.css"></head>
   <body><h1>About</h1><p>A minimal example site.</p><p><a href="./">Home</a></p></body>
 </html>
 EOF
-cat > "$ROOT/alice/webapp.site/404.html" <<'EOF'
+cat > "$(repos_dir alice)/webapp.site/404.html" <<'EOF'
 <!doctype html>
 <html>
   <head><meta charset="utf-8"><title>Not found</title><link rel="stylesheet" href="styles.css"></head>
@@ -256,7 +263,8 @@ git -C "$T" commit -q -m "Start notes"
 cat > "$T/2026-02-followup.md" <<'EOF'
 # Follow-up
 
-The directory layout is root/collection/repo.git. No database is involved.
+The directory layout is root/collections/collection/repos/repo.git. No database is
+involved.
 EOF
 git -C "$T" add -A
 git -C "$T" commit -q -m "Add follow-up note"
@@ -265,9 +273,9 @@ publish "$T" bob notes "Markdown notes (example repository)"
 
 # ---- bob/empty ----
 
-mkdir -p "$ROOT/bob"
-git init -q --bare -b main "$ROOT/bob/empty.git"
-echo "An empty repository for testing" > "$ROOT/bob/empty.git/description"
+mkdir -p "$(repos_dir bob)"
+git init -q --bare -b main "$(repos_dir bob)/empty.git"
+echo "An empty repository for testing" > "$(repos_dir bob)/empty.git/description"
 
 # ---- issues on alice/hello-numerics ----
 
@@ -275,9 +283,10 @@ echo "An empty repository for testing" > "$ROOT/bob/empty.git/description"
 # repositories: by writing the directories out.
 
 issue() {
-  local repo="$1" n="$2" state="$3" title="$4" author="$5" label="$6" body="$7"
-  mkdir -p "$ROOT/$repo.issues/$n/comments"
-  cat > "$ROOT/$repo.issues/$n/issue.md" <<EOF
+  local repo="$1" n="$2" state="$3" title="$4" author="$5" label="$6" body="$7" dir
+  dir="$(repos_dir "${repo%%/*}")/${repo#*/}.issues"
+  mkdir -p "$dir/$n/comments"
+  cat > "$dir/$n/issue.md" <<EOF
 ---
 title: $title
 state: $state
@@ -303,7 +312,7 @@ ZeroDivisionError: division by zero
 
 The guard in \`mean()\` is the shape this wants."
 
-cat > "$ROOT/alice/hello-numerics.issues/1/comments/1.md" <<'EOF'
+cat > "$(repos_dir alice)/hello-numerics.issues/1/comments/1.md" <<'EOF'
 ---
 author: dev
 created: 2026-02-12T16:02:00.000Z
@@ -315,7 +324,7 @@ EOF
 issue alice/hello-numerics 2 closed "Document the Makefile targets" dev documentation \
 "The README shows the Python usage but never says that \`make test\` exists."
 sed -i 's/^state: closed$/state: closed\nclosedBy: author\nclosedAt: 2026-02-13T11:20:00.000Z/' \
-  "$ROOT/alice/hello-numerics.issues/2/issue.md"
+  "$(repos_dir alice)/hello-numerics.issues/2/issue.md"
 
 # ---- vault.json with two users (fixed tokens, example vault only) ----
 

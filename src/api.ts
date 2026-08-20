@@ -1,8 +1,8 @@
 import * as fs from 'fs';
-import * as path from 'path';
 import express, { Express, Request, Response } from 'express';
 import * as ops from './ops';
 import { MAX_UPLOAD_SIZE, OpError, opErrorStatus } from './ops';
+import { collectionDir } from './layout';
 import { displayName, isValidName, listCollections, listRepoDirs } from './scan';
 import { addUserToken, canAdmin, canCreateCollection, grantScope, loadVault } from './vault';
 import { apiError, requireApiAuth as authenticateRequest } from './api/auth';
@@ -89,7 +89,7 @@ export function registerApi(
     const name = req.params.name;
     let isDir = false;
     try {
-      isDir = fs.statSync(path.join(root, name)).isDirectory();
+      isDir = fs.statSync(collectionDir(root, name)).isDirectory();
     } catch {
       isDir = false;
     }

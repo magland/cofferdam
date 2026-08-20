@@ -1,13 +1,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { GitRepo } from './git';
+import { collectionsDir, repoPath, reposDir } from './layout';
 
-// Names the UI owns as top-level path segments, plus vault fixtures. None of
-// these may ever be a collection or repo name.
+// Names the UI owns as top-level path segments. None of these may ever be a
+// collection or repo name, since a collection is reached at /<collection> and
+// a repository at /<collection>/<repo>. The vault's own files are not among
+// them: they sit beside `collections/` rather than in it, so no file of the
+// vault's can collide with a name a user chose.
 const RESERVED_NAMES = new Set([
-  'vault.json',
-  'config.json',
-  'runners.json',
   'api',
   'assets',
   'favicon.ico',
@@ -79,15 +80,15 @@ export function displayName(dirName: string): string {
 }
 
 export function listRepoDirs(root: string, collection: string): string[] {
-  const collectionDir = path.join(root, collection);
+  const dir = reposDir(root, collection);
   let entries: fs.Dirent[];
   try {
-    entries = fs.readdirSync(collectionDir, { withFileTypes: true });
+    entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch {
     return [];
   }
   return entries
-    .filter((e) => e.isDirectory() && isValidName(e.name) && isBareRepo(path.join(collectionDir, e.name)))
+    .filter((e) => e.isDirectory() && isValidName(e.name) && isBareRepo(path.join(dir, e.name)))
     .map((e) => e.name)
     .sort();
 }
@@ -95,7 +96,7 @@ export function listRepoDirs(root: string, collection: string): string[] {
 export function listCollections(root: string): { name: string; repoCount: number }[] {
   let entries: fs.Dirent[];
   try {
-    entries = fs.readdirSync(root, { withFileTypes: true });
+    entries = fs.readdirSync(collectionsDir(root), { withFileTypes: true });
   } catch {
     return [];
   }
@@ -109,7 +110,7 @@ export function findRepo(root: string, collection: string, repoName: string): Gi
   if (!isValidName(collection) || !isValidName(repoName)) return null;
   const base = displayName(repoName);
   for (const cand of [base, base + '.git']) {
-    const dir = path.join(root, collection, cand);
+    const dir = repoPath(root, collection, cand);
     if (isBareRepo(dir)) return new GitRepo(dir, collection, base);
   }
   return null;
@@ -118,7 +119,7 @@ export function findRepo(root: string, collection: string, repoName: string): Gi
 // A repository's static site lives in a sibling directory, `<repo>.site`.
 export function siteDir(root: string, collection: string, repoName: string): string | null {
   if (!isValidName(collection) || !isValidName(repoName)) return null;
-  const dir = path.join(root, collection, `${displayName(repoName)}.site`);
+  const dir = repoPath(root, collection, `${displayName(repoName)}.site`);
   try {
     if (fs.statSync(dir).isDirectory()) return dir;
   } catch {

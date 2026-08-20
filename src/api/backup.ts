@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execGit } from '../git';
 import { AuthLimiter, BUSY_RETRY_SECONDS, Gates } from '../limit';
+import { COLLECTIONS_DIR, REPOS_DIR, collectionDir, collectionsDir, reposDir } from '../layout';
 import { containedIn } from '../ops';
 import { isBareRepo, isValidName } from '../scan';
 import { canAdmin } from '../vault';
@@ -301,23 +302,47 @@ export function registerBackupApi(app: Express, root: string, limiter: AuthLimit
 
       let collections: fs.Dirent[];
       try {
-        collections = fs.readdirSync(root, { withFileTypes: true });
+        collections = fs.readdirSync(collectionsDir(root), { withFileTypes: true });
       } catch {
         collections = [];
       }
       for (const c of collections.sort((a, b) => a.name.localeCompare(b.name))) {
         if (!c.isDirectory() || c.isSymbolicLink() || !isValidName(c.name)) continue;
-        const collectionDir = path.join(root, c.name);
+
+        // Whatever the collection keeps of its own, beside its repositories.
+        // There is nothing there today; it is walked as ordinary files so that
+        // the first thing put there is backed up without this being revisited.
+        let ownEntries: fs.Dirent[];
+        try {
+          ownEntries = fs.readdirSync(collectionDir(root, c.name), { withFileTypes: true });
+        } catch {
+          ownEntries = [];
+        }
+        for (const e of ownEntries.sort((a, b) => a.name.localeCompare(b.name))) {
+          if (e.name === REPOS_DIR || e.isSymbolicLink() || isTempName(e.name)) continue;
+          const abs = path.join(collectionDir(root, c.name), e.name);
+          if (e.isDirectory()) {
+            if (!(await walkFiles(abs))) return;
+            continue;
+          }
+          const line = fileLine(root, abs, opts);
+          if (!line) continue;
+          counts.files++;
+          counts.bytes += JSON.parse(line).size as number;
+          if (!(await send(res, line + '\n'))) return;
+        }
+
+        const repos = reposDir(root, c.name);
         let entries: fs.Dirent[];
         try {
-          entries = fs.readdirSync(collectionDir, { withFileTypes: true });
+          entries = fs.readdirSync(repos, { withFileTypes: true });
         } catch {
           continue;
         }
         for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
           if (e.isSymbolicLink() || isTempName(e.name)) continue;
-          const abs = path.join(collectionDir, e.name);
-          const rel = `${c.name}/${e.name}`;
+          const abs = path.join(repos, e.name);
+          const rel = `${COLLECTIONS_DIR}/${c.name}/${REPOS_DIR}/${e.name}`;
           if (!e.isDirectory()) {
             const line = fileLine(root, abs, opts);
             if (!line) continue;

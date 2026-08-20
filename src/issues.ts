@@ -17,6 +17,7 @@ import {
   writeDoc,
 } from './discussion';
 import { OpError } from './ops';
+import { repoPath } from './layout';
 import { displayName, isValidName } from './scan';
 
 export { MAX_BODY, MAX_TITLE } from './discussion';
@@ -75,7 +76,7 @@ export const MAX_LABELS = 10;
 /** The issues directory for a repository, whether or not it exists yet. */
 export function issuesDir(root: string, collection: string, repo: string): string | null {
   if (!isValidName(collection) || !isValidName(repo)) return null;
-  return path.join(root, collection, `${displayName(repo)}.issues`);
+  return repoPath(root, collection, `${displayName(repo)}.issues`);
 }
 
 const ISSUE: DiscussionKind = {

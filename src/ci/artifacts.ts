@@ -1,6 +1,7 @@
 import { execFile } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { repoPath } from '../layout';
 import { displayName, isValidName } from '../scan';
 import { runsDir } from './runs';
 
@@ -8,7 +9,7 @@ import { runsDir } from './runs';
 // stored inside the run's directory so that it is pruned with the run and
 // copied with a vault backup like everything else:
 //
-//   <vault>/<collection>/<repo>.runs/12/artifacts/github-pages.tar
+//   <vault>/collections/<collection>/repos/<repo>.runs/12/artifacts/github-pages.tar
 //
 // cofferdam does not implement GitHub's artifact wire protocol. The
 // upload-artifact and download-artifact actions are substituted by cofferdam's
@@ -100,7 +101,7 @@ export async function deploySite(
   if (!tar || !fs.existsSync(tar)) {
     throw new ArtifactError(`no artifact named ${artifactName} in run #${n}`);
   }
-  const dir = path.join(root, collection, `${displayName(repo)}.site`);
+  const dir = repoPath(root, collection, `${displayName(repo)}.site`);
   const scratch = `${dir}.incoming-${process.pid}`;
   const previous = `${dir}.previous-${process.pid}`;
   fs.rmSync(scratch, { recursive: true, force: true });

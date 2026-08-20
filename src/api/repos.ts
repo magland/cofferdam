@@ -2,6 +2,7 @@ import { Express } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { AuthLimiter } from '../limit';
+import { repoPath } from '../layout';
 import { displayName, forkParent, listCollections, listRepoDirs, repoDescription, siteDir } from '../scan';
 import { canPush } from '../vault';
 import { issueCounts } from '../issues';
@@ -25,7 +26,7 @@ export interface RepoSummary {
 
 function summarize(root: string, collection: string, dirName: string): RepoSummary {
   const name = displayName(dirName);
-  const dir = path.join(root, collection, dirName);
+  const dir = repoPath(root, collection, dirName);
   return {
     collection,
     name,

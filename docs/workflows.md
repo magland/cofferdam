@@ -129,7 +129,7 @@ runner's labels, and the repository against its serving globs.
 Run state is files, like everything else:
 
 ```
-<vault>/mycollection/myrepo.runs/
+<vault>/collections/mycollection/repos/myrepo.runs/
   12/
     run.json          the run: event, ref, sha, status, job order
     jobs/build.json   one per job: steps, start and finish times, outputs
