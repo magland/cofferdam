@@ -321,9 +321,17 @@ export async function deployFlyRunnerCmd(args: string[], usage: () => never): Pr
         `  cofferdam deploy fly runner ${app} --allow 'mycollection/*'\n`
     );
   }
-  if (registered && a.allow.length > 0) {
-    // Quietly ignoring it would leave an operator believing they had widened
-    // or narrowed what the runner serves.
+  // An --allow that repeats what the runner already serves is not a request to
+  // change anything, and refusing it would be perverse: a first deploy that
+  // registers the runner and then fails at the image leaves exactly that
+  // situation, and this command's own advice is to run it again unchanged.
+  // Only a different set is refused, because quietly ignoring that would leave
+  // an operator believing they had widened or narrowed what the runner serves.
+  const sameAllow =
+    registered !== null &&
+    a.allow.length === registered.allow.length &&
+    [...a.allow].sort().join(' ') === [...registered.allow].sort().join(' ');
+  if (registered && a.allow.length > 0 && !sameAllow) {
     die(
       `Runner '${name}' is already registered, serving ${registered.allow.join(', ')}.\n` +
         'This deploy does not change that. To change what it serves, remove and register it:\n\n' +
@@ -451,9 +459,26 @@ export async function deployFlyRunnerCmd(args: string[], usage: () => never): Pr
     console.error('The deploy failed. The app, the volume, and the registration survive, so fix the');
     console.error('cause and run the same command again.');
     if (buildRoot === null && a.image === null) {
+      // Named as the likely cause rather than as one possibility among many,
+      // because it is the one every early deploy hits: the runner image is
+      // published per release like the vault's, so a version of the CLI newer
+      // than the newest release has no image to pull. Fly reports a package
+      // that is absent, and one that is private, with the same message about
+      // authentication, and a package newly published to GHCR is private
+      // until someone says otherwise.
       console.error('');
-      console.error(`If the image is the problem, check that ${image} exists, or deploy`);
-      console.error('another tag with --image <ref>, or build this checkout with --from-source.');
+      console.error(`If Fly could not fetch ${image}:`);
+      console.error('');
+      console.error('  - It may not be published. The runner image is built per release, so a CLI');
+      console.error('    newer than the newest release asks for a tag that does not exist yet.');
+      console.error('  - It may be private. A package newly published to GHCR is private until it');
+      console.error('    is made public, and Fly reports that as an authentication error too.');
+      console.error('');
+      console.error('Either way, this deploys the checkout you are running instead:');
+      console.error('');
+      console.error(`  cofferdam deploy fly runner ${app} --from-source`);
+      console.error('');
+      console.error('or --image <ref> deploys some other tag.');
     }
     process.exit(1);
   }
@@ -465,9 +490,13 @@ export async function deployFlyRunnerCmd(args: string[], usage: () => never): Pr
   console.log('');
   console.log(`==> Deployed: ${appUrl(app)}`);
   console.log('');
-  console.log(`The runner '${name}' is registered with ${target.host} and serving`);
-  console.log(`${(registered?.allow ?? a.allow).join(', ')}. It takes jobs whose runs-on names`);
-  console.log(`${(registered?.labels ?? (a.labels.length ? a.labels : ['ubuntu-latest'])).join(' or ')}.`);
+  // Laid out as facts rather than as a sentence broken over three lines: the
+  // globs and the labels are lists of unknown length, and wrapping around them
+  // put a line break in the middle of a clause.
+  const servedLabels = registered?.labels ?? (a.labels.length ? a.labels : ['ubuntu-latest']);
+  console.log(`  runner   ${name}, registered with ${target.host}`);
+  console.log(`  serving  ${(registered?.allow ?? a.allow).join(', ')}`);
+  console.log(`  labels   ${servedLabels.join(', ')}, matched against a job's runs-on`);
   console.log('');
   console.log(`It stops after ${settings.idle} with no job, and the vault starts it again by`);
   console.log('requesting its wake address when a job is waiting. So a machine in the stopped');
