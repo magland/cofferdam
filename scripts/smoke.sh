@@ -961,6 +961,19 @@ check "a dot inside a name is still fine" 302 -b "$JAR" "$BASE/new" \
   --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=my.site.thing
 check "the dotted repository is there" 200 "$BASE/demo/my.site.thing"
 
+# ---- the about page ----
+
+# The one page a signed-out visitor can learn the product from, so it must be
+# reachable anonymously and self-contained.
+check "the about page explains the vault" 200 "$BASE/about"
+body_has "what this place is" 'About this vault'
+body_has "that reading needs no account" 'Reading is anonymous'
+body_has "and how writing is authorized" 'minted by this vault'
+check "the front page points at it" 200 "$BASE/"
+body_has "from its first line" 'href="/about"'
+check "and no collection can shadow the address" 400 -b "$JAR" "$BASE/new/collection" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode name=about
+
 # ---- user administration ----
 
 check "admin users page" 200 -b "$JAR" "$BASE/admin/users"
@@ -985,6 +998,35 @@ check "grant to alice" 302 -b "$JAR" "$BASE/admin/users/alice/grant" \
 check "mint token for alice" 200 -b "$JAR" "$BASE/admin/users/alice/token" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "tokenScope="
 body_has "minted token shown" 'cofferdam_'
+
+# ---- one user's admin page: tokens listed and revocable, the user deletable ----
+
+# A throwaway user, since the page's revoke and delete are the point and alice's
+# tokens are needed further down.
+check "create user pagetest" 200 -b "$JAR" "$BASE/admin/users" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode username=pagetest \
+  --data-urlencode "scope=nowhere/*" --data-urlencode "admin="
+PT_TOKEN="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+[ -n "$PT_TOKEN" ] || { echo "FAIL: no token for pagetest"; exit 1; }
+check "the token authenticates" 200 -H "authorization: Bearer $PT_TOKEN" "$BASE/api/whoami"
+check "the user's admin page" 200 -b "$JAR" "$BASE/admin/users/pagetest"
+body_has "lists the token with a revoke" '/revoke"'
+body_has "offers to mint another" 'Mint a token'
+body_has "and to delete the user" 'Delete this user'
+PT_ID="$(grep -o 'tokens/[0-9a-f]*/revoke' "$BODY" | head -1 | sed 's|tokens/||;s|/revoke||')"
+[ -n "$PT_ID" ] || { echo "FAIL: no token id on the user page"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the page names the token by id"
+check "revoking it from the page" 302 -b "$JAR" "$BASE/admin/users/pagetest/tokens/$PT_ID/revoke" \
+  --data-urlencode "csrf=$CSRF"
+# The off switch has to be immediate, since it is the answer to a leaked token.
+check "the token stops authenticating at once" 401 -H "authorization: Bearer $PT_TOKEN" "$BASE/api/whoami"
+check "deleting the user wants its name typed" 400 -b "$JAR" "$BASE/admin/users/pagetest/delete" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode confirm=wrong
+check "deleting the user" 302 -b "$JAR" "$BASE/admin/users/pagetest/delete" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode confirm=pagetest
+check "after which the page is gone" 404 -b "$JAR" "$BASE/admin/users/pagetest"
+check "an admin cannot delete themselves" 409 -b "$JAR" "$BASE/admin/users/owner/delete" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode confirm=owner
 
 # ---- revoking one token ends the sessions it started, and no others ----
 
@@ -4250,6 +4292,14 @@ api "a cap that is not a number is refused" 400 -X PATCH -H "$JSON_CT" \
 api "0 disables the cap" 200 -X PATCH -H "$JSON_CT" \
   --data '{"limits":{"egressGbPerDay":0}}' "$LIMIT_BASE/api/config"
 check "which serves without one" 200 "$LIMIT_BASE/"
+# Attribution is by resolved repository, never by raw path: a request naming a
+# repository that does not exist must not mint a row of its own, or anyone
+# anonymous could grow the admin breakdown without bound, one made-up name at
+# a time.
+check "a made-up repository path 404s" 404 "$LIMIT_BASE/no-such/thing"
+api "and its bytes are counted" 200 "$LIMIT_BASE/api/egress"
+body_has "under the one unmatched row" '"repo":"(unmatched)"'
+body_lacks "not under the path that was asked for" 'no-such/thing'
 stop_limited
 # Written on the way out, and what a restart has to come back knowing: a budget
 # a restart forgives is not a budget.
