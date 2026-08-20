@@ -234,7 +234,7 @@ function releasesPage(
           ctx.canPush ? 'Draft one above,' : 'Someone with push access can draft one,'
         } or browse the <a href="${base}/tags">tags</a>.</p></div>`
       : cards;
-  const content = `${repoHeader(ctx, 'tags')}
+  const content = `${repoHeader(ctx, 'releases')}
 <div class="page-head"><h1>Releases</h1><span class="right-group">${feed}${newBtn}</span></div>
 ${body}`;
   return layout(`Releases - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, `${base}/releases`));
@@ -261,7 +261,7 @@ function releaseFormPage(
           editing.tag
         )}"><button type="submit" class="btn btn-danger-outline">${icon('trash')}<span>Delete release</span></button></form>`
       : '';
-  const content = `${repoHeader(ctx, 'tags')}
+  const content = `${repoHeader(ctx, 'releases')}
 <div class="form-box wide">
 <h1>${editing ? 'Edit release' : 'Draft a release'}</h1>
 ${error ? `<div class="form-error">${esc(error)}</div>` : ''}
@@ -469,7 +469,7 @@ export function registerReleases(app: Express, root: string): void {
       const ref = ctx.tags.find((t) => t.name === tag);
       const rows = ordered(root, ctx);
       const latest = rows.length > 0 && rows[0].release.tag === tag && !release.prerelease;
-      const content = `${repoHeader(ctx, 'tags')}
+      const content = `${repoHeader(ctx, 'releases')}
 <div class="page-head"><h1><a href="${repoUrl(ctx)}/releases">Releases</a></h1></div>
 ${releaseCard(ctx, release, ref, latest, notesHtml(ctx, release))}`;
       res

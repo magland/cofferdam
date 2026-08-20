@@ -591,7 +591,7 @@ ${archive('zip', 'Source as zip')}${archive('tar.gz', 'Source as tar.gz')}</div>
 
 export function repoHeader(
   ctx: RepoCtx,
-  active: 'code' | 'commits' | 'issues' | 'pulls' | 'actions' | 'branches' | 'tags' | 'settings'
+  active: 'code' | 'commits' | 'issues' | 'pulls' | 'actions' | 'branches' | 'tags' | 'releases' | 'settings'
 ): string {
   const base = repoUrl(ctx);
   const tab = (id: string, label: string, href: string, glyph: IconName, count?: number) =>
@@ -625,6 +625,7 @@ ${tab('pulls', 'Pull requests', `${base}/pulls`, 'git-pull-request', ctx.openPul
 ${ctx.hasCi || active === 'actions' ? tab('actions', 'Actions', `${base}/actions`, 'play') : ''}
 ${tab('branches', 'Branches', `${base}/branches`, 'git-branch', ctx.branches.length)}
 ${tab('tags', 'Tags', `${base}/tags`, 'tag', ctx.tags.length)}
+${ctx.releases.length || active === 'releases' ? tab('releases', 'Releases', `${base}/releases`, 'rocket', ctx.releases.length) : ''}
 ${ctx.hasSite ? tab('site', 'Site', ctx.siteUrl, 'globe') : ''}
 ${ctx.canPush || ctx.canAdmin ? tab('settings', 'Settings', `${base}/settings`, 'sliders') : ''}
 </nav>`;
