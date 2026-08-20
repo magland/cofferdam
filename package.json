@@ -1,6 +1,6 @@
 {
   "name": "@magland/cofferdam",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A self-hosted git forge with the shape of GitHub: browsing, in-browser editing, issues, pull requests, Actions-compatible workflows, static sites, and Git LFS, from one small server.",
   "license": "Apache-2.0",
   "repository": {
