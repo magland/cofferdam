@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { withFileLock, writeFileAtomic } from './atomic';
+import { fileCache } from './filecache';
 import { normalizeHostname } from './siteshost';
 import { DEFAULT_THEME, findTheme } from './themes';
 
@@ -103,20 +104,13 @@ function defaults(): VaultConfig {
   };
 }
 
-let cache: { file: string; mtimeMs: number; size: number; config: VaultConfig } | null = null;
+const cache = fileCache<VaultConfig>({ read: readConfig, missing: () => defaults() });
 
 export function loadConfig(root: string): VaultConfig {
-  const file = configFilePath(root);
-  let st: fs.Stats;
-  try {
-    st = fs.statSync(file);
-  } catch {
-    cache = null;
-    return defaults();
-  }
-  if (cache && cache.file === file && cache.mtimeMs === st.mtimeMs && cache.size === st.size) {
-    return cache.config;
-  }
+  return cache.get(configFilePath(root));
+}
+
+function readConfig(file: string): VaultConfig {
   let config: VaultConfig = defaults();
   try {
     const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
@@ -181,7 +175,6 @@ export function loadConfig(root: string): VaultConfig {
   } catch {
     config = defaults();
   }
-  cache = { file, mtimeMs: st.mtimeMs, size: st.size, config };
   return config;
 }
 
@@ -200,7 +193,7 @@ export function loadConfig(root: string): VaultConfig {
  */
 function editConfig<T>(root: string, fn: () => T): T {
   return withFileLock(`${configFilePath(root)}.lock`, () => {
-    cache = null;
+    cache.invalidate(configFilePath(root));
     return fn();
   });
 }
@@ -208,7 +201,7 @@ function editConfig<T>(root: string, fn: () => T): T {
 function saveLocked(root: string, changes: Partial<VaultConfig>): VaultConfig {
   const next: VaultConfig = { ...loadConfig(root), ...changes };
   writeFileAtomic(configFilePath(root), JSON.stringify(next, null, 2) + '\n');
-  cache = null;
+  cache.invalidate(configFilePath(root));
   return next;
 }
 

@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Request, Response } from 'express';
 import { loadConfig } from './config';
+import { fileCache } from './filecache';
 import { isUnderSitesHost } from './siteshost';
 import { AuthResult, TokenRecord, canAdmin, loadVault } from './vault';
 
@@ -42,21 +43,32 @@ interface SessionPayload {
   t: string;
 }
 
-let secretCache: { root: string; secret: Buffer } | null = null;
+/** Write a fresh signing key where one is missing or unusable. */
+function mintSecret(file: string): Buffer {
+  const secret = crypto.randomBytes(32);
+  fs.writeFileSync(file, secret, { mode: 0o600 });
+  return secret;
+}
+
+// Stat-cached rather than held forever, so that rotating the file does what
+// the documentation says it does -- ends every session at once -- on the
+// running server, not on the next restart. The stat per check is the same
+// price every other state file pays.
+const secretCache = fileCache<Buffer>({
+  read: (file) => {
+    try {
+      const secret = fs.readFileSync(file);
+      if (secret.length >= 32) return secret;
+    } catch {
+      // unreadable; replaced below
+    }
+    return mintSecret(file);
+  },
+  missing: (file) => mintSecret(file),
+});
 
 export function getSecret(root: string): Buffer {
-  if (secretCache && secretCache.root === root) return secretCache.secret;
-  const file = path.join(root, '.secret');
-  let secret: Buffer;
-  try {
-    secret = fs.readFileSync(file);
-    if (secret.length < 32) throw new Error('secret too short');
-  } catch {
-    secret = crypto.randomBytes(32);
-    fs.writeFileSync(file, secret, { mode: 0o600 });
-  }
-  secretCache = { root, secret };
-  return secret;
+  return secretCache.get(path.join(root, '.secret'));
 }
 
 function b64url(buf: Buffer): string {

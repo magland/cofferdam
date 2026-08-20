@@ -2,6 +2,7 @@ import type { Express } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { withFileLock, writeFileAtomic } from './atomic';
+import { fileCache } from './filecache';
 import { collectionDir } from './layout';
 import { displayName, findRepo, isValidName } from './scan';
 
@@ -69,7 +70,17 @@ function normalize(parsed: unknown): RedirectMap {
 
 const EMPTY: RedirectMap = { repos: {}, collections: {} };
 
-let cache: { file: string; mtimeMs: number; size: number; map: RedirectMap } | null = null;
+const cache = fileCache<RedirectMap>({
+  read: (file) => {
+    try {
+      return normalize(JSON.parse(fs.readFileSync(file, 'utf8')));
+    } catch (e) {
+      console.error(`redirects.json could not be read: ${e instanceof Error ? e.message : e}`);
+      return EMPTY;
+    }
+  },
+  missing: () => EMPTY,
+});
 
 /**
  * The map as it is on disk, or an empty one if there is no file yet.
@@ -79,24 +90,7 @@ let cache: { file: string; mtimeMs: number; size: number; map: RedirectMap } | n
  * should pay one stat for the feature and nothing else.
  */
 export function loadRedirects(root: string): RedirectMap {
-  const file = redirectsFilePath(root);
-  let st: fs.Stats;
-  try {
-    st = fs.statSync(file);
-  } catch {
-    cache = null;
-    return EMPTY;
-  }
-  if (cache && cache.file === file && cache.mtimeMs === st.mtimeMs && cache.size === st.size) return cache.map;
-  let map: RedirectMap;
-  try {
-    map = normalize(JSON.parse(fs.readFileSync(file, 'utf8')));
-  } catch (e) {
-    console.error(`redirects.json could not be read: ${e instanceof Error ? e.message : e}`);
-    map = EMPTY;
-  }
-  cache = { file, mtimeMs: st.mtimeMs, size: st.size, map };
-  return map;
+  return cache.get(redirectsFilePath(root));
 }
 
 /** Whether the vault has any redirect at all, which is the fast path's question. */
@@ -198,7 +192,7 @@ function write(root: string, map: RedirectMap): void {
   } else {
     writeFileAtomic(redirectsFilePath(root), JSON.stringify(map, null, 2) + '\n');
   }
-  cache = null;
+  cache.invalidate(redirectsFilePath(root));
 }
 
 /**
@@ -230,7 +224,7 @@ function prune(root: string, map: RedirectMap): void {
  */
 function edit(root: string, fn: (map: RedirectMap) => void): void {
   withFileLock(`${redirectsFilePath(root)}.lock`, () => {
-    cache = null;
+    cache.invalidate(redirectsFilePath(root));
     const current = loadRedirects(root);
     const map: RedirectMap = { repos: { ...current.repos }, collections: { ...current.collections } };
     fn(map);

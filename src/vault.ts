@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { withFileLock, writeFileAtomic } from './atomic';
+import { fileCache } from './filecache';
 import { isDotName } from './scan';
 
 export const VAULT_FILE = 'vault.json';
@@ -106,28 +107,19 @@ function normalizeVault(parsed: unknown): Vault {
   return { users };
 }
 
-let cache: { file: string; mtimeMs: number; size: number; state: VaultState } | null = null;
+const cache = fileCache<VaultState>({
+  read: (file) => {
+    try {
+      return { status: 'ok', vault: normalizeVault(JSON.parse(fs.readFileSync(file, 'utf8'))) };
+    } catch (e) {
+      return { status: 'error', message: e instanceof Error ? e.message : String(e) };
+    }
+  },
+  missing: () => ({ status: 'missing' }),
+});
 
 export function loadVault(root: string): VaultState {
-  const file = vaultFilePath(root);
-  let st: fs.Stats;
-  try {
-    st = fs.statSync(file);
-  } catch {
-    cache = null;
-    return { status: 'missing' };
-  }
-  if (cache && cache.file === file && cache.mtimeMs === st.mtimeMs && cache.size === st.size) {
-    return cache.state;
-  }
-  let state: VaultState;
-  try {
-    state = { status: 'ok', vault: normalizeVault(JSON.parse(fs.readFileSync(file, 'utf8'))) };
-  } catch (e) {
-    state = { status: 'error', message: e instanceof Error ? e.message : String(e) };
-  }
-  cache = { file, mtimeMs: st.mtimeMs, size: st.size, state };
-  return state;
+  return cache.get(vaultFilePath(root));
 }
 
 export function hashToken(token: string): string {

@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { withFileLock, writeFileAtomic } from '../atomic';
+import { fileCache } from '../filecache';
 import { globMatch } from '../vault';
 
 // The runner registry, in <vault>/runners.json. A runner is not a user: it
@@ -78,34 +79,25 @@ function normalize(parsed: unknown): RunnerRegistry {
   return { runners };
 }
 
-let cache: { file: string; mtimeMs: number; size: number; registry: RunnerRegistry } | null = null;
+const cache = fileCache<RunnerRegistry>({
+  read: (file) => {
+    try {
+      return normalize(JSON.parse(fs.readFileSync(file, 'utf8')));
+    } catch (e) {
+      console.error(`runners.json could not be read: ${e instanceof Error ? e.message : e}`);
+      return { runners: {} };
+    }
+  },
+  missing: () => ({ runners: {} }),
+});
 
 export function loadRunners(root: string): RunnerRegistry {
-  const file = runnersFilePath(root);
-  let st: fs.Stats;
-  try {
-    st = fs.statSync(file);
-  } catch {
-    cache = null;
-    return { runners: {} };
-  }
-  if (cache && cache.file === file && cache.mtimeMs === st.mtimeMs && cache.size === st.size) {
-    return cache.registry;
-  }
-  let registry: RunnerRegistry;
-  try {
-    registry = normalize(JSON.parse(fs.readFileSync(file, 'utf8')));
-  } catch (e) {
-    console.error(`runners.json could not be read: ${e instanceof Error ? e.message : e}`);
-    registry = { runners: {} };
-  }
-  cache = { file, mtimeMs: st.mtimeMs, size: st.size, registry };
-  return registry;
+  return cache.get(runnersFilePath(root));
 }
 
 function write(root: string, registry: RunnerRegistry): void {
   writeFileAtomic(runnersFilePath(root), JSON.stringify(registry, null, 2) + '\n', { mode: 0o600 });
-  cache = null;
+  cache.invalidate(runnersFilePath(root));
 }
 
 /**
@@ -120,7 +112,7 @@ function write(root: string, registry: RunnerRegistry): void {
  */
 function editRunners<T>(root: string, fn: () => T): T {
   return withFileLock(`${runnersFilePath(root)}.lock`, () => {
-    cache = null;
+    cache.invalidate(runnersFilePath(root));
     return fn();
   });
 }
