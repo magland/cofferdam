@@ -2,9 +2,18 @@ import * as fs from 'fs';
 import express, { Express, Request, Response } from 'express';
 import * as ops from './ops';
 import { MAX_UPLOAD_SIZE, OpError, opErrorStatus } from './ops';
-import { collectionDir } from './layout';
+import { collectionDir, repoPath } from './layout';
+import {
+  addCollectionOwner,
+  canAdminCollection,
+  canCreateCollection,
+  collectionOwners,
+  isSiteAdmin,
+  removeCollectionOwner,
+  repoRole,
+} from './perms';
 import { displayName, isValidName, isValidUserName, listCollections, listRepoDirs } from './scan';
-import { addUserToken, canAdmin, canCreateCollection, grantScope, loadVault } from './vault';
+import { AuthResult, addUserToken, loadVault, setSiteAdmin } from './vault';
 import { apiError, requireApiAuth as authenticateRequest } from './api/auth';
 import { Egress } from './egress';
 import { AuthLimiter, Gates } from './limit';
@@ -68,13 +77,27 @@ export function registerApi(
     return null;
   }
 
+  // What a caller may reach, filtered to their eyes: a private repository the
+  // caller has no role on is left out, here and in every listing.
+  const visibleRepos = (auth: AuthResult, collection: string): string[] =>
+    listRepoDirs(root, collection).filter(
+      (dirName) =>
+        repoRole(root, auth, {
+          collection,
+          name: displayName(dirName),
+          dir: repoPath(root, collection, dirName),
+        }) !== null
+    );
+
   app.get('/api/whoami', (req, res) => {
     const auth = requireApiAuth(req, res);
     if (!auth) return;
     res.json({
       username: auth.username,
-      scope: auth.user.scope,
-      admin: auth.user.admin,
+      siteAdmin: auth.user.siteAdmin === true,
+      ownedCollections: listCollections(root)
+        .map((c) => c.name)
+        .filter((c) => c === auth.username || collectionOwners(root, c).includes(auth.username)),
       tokenScope: auth.token.scope ?? null,
     });
   });
@@ -84,12 +107,16 @@ export function registerApi(
   // one, which is the case a push cannot cover: pushing creates the collection
   // it lands in, so a collection with nothing in it yet has to be asked for.
   app.get('/api/collections', (req, res) => {
-    if (!requireApiAuth(req, res)) return;
-    res.json({ collections: listCollections(root) });
+    const auth = requireApiAuth(req, res);
+    if (!auth) return;
+    res.json({
+      collections: listCollections(root).map((c) => ({ name: c.name, repoCount: visibleRepos(auth, c.name).length })),
+    });
   });
 
   app.get('/api/collections/:name', (req, res) => {
-    if (!requireApiAuth(req, res)) return;
+    const auth = requireApiAuth(req, res);
+    if (!auth) return;
     const name = req.params.name;
     let isDir = false;
     try {
@@ -101,7 +128,7 @@ export function registerApi(
       apiError(res, 404, `no collection ${name} in this vault`);
       return;
     }
-    res.json({ name, repos: listRepoDirs(root, name).map(displayName) });
+    res.json({ name, owners: collectionOwners(root, name), repos: visibleRepos(auth, name).map(displayName) });
   });
 
   app.post('/api/collections', (req, res) => {
@@ -113,8 +140,8 @@ export function registerApi(
       apiError(res, 400, 'a valid "name" is required (letters, digits, dot, underscore, dash; not a reserved word)');
       return;
     }
-    if (!canCreateCollection(auth, name)) {
-      apiError(res, 403, `your push scope does not cover anything in ${name}`);
+    if (!canCreateCollection(root, auth, name)) {
+      apiError(res, 403, `only a site admin can create a collection not named after you`);
       return;
     }
     try {
@@ -129,11 +156,67 @@ export function registerApi(
     res.json({ name, created: true });
   });
 
+  // ---- collection owners ----
+
+  // Owners manage the owners list, and site admins do; the same rule the
+  // collection's settings page applies.
+  app.put('/api/collections/:name/owners/:user', (req, res) => {
+    const auth = requireApiAuth(req, res);
+    if (!auth) return;
+    const name = req.params.name;
+    const username = req.params.user;
+    if (!isValidName(name) || !fs.existsSync(collectionDir(root, name))) {
+      apiError(res, 404, `no collection ${name} in this vault`);
+      return;
+    }
+    if (!canAdminCollection(root, auth, name)) {
+      apiError(res, 403, `you are not an owner of ${name}`);
+      return;
+    }
+    const state = loadVault(root);
+    if (state.status !== 'ok' || !state.vault.users[username]) {
+      apiError(res, 404, `no user ${username} in this vault`);
+      return;
+    }
+    if (username === name) {
+      res.json({ name, owners: collectionOwners(root, name), note: `${username} owns ${name} by name already` });
+      return;
+    }
+    addCollectionOwner(root, name, username);
+    res.json({ name, owners: collectionOwners(root, name) });
+  });
+
+  app.delete('/api/collections/:name/owners/:user', (req, res) => {
+    const auth = requireApiAuth(req, res);
+    if (!auth) return;
+    const name = req.params.name;
+    const username = req.params.user;
+    if (!isValidName(name) || !fs.existsSync(collectionDir(root, name))) {
+      apiError(res, 404, `no collection ${name} in this vault`);
+      return;
+    }
+    if (!canAdminCollection(root, auth, name)) {
+      apiError(res, 403, `you are not an owner of ${name}`);
+      return;
+    }
+    if (!collectionOwners(root, name).includes(username)) {
+      apiError(res, 404, `${username} is not an explicit owner of ${name}`);
+      return;
+    }
+    removeCollectionOwner(root, name, username);
+    res.json({ name, owners: collectionOwners(root, name) });
+  });
+
+  // Users are the site admin's business, as they are on GitHub: creating one,
+  // listing them, and the site-admin bit itself. What a user may reach is not
+  // set here at all; it lives with the collections and repositories that
+  // grant it.
+
   app.get('/api/users', (req, res) => {
     const auth = requireApiAuth(req, res);
     if (!auth) return;
-    if (!canAdmin(auth, [])) {
-      apiError(res, 403, 'admin access required (with an unrestricted token)');
+    if (!isSiteAdmin(auth)) {
+      apiError(res, 403, 'site admin required (with an unrestricted token)');
       return;
     }
     const state = loadVault(root);
@@ -144,8 +227,7 @@ export function registerApi(
     res.json({
       users: Object.entries(state.vault.users).map(([name, u]) => ({
         name,
-        scope: u.scope,
-        admin: u.admin,
+        siteAdmin: u.siteAdmin === true,
         tokens: u.tokens.length,
       })),
     });
@@ -160,11 +242,17 @@ export function registerApi(
       apiError(res, 400, 'a valid "username" is required');
       return;
     }
-    const scope = sanitizeGlobs(body.scope);
-    const admin = sanitizeGlobs(body.admin);
     const tokenScope = sanitizeGlobs(body.tokenScope);
-    if (scope === null || admin === null || tokenScope === null) {
-      apiError(res, 400, '"scope", "admin", and "tokenScope" must be lists of strings');
+    if (tokenScope === null) {
+      apiError(res, 400, '"tokenScope" must be a list of strings');
+      return;
+    }
+    if (body.siteAdmin !== undefined && typeof body.siteAdmin !== 'boolean') {
+      apiError(res, 400, '"siteAdmin" must be a boolean');
+      return;
+    }
+    if (!isSiteAdmin(auth)) {
+      apiError(res, 403, 'site admin required (with an unrestricted token)');
       return;
     }
     const state = loadVault(root);
@@ -173,43 +261,19 @@ export function registerApi(
       return;
     }
     const existing = state.vault.users[username];
-    if (existing) {
-      if (scope || admin) {
-        apiError(res, 409, `user ${username} already exists; use 'cofferdam user grant' to extend it`);
-        return;
-      }
-      if (!canAdmin(auth, [...existing.scope, ...existing.admin])) {
-        apiError(res, 403, `your admin scope does not cover user ${username}`);
-        return;
-      }
-      const result = addUserToken(root, username, { tokenScope: tokenScope ?? undefined });
-      res.json({
-        username,
-        created: false,
-        token: result.token,
-        scope: result.user.scope,
-        admin: result.user.admin,
-      });
-      return;
-    }
-    const newScope = scope ?? ['*'];
-    const newAdmin = admin ?? [];
-    const need = [...newScope, ...newAdmin];
-    if (!canAdmin(auth, need)) {
-      apiError(res, 403, `your admin scope does not cover: ${need.join(', ')} (pass --scope to narrow the new user)`);
+    if (existing && body.siteAdmin !== undefined) {
+      apiError(res, 409, `user ${username} already exists; use 'cofferdam user grant' to change the site-admin bit`);
       return;
     }
     const result = addUserToken(root, username, {
-      scope: newScope,
-      admin: newAdmin,
+      siteAdmin: body.siteAdmin === true,
       tokenScope: tokenScope ?? undefined,
     });
     res.json({
       username,
-      created: true,
+      created: result.created,
       token: result.token,
-      scope: result.user.scope,
-      admin: result.user.admin,
+      siteAdmin: result.user.siteAdmin === true,
     });
   });
 
@@ -222,28 +286,25 @@ export function registerApi(
       return;
     }
     const body = (req.body ?? {}) as Record<string, unknown>;
-    const scope = sanitizeGlobs(body.scope);
-    const admin = sanitizeGlobs(body.admin);
-    if (scope === null || admin === null) {
-      apiError(res, 400, '"scope" and "admin" must be lists of strings');
+    if (typeof body.siteAdmin !== 'boolean') {
+      apiError(
+        res,
+        400,
+        'provide "siteAdmin": true or false; per-repository access is granted on the repository (collaborators) or the collection (owners)'
+      );
       return;
     }
-    const globs = [...(scope ?? []), ...(admin ?? [])];
-    if (globs.length === 0) {
-      apiError(res, 400, 'nothing to grant; provide "scope" and/or "admin"');
-      return;
-    }
-    if (!canAdmin(auth, globs)) {
-      apiError(res, 403, `your admin scope does not cover: ${globs.join(', ')}`);
+    if (!isSiteAdmin(auth)) {
+      apiError(res, 403, 'site admin required (with an unrestricted token)');
       return;
     }
     let user;
     try {
-      user = grantScope(root, username, { scope: scope ?? [], admin: admin ?? [] });
+      user = setSiteAdmin(root, username, body.siteAdmin);
     } catch (e) {
       apiError(res, 404, e instanceof Error ? e.message : String(e));
       return;
     }
-    res.json({ username, scope: user.scope, admin: user.admin });
+    res.json({ username, siteAdmin: user.siteAdmin === true });
   });
 }

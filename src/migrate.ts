@@ -1,7 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { COLLECTIONS_DIR, REPOS_DIR, collectionsDir } from './layout';
-import { isBareRepo, isValidName, repoSiblingSuffixes } from './scan';
+import { Role, addCollectionOwner, setCollaborator } from './perms';
+import { displayName, findRepo, isBareRepo, isValidName, listCollections, listRepoDirs, repoSiblingSuffixes } from './scan';
+import { finishPermsMigration, globMatch, loadVault, vaultFilePath } from './vault';
 
 /**
  * Moving a vault from the older layout, where collections sat directly in the
@@ -186,4 +188,115 @@ export function migrateLayout(root: string): Migration | null {
         'empty vault while every repository is still on disk.'
     );
   }
+}
+
+// ---- glob scopes to roles ----
+
+/**
+ * Translating a pre-roles vault.json into the role model: glob scopes on
+ * users become the site-admin bit, collection owners, and repository
+ * collaborators. This runs on startup, like the layout migration above, and
+ * the original file is copied to vault.json.pre-roles first, so the
+ * translation can be audited or undone by hand.
+ *
+ * The two models do not line up exactly, and where they differ the
+ * translation rounds up to the nearest role rather than dropping access:
+ *
+ *  - Push scope over a whole collection (`alice/*`) becomes ownership of the
+ *    collection, which also carries the admin role there. There is no
+ *    collection-wide write role to round down to.
+ *  - Admin scope whose collection part is itself a pattern (`*`) becomes the
+ *    site-admin bit.
+ *  - Push scope whose collection part is a pattern becomes ownership of every
+ *    collection the pattern matches today; a collection created later is not
+ *    covered, where the glob would have covered it.
+ *
+ * Each rounding is reported in the returned notes, which the server prints on
+ * the migration run. Scope over a single repository (`alice/webapp`) has an
+ * exact counterpart and is translated silently: write for push scope, admin
+ * for admin scope. A glob naming a repository that does not exist is dropped
+ * with a note, since collaborators are recorded in the repository itself.
+ */
+export function migratePermissions(root: string): string[] | null {
+  const state = loadVault(root);
+  if (state.status !== 'ok' || !state.vault.legacy) return null;
+
+  const file = vaultFilePath(root);
+  const backup = `${file}.pre-roles`;
+  if (!fs.existsSync(backup)) fs.copyFileSync(file, backup);
+
+  const notes: string[] = [`translated glob scopes to roles; the old file is kept at ${path.basename(backup)}`];
+  const siteAdmins: string[] = [];
+  const collections = listCollections(root).map((c) => c.name);
+  const collectionOf = (glob: string) => (glob.includes('/') ? glob.slice(0, glob.indexOf('/')) : glob);
+  const repoOf = (glob: string) => (glob.includes('/') ? glob.slice(glob.indexOf('/') + 1) : '*');
+  const isPattern = (s: string) => /[*?]/.test(s);
+
+  const makeOwner = (username: string, collection: string) => {
+    if (collection === username) return; // implicit
+    addCollectionOwner(root, collection, username);
+    notes.push(`${username}: now an owner of ${collection}`);
+  };
+  const makeCollaborator = (username: string, collection: string, repoName: string, role: Role) => {
+    const repo = findRepo(root, collection, repoName);
+    if (!repo) {
+      notes.push(`${username}: scope over ${collection}/${repoName} dropped; no such repository`);
+      return;
+    }
+    setCollaborator(repo.dir, username, role);
+  };
+
+  for (const [username, user] of Object.entries(state.vault.users)) {
+    const legacy = user.legacy ?? { scope: [], admin: [] };
+    for (const kind of ['admin', 'scope'] as const) {
+      // A site admin holds the admin role everywhere, so once the admin pass
+      // has granted the bit there is nothing the push globs could add.
+      if (siteAdmins.includes(username)) break;
+      const role: Role = kind === 'admin' ? 'admin' : 'write';
+      for (const glob of legacy[kind]) {
+        const c = collectionOf(glob);
+        const r = repoOf(glob);
+        if (isPattern(c)) {
+          if (kind === 'admin') {
+            if (!siteAdmins.includes(username)) {
+              siteAdmins.push(username);
+              notes.push(`${username}: admin scope ${glob} becomes site admin`);
+            }
+          } else {
+            for (const name of collections.filter((n) => globMatch(c, n))) {
+              if (r === '*') makeOwner(username, name);
+              else
+                for (const d of listRepoDirs(root, name)
+                  .map(displayName)
+                  .filter((n) => globMatch(r, n))) {
+                  makeCollaborator(username, name, d, role);
+                }
+            }
+            notes.push(`${username}: push scope ${glob} covers only what exists today, as ownership or write`);
+          }
+          continue;
+        }
+        if (r === '*') {
+          makeOwner(username, c);
+          if (kind === 'scope' && c !== username) {
+            notes.push(`${username}: push scope ${glob} rounds up to ownership of ${c}`);
+          }
+          continue;
+        }
+        if (isPattern(r)) {
+          for (const d of listRepoDirs(root, c)
+            .map(displayName)
+            .filter((n) => globMatch(r, n))) {
+            makeCollaborator(username, c, d, role);
+          }
+          notes.push(`${username}: scope ${glob} covers only the repositories that exist today`);
+          continue;
+        }
+        makeCollaborator(username, c, r, role);
+      }
+    }
+  }
+
+  finishPermsMigration(root, siteAdmins);
+  return notes;
 }

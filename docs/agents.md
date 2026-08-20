@@ -114,7 +114,7 @@ Note that `actions/checkout` with a `repository:` names a repository in this vau
 
 ## The API directly
 
-Under `/api`, bearer token only, JSON in and out. Session cookies never authorize an API call and a bearer token never authorizes an HTML form post. Reading takes any valid token; writing takes push scope over the repository; renaming, deleting, and administration take admin scope. See [The JSON API](api.md) for every route.
+Under `/api`, bearer token only, JSON in and out. Session cookies never authorize an API call and a bearer token never authorizes an HTML form post. Reading a public repository takes any valid token; a private one takes a role on it, and without one answers the same 404 an absent repository does. Writing takes the write role; renaming, deleting, visibility, and collaborators take the admin role, which collection owners and site admins hold implicitly; users, runners, and vault settings take a site admin. See [The JSON API](api.md) for every route.
 
 `cofferdam api <path>` is the escape hatch and takes the path with or without the leading slash and with or without the `api/` prefix. `--field k=v` builds a JSON body coercing `true`, `false`, `null`, and integers; `--raw-field` keeps strings; `--input <file>` sends a file or stdin. Only the path is used from a full URL, so a token is never sent to a host you did not configure.
 
@@ -131,9 +131,9 @@ The most useful part of this document. Do not go looking for these; they are not
 - **No release assets.** A release's downloads are the source archives; there is nothing to upload.
 - **No search across repositories.** Search is literal, within one repository, at one ref.
 - **No pagination protocol.** `--limit` and the server's own caps are what there is. A vault's collections are small.
-- **No secrets for workflows** yet, and no scoped token handed to a run, so a workflow cannot call the vault's API as itself.
+- **No secrets for workflows** yet. A job for a private repository carries an ephemeral read token for its own clone and nothing else, so a workflow cannot push or call the vault's API as itself.
 - **No `actions/cache`, no Docker actions, no `container:` jobs, no service containers.**
-- **No organizations, no teams.** A user has push scope globs and admin scope globs, and that is the whole model.
+- **No organizations, no teams.** A user owns the collection named after them; collections list owners, repositories list collaborators with roles (read, write, admin), a repository may be private, and site admins hold everything. That is the whole model.
 - **No `cofferdam restore`.** `cofferdam backup <dir>` makes a copy whose `<dir>/current` is itself a vault, so restoring is `cofferdam serve <dir>/current` or copying that directory onto a host. Nothing reconciles a backup against a running vault.
 
 Where a capability is missing, the honest workaround is usually git itself: clone, push, and let the vault notice.

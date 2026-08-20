@@ -328,25 +328,24 @@ sed -i 's/^state: closed$/state: closed\nclosedBy: author\nclosedAt: 2026-02-13T
 
 # ---- vault.json with two users (fixed tokens, example vault only) ----
 
-# 'dev' owns the vault. 'reader' can read everything and write nothing, which is
-# what half of the authorization checks need: a token that is perfectly valid and
-# still not allowed to do the thing being asked.
+# 'dev' is a site admin and owns the vault. 'reader' can read everything
+# public and write nothing, which is what half of the authorization checks
+# need: a token that is perfectly valid and still not allowed to do the thing
+# being asked.
 DEV_TOKEN="cofferdam_example_dev_token"
 DEV_HASH="$(printf %s "$DEV_TOKEN" | sha256sum | cut -d' ' -f1)"
 READER_TOKEN="cofferdam_example_reader_token"
 READER_HASH="$(printf %s "$READER_TOKEN" | sha256sum | cut -d' ' -f1)"
 cat > "$ROOT/vault.json" <<EOF
 {
+  "version": 2,
   "users": {
     "dev": {
       "tokens": [{ "hash": "$DEV_HASH", "id": "exampledev" }],
-      "scope": ["*"],
-      "admin": ["*"]
+      "siteAdmin": true
     },
     "reader": {
-      "tokens": [{ "hash": "$READER_HASH", "id": "examplerdr" }],
-      "scope": ["nowhere/*"],
-      "admin": []
+      "tokens": [{ "hash": "$READER_HASH", "id": "examplerdr" }]
     }
   }
 }

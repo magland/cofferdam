@@ -6,10 +6,10 @@ import { issueCounts } from './issues';
 import { BUSY_RETRY_SECONDS } from './limit';
 import { pullCounts } from './pulls';
 import { releaseTags } from './releases';
+import { Role, atLeast, repoIsPrivate, repoRole } from './perms';
 import { findRepo, forkParent, siteDir } from './scan';
 import { Viewer, checkCsrf, getViewer } from './session';
 import { siteHostUrl } from './site';
-import { canAdmin, canPush } from './vault';
 import { RepoCtx } from './views';
 import * as views from './views';
 
@@ -99,8 +99,16 @@ export interface LoadedRepo {
   tags: RefInfo[];
   defaultBranch: string | null;
   refNames: string[];
+  /** The viewer's role here; at least 'read', or loadRepo would have 404ed. */
+  role: Role;
 }
 
+/**
+ * The repository named by the route, for a viewer allowed to read it. Every
+ * HTML page about a repository is loaded through here, so this is where a
+ * private repository disappears: a viewer with no role gets the same 404 an
+ * absent repository gets, and a private name proves nothing by existing.
+ */
 export async function loadRepo(
   root: string,
   req: Request,
@@ -108,7 +116,8 @@ export async function loadRepo(
   viewer: Viewer | null
 ): Promise<LoadedRepo | null> {
   const repo = findRepo(root, req.params.collection, req.params.repo);
-  if (!repo) {
+  const role = repo ? repoRole(root, viewer?.auth ?? null, repo) : null;
+  if (!repo || role === null) {
     send404(res, `Repository ${req.params.collection}/${req.params.repo} not found`, viewer);
     return null;
   }
@@ -120,6 +129,7 @@ export async function loadRepo(
     tags,
     defaultBranch,
     refNames: [...branches.map((b) => b.name), ...tags.map((t) => t.name)],
+    role,
   };
 }
 
@@ -155,8 +165,9 @@ export async function makeCtx(
     openPulls: pullCounts(root, loaded.repo.collection, loaded.repo.name).open,
     forkedFrom: forkParent(loaded.repo.dir),
     viewer,
-    canPush: viewer !== null && canPush(viewer.auth, loaded.repo.collection, loaded.repo.name),
-    canAdmin: viewer !== null && canAdmin(viewer.auth, [`${loaded.repo.collection}/${loaded.repo.name}`]),
+    isPrivate: repoIsPrivate(loaded.repo.dir),
+    canPush: atLeast(loaded.role, 'write'),
+    canAdmin: atLeast(loaded.role, 'admin'),
   };
 }
 

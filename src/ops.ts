@@ -5,6 +5,7 @@ import * as path from 'path';
 import { writeFileAtomic } from './atomic';
 import { GitRepo, execGit, execGitStatus, isValidRefName, isValidRepoPath, isValidSha } from './git';
 import type { LfsStore } from './lfsstore';
+import { repoIsPrivate, setRepoPrivate } from './perms';
 import { looksLikePointer } from './pointer';
 import { forgetRepoRedirects, recordCollectionRename, recordRepoRename } from './redirects';
 import { REPOS_DIR, collectionDir, repoPath, reposDir } from './layout';
@@ -132,7 +133,12 @@ function checkNewCollectionName(collection: string): void {
   if (isDotName(collection)) throw new OpError('a collection name may not begin with a dot');
 }
 
-export async function createRepo(root: string, collection: string, name: string): Promise<GitRepo> {
+export async function createRepo(
+  root: string,
+  collection: string,
+  name: string,
+  opts: { private?: boolean } = {}
+): Promise<GitRepo> {
   if (!isValidName(collection) || !isValidName(name)) throw new OpError('invalid collection or repository name');
   checkNewCollectionName(collection);
   checkNewRepoName(name);
@@ -142,6 +148,9 @@ export async function createRepo(root: string, collection: string, name: string)
   await execGit(dir, ['config', 'receive.denyNonFastForwards', 'true']);
   await execGit(dir, ['config', 'receive.denyDeletes', 'true']);
   await execGit(dir, ['config', 'receive.maxInputSize', String(2 * 1024 * 1024 * 1024)]);
+  // Written before the repository is announced anywhere, so a repository asked
+  // for as private is never public for even a moment.
+  if (opts.private) setRepoPrivate(dir, true);
   return new GitRepo(dir, collection, name);
 }
 
@@ -192,6 +201,10 @@ export async function forkRepo(
   if (description.trim() !== '' && !description.startsWith('Unnamed repository')) {
     writeFileAtomic(path.join(dir, 'description'), description);
   }
+  // A fork of a private repository starts private, so forking is never a way
+  // to publish what its parent was protecting. Collaborators do not come
+  // across: they belong to the parent, and the forker administers the fork.
+  if (repoIsPrivate(source.dir)) setRepoPrivate(dir, true);
   return new GitRepo(dir, toCollection, toName);
 }
 
@@ -944,9 +957,9 @@ export async function createRepoWithReadme(
   root: string,
   collection: string,
   name: string,
-  opts: { description?: string; readme?: boolean; author: CommitAuthor }
+  opts: { description?: string; readme?: boolean; private?: boolean; author: CommitAuthor }
 ): Promise<{ repo: GitRepo; sha: string | null }> {
-  const repo = await createRepo(root, collection, name);
+  const repo = await createRepo(root, collection, name, { private: opts.private });
   const description = (opts.description ?? '').trim();
   if (description) setDescription(repo.dir, description);
   if (!opts.readme) return { repo, sha: null };

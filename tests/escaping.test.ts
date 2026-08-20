@@ -52,6 +52,7 @@ function ctxFor(overrides: Partial<RepoCtx> = {}): RepoCtx {
     openPulls: 0,
     forkedFrom: null,
     viewer,
+    isPrivate: false,
     canPush: true,
     canAdmin: true,
     ...overrides,
@@ -151,11 +152,21 @@ test('a file being edited is escaped in the textarea and the path field', () => 
 });
 
 test('a repository description is escaped on the settings page', () => {
-  assertSafe(forms.settingsPage(ctxFor(), XSS, XSS, XSS), 'settingsPage');
+  assertSafe(
+    forms.settingsPage(
+      ctxFor({ isPrivate: true }),
+      XSS,
+      { collaborators: [{ username: XSS, role: XSS }], owners: [XSS] },
+      XSS,
+      XSS
+    ),
+    'settingsPage'
+  );
+  assertSafe(forms.collectionSettingsPage(viewer, XSS, 2, [XSS], XSS, XSS), 'collectionSettingsPage');
 });
 
 test('a username and its scopes are escaped on the admin pages', () => {
-  const user = { tokens: [{ hash: 'ff', id: XSS, created: '' }], scope: [XSS], admin: [ATTR], emails: [XSS] };
+  const user = { tokens: [{ hash: 'ff', id: XSS, created: '' }], siteAdmin: true, emails: [XSS] };
   assertSafe(forms.adminUsersPage(viewer, [{ name: XSS, user }], XSS, XSS), 'adminUsersPage');
   assertSafe(forms.adminUserPage(viewer, XSS, user, XSS, XSS), 'adminUserPage');
   assertSafe(forms.tokenPage(viewer, XSS, XSS, true), 'tokenPage');

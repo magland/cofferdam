@@ -33,20 +33,29 @@ import {
   viewerIsAdmin,
 } from './session';
 import {
+  addCollectionOwner,
+  atLeast,
+  canAdminCollection,
+  canCreateCollection,
+  canCreateRepo,
+  canCreateSomeRepo,
+  collectionOwners,
+  isSiteAdmin,
+  removeCollaborator,
+  removeCollectionOwner,
+  repoAccess,
+  repoRenameBlocker,
+  setCollaborator,
+  setRepoPrivate,
+} from './perms';
+import {
   UserRecord,
   authenticate,
-  canAdmin,
-  canAdminCollection,
-  canAdminUser,
-  canCreateCollection,
-  canPush,
-  collectionMoveBlocker,
   loadVault,
   addUserToken,
-  grantScope,
   removeUser,
-  repoRenameBlocker,
   revokeToken,
+  setSiteAdmin,
   setUserEmails,
   tokenId,
 } from './vault';
@@ -236,11 +245,11 @@ export function registerWebOps(
     // Nothing here performs the import, but a page that hands someone a command
     // their token cannot run is worse than a refusal, so the collection they
     // asked about is checked against their scope before it is written into one.
-    if (collection && !canCreateCollection(viewer.auth, collection)) {
+    if (collection && !canCreateSomeRepo(root, viewer.auth, collection)) {
       fail(
         res,
         403,
-        `Your push scope does not cover anything in ${collection}, so the push would be refused.`,
+        `You are not allowed to create repositories in ${collection}, so the push would be refused.`,
         viewer,
         `/${encodeURIComponent(collection)}`
       );
@@ -296,8 +305,8 @@ export function registerWebOps(
       rerender(400, 'A collection name may use letters, digits, dot, underscore, and dash, and must not be a reserved word.');
       return;
     }
-    if (!canCreateCollection(viewer.auth, name)) {
-      rerender(403, `Your push scope does not cover anything in ${name}.`);
+    if (!canCreateCollection(root, viewer.auth, name)) {
+      rerender(403, 'A collection not named after you takes a site admin to create.');
       return;
     }
     try {
@@ -344,14 +353,8 @@ export function registerWebOps(
       return null;
     }
     const repos = listRepoDirs(root, name).map(displayName);
-    if (!canAdminCollection(viewer.auth, name, repos)) {
-      fail(
-        res,
-        403,
-        `Collection settings require admin scope over ${name} and everything in it.`,
-        viewer,
-        `/${encodeURIComponent(name)}`
-      );
+    if (!canAdminCollection(root, viewer.auth, name)) {
+      fail(res, 403, `Collection settings are for the owners of ${name}.`, viewer, `/${encodeURIComponent(name)}`);
       return null;
     }
     return { name, repos };
@@ -363,7 +366,9 @@ export function registerWebOps(
     const loaded = loadCollection(req, res, viewer, false);
     if (!loaded) return;
     const msg = typeof req.query.msg === 'string' ? req.query.msg : undefined;
-    res.type('html').send(forms.collectionSettingsPage(viewer, loaded.name, loaded.repos.length, msg));
+    res
+      .type('html')
+      .send(forms.collectionSettingsPage(viewer, loaded.name, loaded.repos.length, collectionOwners(root, loaded.name), msg));
   });
 
   app.post(
@@ -377,9 +382,10 @@ export function registerWebOps(
       const from = loaded.name;
       const backUrl = `/${encodeURIComponent(from)}/settings`;
       const toName = field(req, 'name').trim();
-      // Two abilities, as for a repository move: admin over what is moving,
-      // which loadCollection has already established, and push over where it
-      // lands, which collectionMoveBlocker below asks.
+      // Ownership, which loadCollection has already established, is the whole
+      // permission: the owners file moves with the collection, so the owners
+      // after the rename are the owners before it. Whether the new name is
+      // free is the operation's own check.
       if (!isValidName(toName)) {
         fail(
           res,
@@ -388,11 +394,6 @@ export function registerWebOps(
           viewer,
           backUrl
         );
-        return;
-      }
-      const blocker = collectionMoveBlocker(viewer.auth, loaded.repos, toName);
-      if (blocker) {
-        fail(res, 403, `Renaming this collection needs ${blocker}.`, viewer, backUrl);
         return;
       }
       try {
@@ -407,6 +408,44 @@ export function registerWebOps(
       );
     })
   );
+
+  // Owners manage the owners list, which loadCollection has established. The
+  // implicit owner (the user the collection is named after) is not on the
+  // list and cannot be removed from it.
+  app.post('/:collection/settings/owners', form, (req, res) => {
+    const viewer = requireViewerPost(root, req, res);
+    if (!viewer) return;
+    const loaded = loadCollection(req, res, viewer, true);
+    if (!loaded) return;
+    const backUrl = `/${encodeURIComponent(loaded.name)}/settings`;
+    const username = field(req, 'username').trim();
+    const state = loadVault(root);
+    if (state.status !== 'ok' || !state.vault.users[username]) {
+      fail(res, 404, `No user ${username || '(no name given)'} in this vault.`, viewer, backUrl);
+      return;
+    }
+    if (username === loaded.name) {
+      fail(res, 400, `${username} owns ${loaded.name} by bearing its name already.`, viewer, backUrl);
+      return;
+    }
+    addCollectionOwner(root, loaded.name, username);
+    res.redirect(`${backUrl}?msg=${encodeURIComponent(`${username} is now an owner of ${loaded.name}.`)}`);
+  });
+
+  app.post('/:collection/settings/owners/remove', form, (req, res) => {
+    const viewer = requireViewerPost(root, req, res);
+    if (!viewer) return;
+    const loaded = loadCollection(req, res, viewer, true);
+    if (!loaded) return;
+    const backUrl = `/${encodeURIComponent(loaded.name)}/settings`;
+    const username = field(req, 'username').trim();
+    if (!collectionOwners(root, loaded.name).includes(username)) {
+      fail(res, 404, `${username} is not an explicit owner of ${loaded.name}.`, viewer, backUrl);
+      return;
+    }
+    removeCollectionOwner(root, loaded.name, username);
+    res.redirect(`${backUrl}?msg=${encodeURIComponent(`Removed ${username} from the owners of ${loaded.name}.`)}`);
+  });
 
   app.get('/new', (req, res) => {
     const viewer = requireViewerPage(root, req, res);
@@ -448,8 +487,8 @@ export function registerWebOps(
         rerender(400, `A repository name may not end in ${reserved}, which is reserved for the directories a repository keeps beside it.`);
         return;
       }
-      if (!canPush(viewer.auth, collection, name)) {
-        rerender(403, `Your push scope does not cover ${collection}/${name}.`);
+      if (!canCreateRepo(root, viewer.auth, collection, name)) {
+        rerender(403, `You are not allowed to create repositories in ${collection}.`);
         return;
       }
       if (findRepo(root, collection, name)) {
@@ -465,6 +504,7 @@ export function registerWebOps(
         created = await ops.createRepoWithReadme(root, collection, name, {
           description,
           readme: field(req, 'init') === '1',
+          private: field(req, 'private') === '1',
           author: authorFor(viewer, req),
         });
       } catch (e) {
@@ -491,7 +531,7 @@ export function registerWebOps(
 
   // Resolves an /:collection/:repo/<verb>/<branch>/<path> URL and enforces what all
   // file operations share: the ref must be a branch (or the repository must
-  // be empty) and the viewer needs push scope over the repository.
+  // be empty) and the viewer needs the write role on the repository.
   async function loadFileTarget(
     req: Request,
     res: Response,
@@ -505,8 +545,8 @@ export function registerWebOps(
       send404(res, 'Not found', viewer);
       return null;
     }
-    if (!canPush(viewer.auth, loaded.repo.collection, loaded.repo.name)) {
-      fail(res, 403, `Your push scope does not cover ${loaded.repo.collection}/${loaded.repo.name}.`, viewer, urlOf(loaded.repo));
+    if (!atLeast(loaded.role, 'write')) {
+      fail(res, 403, `You do not have the write role on ${loaded.repo.collection}/${loaded.repo.name}.`, viewer, urlOf(loaded.repo));
       return null;
     }
     const branchInfo = loaded.branches.find((b) => b.name === ref);
@@ -887,8 +927,8 @@ export function registerWebOps(
   async function loadForRefOp(req: Request, res: Response, viewer: Viewer): Promise<LoadedRepo | null> {
     const loaded = await loadRepo(root, req, res, viewer);
     if (!loaded) return null;
-    if (!canPush(viewer.auth, loaded.repo.collection, loaded.repo.name)) {
-      fail(res, 403, `Your push scope does not cover ${loaded.repo.collection}/${loaded.repo.name}.`, viewer, urlOf(loaded.repo));
+    if (!atLeast(loaded.role, 'write')) {
+      fail(res, 403, `You do not have the write role on ${loaded.repo.collection}/${loaded.repo.name}.`, viewer, urlOf(loaded.repo));
       return null;
     }
     return loaded;
@@ -1002,7 +1042,18 @@ export function registerWebOps(
         return;
       }
       const msg = typeof req.query.msg === 'string' ? req.query.msg : undefined;
-      res.type('html').send(forms.settingsPage(ctx, repoDescription(loaded.repo.dir) ?? '', msg));
+      const access = repoAccess(loaded.repo.dir);
+      res.type('html').send(
+        forms.settingsPage(
+          ctx,
+          repoDescription(loaded.repo.dir) ?? '',
+          {
+            collaborators: Object.entries(access.collaborators).map(([username, role]) => ({ username, role })),
+            owners: collectionOwners(root, loaded.repo.collection),
+          },
+          msg
+        )
+      );
     })
   );
 
@@ -1015,8 +1066,8 @@ export function registerWebOps(
       const loaded = await loadRepo(root, req, res, viewer);
       if (!loaded) return;
       const backUrl = `${urlOf(loaded.repo)}/settings`;
-      if (!canPush(viewer.auth, loaded.repo.collection, loaded.repo.name)) {
-        fail(res, 403, `Your push scope does not cover ${loaded.repo.collection}/${loaded.repo.name}.`, viewer, backUrl);
+      if (!atLeast(loaded.role, 'write')) {
+        fail(res, 403, `You do not have the write role on ${loaded.repo.collection}/${loaded.repo.name}.`, viewer, backUrl);
         return;
       }
       ops.setDescription(loaded.repo.dir, field(req, 'description'));
@@ -1029,6 +1080,91 @@ export function registerWebOps(
         await ops.setDefaultBranch(loaded.repo.dir, defaultBranch);
       }
       res.redirect(`${backUrl}?msg=${encodeURIComponent('Settings saved.')}`);
+    })
+  );
+
+  // ---- visibility and collaborators ----
+
+  // Both take the admin role: who may see or write a repository is decided by
+  // the people who administer it, the same rule the JSON API applies.
+
+  async function loadForRepoAdmin(req: Request, res: Response, viewer: Viewer): Promise<LoadedRepo | null> {
+    const loaded = await loadRepo(root, req, res, viewer);
+    if (!loaded) return null;
+    if (!atLeast(loaded.role, 'admin')) {
+      fail(
+        res,
+        403,
+        `This takes the admin role on ${loaded.repo.collection}/${loaded.repo.name}.`,
+        viewer,
+        `${urlOf(loaded.repo)}/settings`
+      );
+      return null;
+    }
+    return loaded;
+  }
+
+  app.post(
+    '/:collection/:repo/settings/visibility',
+    form,
+    ah(async (req, res) => {
+      const viewer = requireViewerPost(root, req, res);
+      if (!viewer) return;
+      const loaded = await loadForRepoAdmin(req, res, viewer);
+      if (!loaded) return;
+      const backUrl = `${urlOf(loaded.repo)}/settings`;
+      const priv = field(req, 'private') === 'true';
+      setRepoPrivate(loaded.repo.dir, priv);
+      const msg = priv
+        ? 'This repository is now private: visible to its collaborators, the collection’s owners, and site admins.'
+        : 'This repository is now public: anyone can read it.';
+      res.redirect(`${backUrl}?msg=${encodeURIComponent(msg)}`);
+    })
+  );
+
+  app.post(
+    '/:collection/:repo/settings/collaborators',
+    form,
+    ah(async (req, res) => {
+      const viewer = requireViewerPost(root, req, res);
+      if (!viewer) return;
+      const loaded = await loadForRepoAdmin(req, res, viewer);
+      if (!loaded) return;
+      const backUrl = `${urlOf(loaded.repo)}/settings`;
+      const username = field(req, 'username').trim();
+      const role = field(req, 'role');
+      if (role !== 'read' && role !== 'write' && role !== 'admin') {
+        fail(res, 400, 'The role must be read, write, or admin.', viewer, backUrl);
+        return;
+      }
+      // Only a user the vault knows: an entry for a name nobody holds grants
+      // nothing today and everything it says to whoever gets the name later.
+      const state = loadVault(root);
+      if (state.status !== 'ok' || !state.vault.users[username]) {
+        fail(res, 404, `No user ${username || '(no name given)'} in this vault.`, viewer, backUrl);
+        return;
+      }
+      setCollaborator(loaded.repo.dir, username, role);
+      res.redirect(`${backUrl}?msg=${encodeURIComponent(`${username} now has the ${role} role here.`)}`);
+    })
+  );
+
+  app.post(
+    '/:collection/:repo/settings/collaborators/remove',
+    form,
+    ah(async (req, res) => {
+      const viewer = requireViewerPost(root, req, res);
+      if (!viewer) return;
+      const loaded = await loadForRepoAdmin(req, res, viewer);
+      if (!loaded) return;
+      const backUrl = `${urlOf(loaded.repo)}/settings`;
+      const username = field(req, 'username').trim();
+      if (repoAccess(loaded.repo.dir).collaborators[username] === undefined) {
+        fail(res, 404, `${username} is not a collaborator here.`, viewer, backUrl);
+        return;
+      }
+      removeCollaborator(loaded.repo.dir, username);
+      res.redirect(`${backUrl}?msg=${encodeURIComponent(`Removed ${username}.`)}`);
     })
   );
 
@@ -1067,7 +1203,7 @@ export function registerWebOps(
       const toCollection = field(req, 'collection').trim();
       const toName = field(req, 'name').trim() || loaded.repo.name;
       const names = listCollections(root).map((c) => c.name);
-      if (!canPush(viewer.auth, toCollection, toName)) {
+      if (!isValidName(toCollection) || !isValidName(toName) || !canCreateRepo(root, viewer.auth, toCollection, toName)) {
         res
           .status(403)
           .type('html')
@@ -1077,7 +1213,7 @@ export function registerWebOps(
               viewer,
               names,
               { collection: toCollection, name: toName },
-              `You have no push scope over ${toCollection}/${toName}.`
+              `You are not allowed to create repositories in ${toCollection || '(no collection)'}.`
             )
           );
         return;
@@ -1108,7 +1244,7 @@ export function registerWebOps(
       const backUrl = `${urlOf(loaded.repo)}/settings`;
       const toCollection = field(req, 'collection').trim() || loaded.repo.collection;
       const toName = field(req, 'name').trim();
-      const blocker = repoRenameBlocker(viewer.auth, loaded.repo.collection, loaded.repo.name, toCollection, toName);
+      const blocker = repoRenameBlocker(root, viewer.auth, loaded.repo, toCollection, toName);
       if (blocker) {
         fail(res, 403, `Renaming or moving this repository needs ${blocker}.`, viewer, backUrl);
         return;
@@ -1135,8 +1271,8 @@ export function registerWebOps(
       if (!loaded) return;
       const backUrl = `${urlOf(loaded.repo)}/settings`;
       const target = `${loaded.repo.collection}/${loaded.repo.name}`;
-      if (!canAdmin(viewer.auth, [target])) {
-        fail(res, 403, `Repository deletion requires admin scope over ${target}.`, viewer, backUrl);
+      if (!atLeast(loaded.role, 'admin')) {
+        fail(res, 403, `Repository deletion requires the admin role on ${target}.`, viewer, backUrl);
         return;
       }
       if (field(req, 'confirm').trim() !== target) {
@@ -1149,15 +1285,16 @@ export function registerWebOps(
   );
 
   // ---- user administration ----
-  // Authorization mirrors the JSON API exactly: any admin may list; creating
-  // and granting require the actor's admin globs to cover every requested
-  // glob; minting for an existing user requires covering that user's scopes.
+  // Users are the site admin's business, mirroring the JSON API: creating
+  // them, the site-admin bit, and their tokens. What a user may reach is not
+  // set here; it lives with the repositories (collaborators) and collections
+  // (owners) that grant it.
 
   function requireAdminPage(req: Request, res: Response): Viewer | null {
     const viewer = requireViewerPage(root, req, res);
     if (!viewer) return null;
     if (!viewerIsAdmin(viewer)) {
-      fail(res, 403, 'Admin access required (sessions from restricted tokens carry no admin rights).', viewer, '/');
+      fail(res, 403, 'Site admin access required (sessions from restricted tokens carry no admin rights).', viewer, '/');
       return null;
     }
     return viewer;
@@ -1167,17 +1304,16 @@ export function registerWebOps(
     const viewer = requireViewerPost(root, req, res);
     if (!viewer) return null;
     if (!viewerIsAdmin(viewer)) {
-      fail(res, 403, 'Admin access required (sessions from restricted tokens carry no admin rights).', viewer, '/');
+      fail(res, 403, 'Site admin access required (sessions from restricted tokens carry no admin rights).', viewer, '/');
       return null;
     }
     return viewer;
   }
 
-  // The theme and the egress budget are vault-wide, so changing either takes
-  // admin scope over everything: a delegated collection administrator should not
-  // restyle the whole vault, nor decide how many gigabytes it may send.
+  // Everything under /admin already takes a site admin; the helper survives
+  // so a page for a weaker audience added later has the check to reach for.
   function canSetVaultWide(viewer: Viewer): boolean {
-    return canAdmin(viewer.auth, ['*']);
+    return isSiteAdmin(viewer.auth);
   }
 
   app.get('/admin', (req, res) => {
@@ -1190,7 +1326,7 @@ export function registerWebOps(
     const viewer = requireAdminPage(req, res);
     if (!viewer) return;
     if (!canSetVaultWide(viewer)) {
-      const why = 'The egress budget is vault-wide, so it requires admin scope over the whole vault.';
+      const why = 'The egress budget is vault-wide, so it takes a site admin.';
       fail(res, 403, why, viewer, '/admin');
       return;
     }
@@ -1208,7 +1344,7 @@ export function registerWebOps(
     const viewer = requireAdminPost(req, res);
     if (!viewer) return;
     if (!canSetVaultWide(viewer)) {
-      const why = 'The egress budget is vault-wide, so it requires admin scope over the whole vault.';
+      const why = 'The egress budget is vault-wide, so it takes a site admin.';
       fail(res, 403, why, viewer, '/admin');
       return;
     }
@@ -1230,7 +1366,7 @@ export function registerWebOps(
     const viewer = requireAdminPage(req, res);
     if (!viewer) return;
     if (!canSetVaultWide(viewer)) {
-      fail(res, 403, 'Changing the theme requires admin scope over the whole vault.', viewer, '/admin');
+      fail(res, 403, 'Changing the theme takes a site admin.', viewer, '/admin');
       return;
     }
     const msg = typeof req.query.msg === 'string' ? req.query.msg : undefined;
@@ -1241,7 +1377,7 @@ export function registerWebOps(
     const viewer = requireAdminPost(req, res);
     if (!viewer) return;
     if (!canSetVaultWide(viewer)) {
-      fail(res, 403, 'Changing the theme requires admin scope over the whole vault.', viewer, '/admin');
+      fail(res, 403, 'Changing the theme takes a site admin.', viewer, '/admin');
       return;
     }
     const name = field(req, 'theme');
@@ -1291,28 +1427,14 @@ export function registerWebOps(
       fail(res, 409, `User ${username} already exists; use Grant or Mint token on the users page instead.`, viewer, backUrl);
       return;
     }
-    const scopeIn = globsField(req, 'scope');
-    const adminIn = globsField(req, 'admin');
-    if (scopeIn === null || adminIn === null) {
-      fail(res, 400, 'Scope globs are too long.', viewer, backUrl);
-      return;
-    }
-    const scope = scopeIn.length ? scopeIn : ['*'];
-    const admin = adminIn;
-    const need = [...scope, ...admin];
-    if (!canAdmin(viewer.auth, need)) {
-      fail(res, 403, `Your admin scope does not cover: ${need.join(', ')}.`, viewer, backUrl);
-      return;
-    }
-    const result = addUserToken(root, username, { scope, admin });
+    const result = addUserToken(root, username, { siteAdmin: field(req, 'siteAdmin') === 'true' });
     res.type('html').send(forms.tokenPage(viewer, username, result.token, true));
   });
 
   /**
-   * One user, with their tokens laid out and revocable. Reading and revoking
-   * take the same authorization the JSON API asks: admin scope covering what
-   * the user can reach, or being that user (which within /admin means an
-   * administrator looking at themselves).
+   * One user, with their tokens laid out and revocable. requireAdminPage has
+   * already established the actor is a site admin, which is the whole
+   * authorization here, as it is on the JSON API.
    */
   function loadUserForAdmin(
     req: Request,
@@ -1333,10 +1455,6 @@ export function registerWebOps(
     const user = state.vault.users[name];
     if (!user) {
       fail(res, 404, `No user ${name}.`, viewer, backUrl);
-      return null;
-    }
-    if (name !== viewer.auth.username && !canAdminUser(viewer.auth, user)) {
-      fail(res, 403, `Your admin scope does not cover user ${name}.`, viewer, backUrl);
       return null;
     }
     return { name, user };
@@ -1431,28 +1549,19 @@ export function registerWebOps(
       fail(res, 400, 'Invalid username.', viewer, backUrl);
       return;
     }
-    const scope = globsField(req, 'scope');
-    const admin = globsField(req, 'admin');
-    if (scope === null || admin === null) {
-      fail(res, 400, 'Scope globs are too long.', viewer, backUrl);
-      return;
-    }
-    const globs = [...scope, ...admin];
-    if (globs.length === 0) {
-      fail(res, 400, 'Nothing to grant; provide push and/or admin globs.', viewer, backUrl);
-      return;
-    }
-    if (!canAdmin(viewer.auth, globs)) {
-      fail(res, 403, `Your admin scope does not cover: ${globs.join(', ')}.`, viewer, backUrl);
+    const value = field(req, 'siteAdmin');
+    if (value !== 'true' && value !== 'false') {
+      fail(res, 400, 'Say whether to grant or withdraw site admin.', viewer, backUrl);
       return;
     }
     try {
-      grantScope(root, username, { scope, admin });
+      setSiteAdmin(root, username, value === 'true');
     } catch (e) {
       fail(res, 404, e instanceof Error ? e.message : String(e), viewer, backUrl);
       return;
     }
-    res.redirect(`${backUrl}?msg=${encodeURIComponent(`Granted to ${username}.`)}`);
+    const msg = value === 'true' ? `${username} is now a site admin.` : `${username} is no longer a site admin.`;
+    res.redirect(`${backUrl}?msg=${encodeURIComponent(msg)}`);
   });
 
   app.post('/admin/users/:name/token', form, (req, res) => {
@@ -1472,10 +1581,6 @@ export function registerWebOps(
     const existing = state.vault.users[username];
     if (!existing) {
       fail(res, 404, `User ${username} does not exist.`, viewer, backUrl);
-      return;
-    }
-    if (!canAdminUser(viewer.auth, existing)) {
-      fail(res, 403, `Your admin scope does not cover user ${username}.`, viewer, backUrl);
       return;
     }
     const tokenScope = globsField(req, 'tokenScope');

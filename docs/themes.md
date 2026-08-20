@@ -18,6 +18,6 @@ A theme is a property of the vault rather than of the visitor: one vault is one 
 { "theme": "midnight" }
 ```
 
-Changing it in the UI requires admin scope over the whole vault (`*`); an administrator delegated to one collection can manage users there but cannot restyle the site. An unknown theme name falls back to the default rather than failing requests, so a typo in `config.json` cannot take the vault down.
+Changing it in the UI takes a site admin; a collection owner administers their collection but cannot restyle the site. An unknown theme name falls back to the default rather than failing requests, so a typo in `config.json` cannot take the vault down.
 
 Each theme is a set of semantic CSS custom properties (background, surface, border, accent, diff colors, fonts, corner radius) plus the highlight.js palette that suits it. The structural stylesheet in `src/style.ts` names no colors of its own, so adding a theme means adding one entry to `src/themes.ts`.

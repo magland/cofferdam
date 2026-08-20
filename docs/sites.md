@@ -16,7 +16,7 @@ Everything in the directory is served, dotfiles included, so copy in what you me
 
 ## Site content is untrusted code
 
-A site is HTML and script written by whoever can write the directory, which is anyone with push scope on the repository and any workflow that publishes it. Publishing a site is therefore a real privilege, and it should be read that way when handing out scope.
+A site is HTML and script written by whoever can write the directory, which is anyone with the write role on the repository and any workflow that publishes it. Publishing a site is therefore a real privilege, and it should be read that way when handing out roles. A private repository's site, when it has one, stays public: the sites hostname serves without sessions, so the rendered site is world-readable even while the code is not, like GitHub Pages on a private repository.
 
 It matters because of what a document can do on the origin it is served from. Site files live under the vault's own hostname, so without a boundary a site's script could `fetch('/anything', {credentials: 'include'})` with the visitor's session cookie, read the response, take the CSRF token out of any page that session can load, and then post as that visitor. If the visitor happened to be an owner, that reaches user creation and token minting. `httpOnly` and `sameSite` do not help, because the script is not cross-origin.
 

@@ -1,12 +1,13 @@
 import { avatar } from './avatar';
 import { EgressSnapshot } from './egress';
-import { Html, html, raw } from './html';
+import { Html, html, joinHtml, raw } from './html';
 import { IconName, icon } from './icons';
 import { MARK } from './logo';
 import { formatSize, timeTag } from './render';
 import { Viewer } from './session';
 import { Theme } from './themes';
-import { UserRecord, canAdmin, tokenId } from './vault';
+import { isSiteAdmin } from './perms';
+import { UserRecord, tokenId } from './vault';
 import { PageOpts, RepoCtx, copyButton, copyRow, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from './views';
 
 // Form pages for the UI operations. Every mutating form embeds the session's
@@ -71,6 +72,8 @@ ${csrfField(viewer)}
 <hr class="rule">
 <div class="field"><label class="checkbox"><input type="checkbox" name="init" value="1" checked> Initialize with a README</label>
 <p class="muted small">Gives the repository a first commit on <span class="mono">main</span>, so it can be browsed and cloned straight away.</p></div>
+<div class="field"><label class="checkbox"><input type="checkbox" name="private" value="1"> Private</label>
+<p class="muted small">A private repository is visible only to its collaborators, the collection's owners, and site admins. Everything else in a vault reads anonymously.</p></div>
 <button type="submit" class="btn btn-primary">${icon('repo')}<span>Create repository</span></button>
 </form>
 </div>`;
@@ -108,7 +111,7 @@ ${csrfField(viewer)}
     preset.name ?? ctx.repo
   }" required></div>
 </div>
-<p class="muted small">You need push scope over the destination. Branches and tags come across; issues, releases, and workflow runs stay with the original.</p>
+<p class="muted small">You need permission to create in the destination collection: your own, one you own, or anywhere for a site admin. Branches and tags come across; issues, releases, and workflow runs stay with the original.</p>
 <button type="submit" class="btn btn-primary">${icon('repo-forked')}<span>Create fork</span></button>
 </form>
 </div>`;
@@ -170,7 +173,7 @@ ${csrfField(viewer)}
 <div class="field"><label for="name">Collection name</label><input type="text" id="name" name="name" value="${
     preset.name ?? ''
   }" required autofocus></div>
-<p class="muted small">Letters, digits, dot, underscore, and dash. You need push scope over something in it.</p>
+<p class="muted small">Letters, digits, dot, underscore, and dash. The collection named after you is yours to create; any other name takes a site admin.</p>
 <button type="submit" class="btn btn-primary">${icon('plus')}<span>Create collection</span></button>
 </form>
 </div>`;
@@ -189,6 +192,7 @@ export function collectionSettingsPage(
   viewer: Viewer,
   collection: string,
   repoCount: number,
+  owners: string[],
   msg?: string,
   error?: string
 ): string {
@@ -207,6 +211,28 @@ export function collectionSettingsPage(
 <h2>Settings</h2>
 ${flashBanner(msg)}
 ${errorBanner(error)}
+<div class="box settings-box"><div class="box-header">${icon('people')}Owners</div><div class="box-body">
+<p class="muted small">Owners hold the admin role on every repository in the collection, may create repositories in it,
+and manage these settings. A user named <span class="mono">${collection}</span> owns it by bearing its name and is not
+listed here.</p>
+${
+    owners.length
+      ? html`<table class="listing"><tbody><tr><th>User</th><th class="right"></th></tr>${owners.map(
+          (o) => html`<tr><td class="with-avatar">${avatar(o, 24)}<b>${o}</b></td><td class="right">
+<form method="post" action="${base}/settings/owners/remove" class="inline-form">
+${csrfField(viewer)}
+<input type="hidden" name="username" value="${o}">
+<button type="submit" class="btn btn-danger-outline">Remove</button>
+</form></td></tr>`
+        )}</tbody></table>`
+      : html`<p class="muted">No owners are listed.</p>`
+  }
+<form method="post" action="${base}/settings/owners" class="inline-form">
+${csrfField(viewer)}
+<label for="ownerUser">User</label><input type="text" id="ownerUser" name="username" required>
+<button type="submit" class="btn">${icon('people')}<span>Add owner</span></button>
+</form>
+</div></div>
 <div class="danger-zone caution">
 <h3>Rename</h3>
 <p>${holds} The old address is redirected here, so links and existing clones keep working until something else is created under that name, but token scopes naming the old collection have to be granted again under the new name.</p>
@@ -371,7 +397,13 @@ export function conflictPage(ctx: RepoCtx, branch: string, retryUrl: string): st
   return layout(`Conflict - ${ctx.collection}/${ctx.repo}`, body, repoOpts(ctx));
 }
 
-export function settingsPage(ctx: RepoCtx, description: string, msg?: string, error?: string): string {
+export function settingsPage(
+  ctx: RepoCtx,
+  description: string,
+  access: { collaborators: { username: string; role: string }[]; owners: string[] },
+  msg?: string,
+  error?: string
+): string {
   const base = repoUrl(ctx);
   const branchOptions = ctx.branches.map(
     (b) => html`<option value="${b.name}"${b.name === ctx.defaultBranch ? raw(' selected') : ''}>${b.name}</option>`
@@ -388,6 +420,55 @@ ${csrfField(ctx.viewer!)}
 ${defaultBranchField}
 <button type="submit" class="btn btn-primary">${icon('check')}<span>Save</span></button>
 </form>
+</div></div>`
+    : '';
+  // Who may see and write the repository. Admin only, like the rename below:
+  // access is the repository's own business.
+  const collaboratorRows = access.collaborators.map(
+    ({ username, role }) => html`<tr><td class="with-avatar">${avatar(username, 24)}<b>${username}</b></td><td class="muted">${role}</td><td class="right">
+<form method="post" action="${base}/settings/collaborators/remove" class="inline-form">
+${csrfField(ctx.viewer!)}
+<input type="hidden" name="username" value="${username}">
+<button type="submit" class="btn btn-danger-outline">Remove</button>
+</form></td></tr>`
+  );
+  const ownersNote = access.owners.length
+    ? html`<p class="muted small">Owners of <span class="mono">${ctx.collection}</span> (${joinHtml(
+        access.owners.map((o) => html`<b>${o}</b>`),
+        ', '
+      )}, and the user the collection is named after) hold the admin role here without being listed.</p>`
+    : html`<p class="muted small">The user the collection is named after, and any owners added to it, hold the admin role here without being listed.</p>`;
+  const accessBox = ctx.canAdmin
+    ? html`<div class="box settings-box"><div class="box-header">${icon('people')}Access</div><div class="box-body">
+<form method="post" action="${base}/settings/visibility">
+${csrfField(ctx.viewer!)}
+<input type="hidden" name="private" value="${ctx.isPrivate ? 'false' : 'true'}">
+<p>${
+        ctx.isPrivate
+          ? html`This repository is <b>private</b>: visible to its collaborators, the collection's owners, and site admins, on the web, over git, and in the API alike.`
+          : html`This repository is <b>public</b>: anyone can read and clone it, as everything in a vault is by default.`
+      }</p>
+<button type="submit" class="btn">${ctx.isPrivate ? 'Make public' : 'Make private'}</button>
+</form>
+<hr class="rule">
+<h3>Collaborators</h3>
+${
+        collaboratorRows.length
+          ? html`<table class="listing"><tbody><tr><th>User</th><th>Role</th><th class="right"></th></tr>${collaboratorRows}</tbody></table>`
+          : html`<p class="muted">No collaborators.</p>`
+      }
+${ownersNote}
+<form method="post" action="${base}/settings/collaborators" class="inline-form">
+${csrfField(ctx.viewer!)}
+<label for="collabUser">User</label><input type="text" id="collabUser" name="username" required>
+<label for="collabRole">Role</label><select id="collabRole" name="role">
+<option value="read">read</option>
+<option value="write" selected>write</option>
+<option value="admin">admin</option>
+</select>
+<button type="submit" class="btn">${icon('people')}<span>Add</span></button>
+</form>
+<p class="muted small">read may see a private repository; write may also push and edit; admin may also change its settings, visibility, and collaborators.</p>
 </div></div>`
     : '';
   // Renaming and moving are one operation, since both are a directory rename.
@@ -422,6 +503,7 @@ ${csrfField(ctx.viewer!)}
 ${flashBanner(msg)}
 ${errorBanner(error)}
 ${settingsForm}
+${accessBox}
 ${renameForm}
 ${dangerZone}`;
   return layout(`Settings - ${ctx.collection}/${ctx.repo}`, body, repoOpts(ctx, `${base}/settings`));
@@ -439,9 +521,8 @@ export function adminUsersPage(
     )}<span>Manage</span></summary><div class="dropdown-menu dd-right user-actions">
 <form method="post" action="/admin/users/${encodeURIComponent(name)}/grant" class="inline-form">
 ${csrfField(viewer)}
-<input type="text" name="scope" placeholder="push globs, e.g. mycollection/*">
-<input type="text" name="admin" placeholder="admin globs">
-<button type="submit" class="btn">Grant</button>
+<input type="hidden" name="siteAdmin" value="${user.siteAdmin ? 'false' : 'true'}">
+<button type="submit" class="btn">${user.siteAdmin ? 'Withdraw site admin' : 'Make site admin'}</button>
 </form>
 <form method="post" action="/admin/users/${encodeURIComponent(name)}/token" class="inline-form">
 ${csrfField(viewer)}
@@ -450,10 +531,8 @@ ${csrfField(viewer)}
 </form>
 </div></details>`;
     const userUrl = `/admin/users/${encodeURIComponent(name)}`;
-    return html`<tr><td class="with-avatar">${avatar(name, 24)}<a href="${userUrl}"><b>${name}</b></a></td><td class="mono small">${
-      user.scope.join(' ') || '(none)'
-    }</td><td class="mono small">${
-      user.admin.join(' ')
+    return html`<tr><td class="with-avatar">${avatar(name, 24)}<a href="${userUrl}"><b>${name}</b></a></td><td class="muted small">${
+      user.siteAdmin ? 'site admin' : ''
     }</td><td class="right muted small"><a href="${userUrl}">${user.tokens.length} token${
       user.tokens.length === 1 ? '' : 's'
     }</a></td><td>${actions}</td></tr>`;
@@ -461,18 +540,19 @@ ${csrfField(viewer)}
   const content = html`<h1>Users</h1>
 ${flashBanner(msg)}
 ${errorBanner(error)}
-<table class="listing"><tbody><tr><th>User</th><th>Push scope</th><th>Admin scope</th><th class="right">Tokens</th><th></th></tr>${rows}</tbody></table>
+<table class="listing"><tbody><tr><th>User</th><th>Site admin</th><th class="right">Tokens</th><th></th></tr>${rows}</tbody></table>
 <div class="form-box" style="margin-top:24px">
 <h2>Add user</h2>
 <form method="post" action="/admin/users">
 ${csrfField(viewer)}
-<div class="field"><label for="username">Username</label><input type="text" id="username" name="username" required></div>
-<div class="field"><label for="scope">Push scope globs</label><input type="text" id="scope" name="scope" value="*" placeholder="e.g. mycollection/*">
-<p class="muted small">Space-separated globs over <span class="mono">collection/repo</span>. <span class="mono">*</span> matches everything.</p></div>
-<div class="field"><label for="admin">Admin scope globs <span class="muted">(optional)</span></label><input type="text" id="admin" name="admin" placeholder="e.g. mycollection/*"></div>
+<div class="field"><label for="username">Username</label><input type="text" id="username" name="username" required>
+<p class="muted small">A user owns the collection named after them: they create repositories there, administer them, and
+may grant others access. Everything else is granted per repository (collaborators) or per collection (owners).</p></div>
+<div class="field"><label><input type="checkbox" name="siteAdmin" value="true"> Site admin</label>
+<p class="muted small">Site admins hold the admin role everywhere and manage users, runners, and the vault's settings.</p></div>
 <button type="submit" class="btn btn-primary">Create user and mint token</button>
 </form>
-<p class="muted small">Your admin scope must cover every glob you assign. The new token is shown once on the next page.</p>
+<p class="muted small">The new token is shown once on the next page.</p>
 </div>`;
   return adminShell(viewer, 'users', 'Users', '/admin/users', content);
 }
@@ -532,15 +612,19 @@ carries no admin rights. Leave empty for a token as broad as the user.</p></div>
 <p class="muted small">Minting does not revoke anything: the user's other tokens keep working until each is revoked here.</p>
 </div>`;
   const grant = html`<div class="form-box">
-<h2>Grant scope</h2>
+<h2>Site admin</h2>
 <form method="post" action="${base}/grant">
 ${csrfField(viewer)}
 <input type="hidden" name="next" value="${base}">
-<div class="field"><label for="scope">Push scope globs</label><input type="text" id="scope" name="scope" placeholder="e.g. mycollection/*"></div>
-<div class="field"><label for="admin">Admin scope globs</label><input type="text" id="admin" name="admin" placeholder="e.g. mycollection/*"></div>
-<button type="submit" class="btn">Grant</button>
+<input type="hidden" name="siteAdmin" value="${user.siteAdmin ? 'false' : 'true'}">
+<p>${
+    user.siteAdmin
+      ? html`<b>${name}</b> is a site admin: the admin role everywhere, plus users, runners, and the vault's settings.`
+      : html`<b>${name}</b> owns the collection <span class="mono">${name}</span> by name; anything more is granted per
+repository (collaborators), per collection (owners), or with the site-admin bit here.`
+  }</p>
+<button type="submit" class="btn">${user.siteAdmin ? 'Withdraw site admin' : 'Make site admin'}</button>
 </form>
-<p class="muted small">Grants add to what the user has; taking scope away is an edit to <span class="mono">vault.json</span>.</p>
 </div>`;
   const identity = html`<div class="form-box">
 <h2>Identity</h2>
@@ -569,12 +653,7 @@ ${csrfField(viewer)}
   const content = html`<div class="page-head"><div class="with-avatar">${avatar(name, 32)}<h1>${name}</h1></div></div>
 ${flashBanner(msg)}
 ${errorBanner(error)}
-<p><span class="muted">Push scope</span> <span class="mono">${user.scope.join(' ') || '(none)'}</span>
-${
-    user.admin.length
-      ? html`&ensp;<span class="muted">Admin scope</span> <span class="mono">${user.admin.join(' ')}</span>`
-      : ''
-  }</p>
+<p class="muted">${user.siteAdmin ? 'Site admin' : html`Owns the collection <span class="mono">${name}</span> by name`}</p>
 <h2>Tokens</h2>
 ${tokens}
 ${mint}
@@ -599,12 +678,9 @@ export function adminShell(
 ): string {
   const item = (id: string, href: string, label: string, glyph: IconName) =>
     html`<a class="${active === id ? 'current' : ''}" href="${href}">${icon(glyph)}<span>${label}</span></a>`;
-  // Appearance and the egress budget are vault-wide, so they are offered only
-  // to an administrator whose scope covers the whole vault; the same check the
-  // routes make. The egress breakdown says which repositories are being read and
-  // how heavily, which is more than a collection administrator is owed about a
-  // collection that is not theirs.
-  const canVault = canAdmin(viewer.auth, ['*']);
+  // Every admin page is the site admin's now, but the shell keeps the check
+  // so a page added for a weaker audience later hides what is not theirs.
+  const canVault = isSiteAdmin(viewer.auth);
   const nav = html`<aside class="admin-side"><div class="side-block"><h3>${icon(
     'sliders'
   )}Administration</h3><div class="side-links">
@@ -638,7 +714,7 @@ export function adminIndexPage(viewer: Viewer, canVault: boolean): string {
     html`<a class="card" href="${href}"><b>${title}</b><span class="muted small">${blurb}</span></a>`;
   const content = html`<h1>Administration</h1>
 <div class="card-list">
-${card('/admin/users', 'Users', 'Create users, grant push and admin scope, mint tokens.')}
+${card('/admin/users', 'Users', 'Create users, grant site admin, mint tokens.')}
 ${card('/admin/runners', 'Runners', 'Register the machines that execute workflow jobs.')}
 ${
   canVault
@@ -654,7 +730,7 @@ ${
 ${
   canVault
     ? ''
-    : html`<p class="muted small">Appearance and the egress budget are vault-wide settings, so they are limited to administrators whose admin scope covers everything.</p>`
+    : html`<p class="muted small">Appearance and the egress budget are vault-wide settings, so they are the site admin's.</p>`
 }`;
   return adminShell(viewer, 'index', 'Administration', '/admin', content);
 }

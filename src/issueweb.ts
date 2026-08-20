@@ -27,7 +27,7 @@ import {
 // Who may do what follows the vault's model rather than GitHub's: reading is
 // anonymous like every other read, opening an issue and commenting need a
 // session (a vault's users are its users; there is no public sign-up to
-// abuse), and closing, reopening, or editing needs push scope over the
+// abuse), and closing, reopening, or editing needs the write role on the
 // repository or being the person who wrote the thing.
 
 // Issue bodies and comments are the long fields here, and people paste logs

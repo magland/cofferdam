@@ -135,9 +135,16 @@ export async function runJob(spec: JobSpec, ctx: RunnerContext, hooks: JobHooks)
     // re-sync rather than the first clone.
     log(`Job ${spec.name} on ${spec.runsOn.join(', ')}`);
     log(`Checking out ${spec.github.repository} at ${spec.sha.slice(0, 8)}`);
+    // A private repository's job carries an ephemeral token for it, which
+    // rides in the remote URL the way actions/checkout persists credentials:
+    // steps that fetch or pull from origin then work unchanged. It expires
+    // with the job either way.
     const url = ctx.cloneUrl(spec.address.collection, spec.address.repo);
+    const remote = spec.cloneToken
+      ? url.replace('://', `://x-job:${encodeURIComponent(spec.cloneToken)}@`)
+      : url;
     await execFileAsync('git', ['init', '--quiet', hostRepo]);
-    await execFileAsync('git', ['-C', hostRepo, 'remote', 'add', 'origin', url]);
+    await execFileAsync('git', ['-C', hostRepo, 'remote', 'add', 'origin', remote]);
     await execFileAsync('git', ['-C', hostRepo, 'fetch', '--quiet', '--depth', '1', 'origin', spec.sha]);
     await execFileAsync('git', ['-C', hostRepo, 'checkout', '--quiet', 'FETCH_HEAD']);
 

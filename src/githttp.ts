@@ -3,16 +3,19 @@ import { spawn } from 'child_process';
 import * as zlib from 'zlib';
 import { CiEngine } from './ci/engine';
 import { GitRepo, execGit } from './git';
+import { grantCovers, verifyJobToken } from './jobtoken';
 import { createRepo } from './ops';
+import { atLeast, canCreateRepo, canReadRepo, repoIsPrivate, repoRole } from './perms';
 import { displayName, findRepo, isDotName, isValidName, reservedRepoSuffix } from './scan';
 import { AuthLimiter, BUSY_RETRY_SECONDS, Gates } from './limit';
-import { AuthResult, authenticate, canPush, loadVault } from './vault';
+import { AuthResult, authenticate, authenticateToken, loadVault } from './vault';
 import { ah } from './web';
 
-// git smart HTTP. Anonymous fetch (upload-pack) stays open; push
-// (receive-pack) requires a token presented over HTTP Basic auth. Session
-// cookies are never consulted here: git and the browser present distinct
-// credentials by design.
+// git smart HTTP. Anonymous fetch (upload-pack) stays open for public
+// repositories; a private one asks for Basic auth and then serves only a
+// reader. Push (receive-pack) always requires a token presented over HTTP
+// Basic auth. Session cookies are never consulted here: git and the browser
+// present distinct credentials by design.
 
 function pkt(s: string): string {
   return (s.length + 4).toString(16).padStart(4, '0') + s;
@@ -47,37 +50,44 @@ export function parseBasicAuth(req: Request): { username: string; password: stri
   return { username: decoded.slice(0, i), password: decoded.slice(i + 1) };
 }
 
-// The push-authorization decision, shared with the LFS endpoints. The caller
+// The authorization decisions, shared with the LFS endpoints. The caller
 // renders a denial in its own content type (plain text for git, LFS JSON for
-// the batch API), so this returns a result rather than writing the response.
-export type PushAuthCheck =
-  | { ok: true; auth: AuthResult }
-  | { ok: false; status: 401 | 403 | 429 | 500; message: string; retryAfter?: number };
+// the batch API), so these return a result rather than writing the response.
+type Denied = { ok: false; status: 401 | 403 | 404 | 429 | 500; message: string; retryAfter?: number };
+/** Read grants may be anonymous (a public repository) or a job token, so auth may be null. */
+export type GitAuthCheck = { ok: true; auth: AuthResult | null } | Denied;
+/** A push is always somebody's. */
+export type PushAuthCheck = { ok: true; auth: AuthResult } | Denied;
 
-export function checkPushAuth(
-  root: string,
-  limiter: AuthLimiter,
-  req: Request,
-  collection: string,
-  repoName: string
-): PushAuthCheck {
+// The vault has to be loadable before any credential means anything.
+function vaultOf(root: string, verb: string): { vault: import('./vault').Vault } | Denied {
   const state = loadVault(root);
   if (state.status === 'missing') {
     return {
       ok: false,
       status: 401,
-      message: 'push denied: no vault.json in this vault; restart the server to initialize one',
+      message: `${verb} denied: no vault.json in this vault; restart the server to initialize one`,
     };
   }
   if (state.status === 'error') {
-    return { ok: false, status: 500, message: `push denied: vault.json could not be read: ${state.message}` };
+    return { ok: false, status: 500, message: `${verb} denied: vault.json could not be read: ${state.message}` };
   }
-  // git's first request to a push endpoint carries no Basic auth by protocol and
-  // always will, so a missing credential is not a failed attempt and is not
-  // charged.
+  return { vault: state.vault };
+}
+
+function checkCreds(
+  root: string,
+  limiter: AuthLimiter,
+  req: Request,
+  verb: string
+): { auth: AuthResult } | Denied {
+  const v = vaultOf(root, verb);
+  if ('ok' in v) return v;
+  // git's first request carries no Basic auth by protocol and always will, so
+  // a missing credential is not a failed attempt and is not charged.
   const creds = parseBasicAuth(req);
   if (!creds) {
-    return { ok: false, status: 401, message: 'authentication required to push' };
+    return { ok: false, status: 401, message: `authentication required to ${verb}` };
   }
   const allowed = limiter.allow(req, creds.username);
   if (!allowed.ok) {
@@ -88,16 +98,82 @@ export function checkPushAuth(
       retryAfter: allowed.retryAfter,
     };
   }
-  const auth = authenticate(state.vault, creds.username, creds.password);
+  // The username first, and the token alone as the fallback: a token is 64
+  // random hex characters and identifies its owner by itself, so any username
+  // with a valid token works, as it does on GitHub. That is what lets a
+  // client that holds only a token (the backup client, a script) clone
+  // without also being told whose it is.
+  const auth = authenticate(v.vault, creds.username, creds.password) ?? authenticateToken(v.vault, creds.password);
   if (!auth) {
     limiter.fail(req, creds.username);
     return { ok: false, status: 401, message: 'invalid username or token' };
   }
-  if (!canPush(auth, collection, repoName)) {
+  return { auth };
+}
+
+/**
+ * Whether this request may read the repository over git. A public repository
+ * reads anonymously. A private one and an absent one answer identically, so
+ * the wire cannot distinguish them: no credential gets the 401 challenge
+ * (which is also what makes git ask the user for one), and a credential that
+ * proves no read access gets the same "repository not found" a truly absent
+ * repository gets. A workflow job's ephemeral token (src/jobtoken.ts) reads
+ * exactly the repository it was minted for.
+ */
+export function checkReadAuth(
+  root: string,
+  limiter: AuthLimiter,
+  req: Request,
+  repo: GitRepo | null
+): GitAuthCheck {
+  if (repo && !repoIsPrivate(repo.dir)) return { ok: true, auth: null };
+  const creds = parseBasicAuth(req);
+  if (repo && creds) {
+    const grant = verifyJobToken(root, creds.password);
+    if (grant && grantCovers(grant, repo.collection, repo.name)) return { ok: true, auth: null };
+  }
+  const checked = checkCreds(root, limiter, req, 'read');
+  if ('ok' in checked) return checked;
+  if (!repo || !canReadRepo(root, checked.auth, repo)) {
+    return { ok: false, status: 404, message: 'repository not found' };
+  }
+  return { ok: true, auth: checked.auth };
+}
+
+/**
+ * Whether this request may push. `repo` is null for push-to-create, where the
+ * question is creation in the collection rather than the write role on an
+ * existing repository. On an existing private repository a credential without
+ * even the read role gets "repository not found", as on the read path.
+ */
+export function checkPushAuth(
+  root: string,
+  limiter: AuthLimiter,
+  req: Request,
+  collection: string,
+  repoName: string,
+  repo: GitRepo | null
+): PushAuthCheck {
+  const checked = checkCreds(root, limiter, req, 'push');
+  if ('ok' in checked) return checked;
+  const auth = checked.auth;
+  if (repo) {
+    const role = repoRole(root, auth, repo);
+    if (role === null) return { ok: false, status: 404, message: 'repository not found' };
+    if (!atLeast(role, 'write')) {
+      return {
+        ok: false,
+        status: 403,
+        message: `user ${auth.username} is not allowed to push to ${collection}/${repoName}`,
+      };
+    }
+    return { ok: true, auth };
+  }
+  if (!canCreateRepo(root, auth, collection, repoName)) {
     return {
       ok: false,
       status: 403,
-      message: `user ${creds.username} is not allowed to push to ${collection}/${repoName}`,
+      message: `user ${auth.username} is not allowed to create ${collection}/${repoName}`,
     };
   }
   return { ok: true, auth };
@@ -135,19 +211,41 @@ export function registerGitHttp(app: Express, root: string, gates: Gates, authLi
     res.type('text/plain').send('the server is busy with other git work; please try again in a moment\n');
   }
 
-  function denyPush(res: Response, status: number, message: string, retryAfter?: number) {
+  function deny(res: Response, status: number, message: string, retryAfter?: number) {
     if (status === 401) res.setHeader('WWW-Authenticate', 'Basic realm="cofferdam"');
     if (retryAfter !== undefined) res.setHeader('Retry-After', String(retryAfter));
     res.status(status).type('text/plain').send(message + '\n');
   }
 
-  function requirePushAuth(req: Request, res: Response, collection: string, repoName: string): AuthResult | null {
-    const check = checkPushAuth(root, authLimiter, req, collection, repoName);
+  function requirePushAuth(
+    req: Request,
+    res: Response,
+    collection: string,
+    repoName: string,
+    repo: GitRepo | null
+  ): AuthResult | null {
+    const check = checkPushAuth(root, authLimiter, req, collection, repoName, repo);
     if (!check.ok) {
-      denyPush(res, check.status, check.message, check.retryAfter);
+      deny(res, check.status, check.message, check.retryAfter);
       return null;
     }
     return check.auth;
+  }
+
+  /** The repository, readable by this request, or null having sent the refusal. */
+  function requireReadAuth(req: Request, res: Response): GitRepo | null {
+    const repo = findRepo(root, req.params.collection, req.params.repo);
+    const check = checkReadAuth(root, authLimiter, req, repo);
+    if (!check.ok) {
+      deny(res, check.status, check.message, check.retryAfter);
+      return null;
+    }
+    if (!repo) {
+      // Unreachable: checkReadAuth answers ok only for a repository it saw.
+      deny(res, 404, 'repository not found');
+      return null;
+    }
+    return repo;
   }
 
   async function ensureHead(repo: GitRepo): Promise<void> {
@@ -239,11 +337,8 @@ export function registerGitHttp(app: Express, root: string, gates: Gates, authLi
       const collectionName = req.params.collection;
       const repoName = displayName(req.params.repo);
       if (service === 'git-upload-pack') {
-        const repo = findRepo(root, collectionName, req.params.repo);
-        if (!repo) {
-          res.status(404).type('text/plain').send('repository not found\n');
-          return;
-        }
+        const repo = requireReadAuth(req, res);
+        if (!repo) return;
         await advertise(req, res, 'git-upload-pack', repo.dir);
         return;
       }
@@ -252,9 +347,9 @@ export function registerGitHttp(app: Express, root: string, gates: Gates, authLi
           res.status(404).type('text/plain').send('invalid repository name\n');
           return;
         }
-        const auth = requirePushAuth(req, res, collectionName, repoName);
-        if (!auth) return;
         let repo = findRepo(root, collectionName, req.params.repo);
+        const auth = requirePushAuth(req, res, collectionName, repoName, repo);
+        if (!auth) return;
         if (!repo) {
           // Push-to-create, so the name has to survive the same check the web
           // form applies. An existing repository is served whatever it is
@@ -285,12 +380,9 @@ export function registerGitHttp(app: Express, root: string, gates: Gates, authLi
   app.post(
     '/:collection/:repo/git-upload-pack',
     ah(async (req, res) => {
-      const repo = findRepo(root, req.params.collection, req.params.repo);
-      if (!repo) {
-        res.status(404).type('text/plain').send('repository not found\n');
-        return;
-      }
-      // The gate is entered after findRepo and before anything expensive.
+      const repo = requireReadAuth(req, res);
+      if (!repo) return;
+      // The gate is entered after the read check and before anything expensive.
       await runService(req, res, 'git-upload-pack', repo.dir);
     })
   );
@@ -304,9 +396,9 @@ export function registerGitHttp(app: Express, root: string, gates: Gates, authLi
         res.status(404).type('text/plain').send('invalid repository name\n');
         return;
       }
-      const auth = requirePushAuth(req, res, collectionName, repoName);
-      if (!auth) return;
       let repo = findRepo(root, collectionName, req.params.repo);
+      const auth = requirePushAuth(req, res, collectionName, repoName, repo);
+      if (!auth) return;
       if (!repo) {
         const reserved = reservedRepoSuffix(repoName);
         if (reserved) {

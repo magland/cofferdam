@@ -11,7 +11,7 @@ cofferdam backup ~/backups/myvault              # incremental sync
 cofferdam backup ~/backups/myvault --snapshot   # ...then snapshot, then prune
 ```
 
-The token needs admin scope over the whole vault, and must not be a token-scoped one, because the copy includes `vault.json`. The vault URL, the exclusions, and the retention policy are recorded in the backup directory, so after the first run a cron entry is the command and a directory:
+The token needs to belong to a site admin, and must not be a token-scoped one, because the copy includes `vault.json`. The vault URL, the exclusions, and the retention policy are recorded in the backup directory, so after the first run a cron entry is the command and a directory:
 
 ```cron
 17 3 * * *  cofferdam backup /srv/backups/myvault --snapshot --quiet

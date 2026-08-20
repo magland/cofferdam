@@ -10,7 +10,7 @@ For a shorter introduction aimed at a program rather than a person, see [cofferd
 
 **There is no anonymous reading.** The web is where anonymous reading lives. Requiring a token on `/api` keeps one rule for the whole surface, and it is the rule to revisit first if a real caller needs otherwise.
 
-**Authorization has three levels.** A read takes any valid token. A write takes push scope over `<collection>/<repo>`, as `git push` does. Renaming a repository, deleting one, removing a user, and changing a vault-wide setting take admin scope, and a vault-wide setting takes admin scope over everything rather than merely some admin scope: a delegated collection administrator should not restyle the whole vault.
+**Authorization follows the roles.** A read of a public repository takes any valid token; a private repository additionally takes a role on it, and without one it answers the same 404 an absent repository does, in listings and on direct reads alike. A write takes the write role, as `git push` does. Renaming a repository, deleting one, and managing its visibility and collaborators take the admin role, which collaborators may hold and which collection owners and site admins hold everywhere they own. Users, runners for collections you do not own, and vault-wide settings take a site admin: a collection owner should not restyle the whole vault. See [Who may do what](vault.md#who-may-do-what).
 
 **A repository is two path segments,** `/api/repos/<collection>/<repo>`, with the `.git` suffix accepted and ignored.
 
@@ -40,41 +40,42 @@ For a shorter introduction aimed at a program rather than a person, see [cofferd
 ## Whoami, collections, users
 
 ```
-GET    /api/whoami                     the user, scopes, and restriction of this token
-GET    /api/collections                collections and how many repositories each holds
-GET    /api/collections/:name          one collection and the repositories in it
-POST   /api/collections                create an empty one            {name}
-POST   /api/collections/:name/rename   rename it, and everything in it {name}
-                                       (admin over every repository in it, push over where it lands)
-DELETE /api/collections/:name          remove an empty one            (admin over the collection)
-GET    /api/users                      every user                     (admin)
-POST   /api/users                      create a user, or mint a token {username, scope?, admin?, tokenScope?}
-POST   /api/users/:name/grant          extend a user's scopes         {scope?, admin?}
+GET    /api/whoami                     the user, their standing, and this token's restriction
+GET    /api/collections                collections and how many repositories each shows the caller
+GET    /api/collections/:name          one collection: its owners and the repositories the caller may see
+POST   /api/collections                create an empty one            {name}   (your namespace, or site admin)
+POST   /api/collections/:name/rename   rename it, and everything in it {name}  (owner)
+DELETE /api/collections/:name          remove an empty one                     (owner)
+PUT    /api/collections/:name/owners/:user    add an owner                     (owner)
+DELETE /api/collections/:name/owners/:user    remove an owner                  (owner)
+GET    /api/users                      every user                     (site admin)
+POST   /api/users                      create a user, or mint a token {username, siteAdmin?, tokenScope?}  (site admin)
+POST   /api/users/:name/grant          set the site-admin bit         {siteAdmin}  (site admin)
 GET    /api/users/:name                one user, with their token ids
-DELETE /api/users/:name                remove a user                  (requires ?confirm=<name>)
+DELETE /api/users/:name                remove a user                  (requires ?confirm=<name>; site admin)
 GET    /api/users/:name/tokens         token ids, creation times, scopes
 DELETE /api/users/:name/tokens/:id     revoke one token
 ```
 
-`POST /api/users` returns the token once. Only its SHA-256 hash is stored, so it cannot be recovered afterwards.
+`POST /api/users` returns the token once. Only its SHA-256 hash is stored, so it cannot be recovered afterwards. What a user may reach is not set on the user: it is granted on the repository (collaborators) or the collection (owners), or by the one site-admin bit `grant` carries.
 
 A token listing never contains a token or its hash. What it contains is an `id`, which is what revocation takes; a token minted before ids existed is identified by the first eight characters of its hash instead, so an existing vault needs no migration.
 
-Renaming a collection moves everything in it: the repositories, their issues, pull requests, releases, sites, run histories, and Git LFS objects. It is one directory rename, so it costs the same on a collection of one repository as on a collection of a hundred gigabytes, except for LFS objects in a bucket, whose keys name the collection and are copied to the new prefix. Requests for the old address are redirected to the new one, this API's routes included: a `GET /api/collections/oldname` or a `GET /api/repos/oldname/thing` answers `301` with a `Location` naming the new address, and a request that writes answers `308` so the method and body survive the hop. The redirect lasts until something else is created under that name; see [The old address](vault.md#the-old-address). One thing a rename does not carry: token scopes in `vault.json` naming the old collection cover nothing afterwards and have to be granted again. Asking for the name the collection already has answers `{"changed": false}` rather than an error, as elsewhere in this API. See [Renaming a repository or a collection](vault.md#renaming-a-repository-or-a-collection).
+Renaming a collection moves everything in it: the repositories, their issues, pull requests, releases, sites, run histories, and Git LFS objects. It is one directory rename, so it costs the same on a collection of one repository as on a collection of a hundred gigabytes, except for LFS objects in a bucket, whose keys name the collection and are copied to the new prefix. Requests for the old address are redirected to the new one, this API's routes included: a `GET /api/collections/oldname` or a `GET /api/repos/oldname/thing` answers `301` with a `Location` naming the new address, and a request that writes answers `308` so the method and body survive the hop. The redirect lasts until something else is created under that name; see [The old address](vault.md#the-old-address). Owners travel with the collection and collaborators with each repository; token scopes in `vault.json` naming the old collection are the exception, covering nothing afterwards until granted again. Asking for the name the collection already has answers `{"changed": false}` rather than an error, as elsewhere in this API. See [Renaming a repository or a collection](vault.md#renaming-a-repository-or-a-collection).
 
-A user may read their own record and their own token ids without admin scope. Removing a user refuses to remove the caller: unlike revoking one token, that cannot be undone by minting another. Revoking the token currently in use **is** allowed, and the response says `wasThisToken: true` rather than refusing; locking yourself out is your business, and `vault.json` remains hand-editable.
+A user may read their own record and their own token ids without being a site admin. Removing a user refuses to remove the caller: unlike revoking one token, that cannot be undone by minting another. Revoking the token currently in use **is** allowed, and the response says `wasThisToken: true` rather than refusing; locking yourself out is your business, and `vault.json` remains hand-editable.
 
 ## Vault settings
 
 ```
 GET    /api/config                     theme, CI retention, sites, network, and limits
-                                                                      (admin over everything)
-PATCH  /api/config                     {theme?, ci?, sites?, limits?} (admin over everything)
+                                                                      (site admin)
+PATCH  /api/config                     {theme?, ci?, sites?, limits?} (site admin)
 GET    /api/egress                     bytes sent today, per repository, and earlier days
-                                                                      (admin over everything)
+                                                                      (site admin)
 ```
 
-All three take admin scope over the whole vault, not merely some admin scope: a delegated collection administrator should not read or change a vault-wide setting, nor read which repositories the vault is sending most of its bytes for.
+All three take a site admin: a collection owner should not read or change a vault-wide setting, nor read which repositories the vault is sending most of its bytes for.
 
 `theme`, `ci`, and `sites` are writable. Every reader of them consults `config.json` per request, so a change is in effect on the next one and no restart is involved. `sites` takes a `host` string, and `""` puts sites back on the forge's own hostname under the sandbox; a value that is not a plausible hostname is refused with 400 rather than stored. See [Sites](sites.md) for what a sites host does, and [Deploying a vault](deploying.md#a-hostname-for-each-site) for the DNS and certificates it needs.
 
@@ -87,15 +88,20 @@ All three take admin scope over the whole vault, not merely some admin scope: a 
 ## Repositories
 
 ```
-GET    /api/repos                                  every repository in the vault, flat
+GET    /api/repos                                  every repository the caller may see, flat
 GET    /api/repos/:c/:r                            one repository: description, default branch,
-                                                   counts, fork parent, whether it has a site
-POST   /api/repos                                  create   {collection, name, description?, initReadme?}
-PATCH  /api/repos/:c/:r                            settings {description?, defaultBranch?}
+                                                   counts, fork parent, visibility, whether it has a site
+POST   /api/repos                                  create   {collection, name, description?, initReadme?, private?}
+PATCH  /api/repos/:c/:r                            settings {description?, defaultBranch?, private?}
+                                                   (private takes the admin role; the rest take write)
 POST   /api/repos/:c/:r/fork                       fork     {collection, name?}
-                                                   (push on the source, and on where it lands)
-POST   /api/repos/:c/:r/rename                     rename   {name?, collection?}          (admin)
+                                                   (read on the source, create where it lands)
+POST   /api/repos/:c/:r/rename                     rename   {name?, collection?}          (admin;
+                                                   a move also takes create in the destination)
 DELETE /api/repos/:c/:r                            delete   (requires ?confirm=<c>/<r>)   (admin)
+GET    /api/repos/:c/:r/collaborators              collaborators, owners, and visibility  (admin)
+PUT    /api/repos/:c/:r/collaborators/:user        give a role   {role: read|write|admin} (admin)
+DELETE /api/repos/:c/:r/collaborators/:user        remove one                             (admin)
 GET    /api/repos/:c/:r/branches                   branches, with the default branch named
 POST   /api/repos/:c/:r/branches                   create   {name, from}
 DELETE /api/repos/:c/:r/branches/*                 delete a branch
@@ -105,9 +111,9 @@ DELETE /api/repos/:c/:r/tags/*                     delete a tag
 GET    /api/repos/:c/:r/site                       whether a site exists, its file count, when it changed
 ```
 
-`GET /api/repos/:c/:r` also carries `canPush`, so a caller need not discover what it may do by being refused.
+`GET /api/repos/:c/:r` also carries `private`, `role` (the caller's, or null), and `canPush`, so a caller need not discover what it may do by being refused. A private repository the caller has no role on is left out of `GET /api/repos` and answers 404 everywhere else, exactly as an absent one would.
 
-Forking takes push scope over the source as well as over the collection the fork lands in, which is stricter than the web's reading of the same operation and stricter than GitHub's. A read-only token is refused. This is the rule to revisit first if forking is ever meant to be something a reader can do.
+Forking takes read access to the source and permission to create in the collection the fork lands in. A fork of a private repository starts private.
 
 Branch and tag deletion take the name as a wildcard path segment, because a ref name may contain slashes and `release/1.0` does not fit in one.
 
@@ -223,7 +229,7 @@ POST   /api/repos/:c/:r/pulls/:n/delete-branch  delete the head branch after the
 
 `POST .../merge` takes `method` of `merge` (the default, keeping both parents) or `squash`. A conflict is **409 with the conflicting paths in the body**, not a 400 and not a 500. A pull request that is not open is also 409: to a caller deciding whether to retry, "someone already merged this" is the same answer as "someone got there first".
 
-Merging takes push scope over the repository. Authorship is not enough, as it is for closing, because merging moves a branch.
+Merging takes the write role on the repository. Authorship is not enough, as it is for closing, because merging moves a branch.
 
 Neither the diff nor the commit list is ever stored. Both are questions for git, answered from base and head at the moment they are asked, so a stored copy could only ever be a stale one.
 
@@ -272,7 +278,7 @@ GET  /api/backup/manifest?exclude=&hash=1       NDJSON: every file and repositor
 POST /api/backup/fetch                          {paths: [...]}, answered as a length-prefixed stream
 ```
 
-Two routes, together enough to pull a whole vault onto another disk. `cofferdam backup` is the client; [Backing up a vault](backup.md) describes it and what a backup does not promise. Both require admin scope over the whole vault, with an unrestricted token, since the manifest necessarily names `vault.json` and `.secret`, and both hold the same concurrency gate a file listing does, so a backup in progress cannot crowd out a push.
+Two routes, together enough to pull a whole vault onto another disk. `cofferdam backup` is the client; [Backing up a vault](backup.md) describes it and what a backup does not promise. Both require a site admin with an unrestricted token, since the manifest necessarily names `vault.json` and `.secret`, and both hold the same concurrency gate a file listing does, so a backup in progress cannot crowd out a push.
 
 The manifest streams NDJSON, so a large vault costs the server no more memory than a small one:
 
@@ -302,13 +308,13 @@ Registering the runners a vault will hand jobs to. Note the plural: these are `/
 
 ```
 GET    /api/runners                    registered runners, their liveness, and the queue  (admin)
-POST   /api/runners                    register one   {name, labels?, allow}              (admin over allow)
-DELETE /api/runners/:name              remove one                                         (admin over its allow)
+POST   /api/runners                    register one   {name, labels?, allow}              (own every collection in allow, or site admin)
+DELETE /api/runners/:name              remove one                                         (the same, over its allow)
 ```
 
 `POST` returns `{name, token, labels, allow}`, and the token once: it is what `cofferdam runner run --token` presents, and only its hash is kept. `allow` is a list of globs saying which repositories the runner serves and is required, since a runner with no allow list could take no job. `labels` defaults to `["ubuntu-latest"]`.
 
-Registration takes admin scope over exactly the repositories in `allow`, rather than admin scope in general, because a runner executes repository-controlled code on its own machine: granting one a repository is granting that repository's authors the runner. Removing a runner takes admin scope over the allow list it was registered with. A name that is already registered is 409.
+Registration takes ownership of every collection the `allow` globs name (a site admin covers any), because a runner executes repository-controlled code on its own machine: granting one a repository is granting that repository's authors the runner. Removing a runner takes the same standing over the allow list it was registered with. A name that is already registered is 409.
 
 ## The runner protocol
 

@@ -19,9 +19,10 @@ import { registerLfs } from './lfs';
 import { registerPulls } from './pullweb';
 import { registerReleases } from './releases';
 import { createLfsStore } from './lfsstore';
-import { COLLECTIONS_DIR, REPOS_DIR } from './layout';
+import { COLLECTIONS_DIR, REPOS_DIR, repoPath } from './layout';
 import { faviconSvg } from './logo';
-import { migrateLayout } from './migrate';
+import { migrateLayout, migratePermissions } from './migrate';
+import { repoRole } from './perms';
 import { registerRedirects } from './redirects';
 import { displayName, listCollections, listRepoDirs } from './scan';
 import { getViewer } from './session';
@@ -123,6 +124,12 @@ export function createApp(root: string) {
     console.log(
       `Migrated ${migration.collections.length} collection(s) to ${COLLECTIONS_DIR}/<collection>/${REPOS_DIR}/: ${migration.collections.join(', ')}`
     );
+  }
+  // Likewise a vault.json from before roles: its glob scopes become owners,
+  // collaborators, and the site-admin bit, and each rounding is said aloud.
+  const permNotes = migratePermissions(root);
+  if (permNotes) {
+    for (const note of permNotes) console.log(`permissions: ${note}`);
   }
 
   const app = express();
@@ -287,17 +294,26 @@ export function createApp(root: string) {
     }
     res.type('text/css').set('Cache-Control', 'public, max-age=86400').send(css);
   });
-  // Every repository the interface would show anyway, as a list of names, for
-  // the jump box to search without a round trip per keystroke. Anonymous, as
-  // browsing is: it says no more than the front page already does. It is not
+  // Every repository the interface would show this viewer anyway, as a list
+  // of names, for the jump box to search without a round trip per keystroke.
+  // It says no more than the front page already does to the same eyes: a
+  // private repository is listed only for a viewer with a role there, which
+  // is also why the answer is marked private to shared caches. It is not
   // /api/repos, which is the authenticated interface for programs and carries
   // much more per repository than a name.
-  app.get('/assets/repos.json', (_req, res) => {
+  app.get('/assets/repos.json', (req, res) => {
+    const viewer = getViewer(req, root);
     const repos: string[] = [];
     for (const c of listCollections(root)) {
-      for (const d of listRepoDirs(root, c.name)) repos.push(`${c.name}/${displayName(d)}`);
+      for (const d of listRepoDirs(root, c.name)) {
+        const name = displayName(d);
+        if (repoRole(root, viewer?.auth ?? null, { collection: c.name, name, dir: repoPath(root, c.name, d) }) === null) {
+          continue;
+        }
+        repos.push(`${c.name}/${name}`);
+      }
     }
-    res.set('Cache-Control', 'no-cache').json(repos);
+    res.set('Cache-Control', 'private, no-cache').json(repos);
   });
   // KaTeX ships the stylesheet and fonts its output needs; serving them from
   // the installed package keeps rendered math working with no external

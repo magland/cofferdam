@@ -20,6 +20,12 @@ export interface JobAddress {
 export interface JobSpec {
   address: JobAddress;
   lease: string;
+  /**
+   * An ephemeral token granting read access to exactly this repository, sent
+   * only when the repository is private: a public one clones anonymously.
+   * The runner presents it as the Basic-auth password on the clone.
+   */
+  cloneToken?: string;
   name: string;
   runsOn: string[];
   sha: string;

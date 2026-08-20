@@ -35,7 +35,7 @@ import {
 //
 // Who may do what follows the vault's model, as issues do: reading is
 // anonymous, opening one and commenting need a session, closing needs push
-// scope or authorship, and merging needs push scope over the repository,
+// role or authorship, and merging needs the write role on the repository,
 // because a merge is a write to a branch like any other.
 
 // Descriptions and comments are the long fields here, as they are on an issue.
@@ -583,7 +583,7 @@ export function registerPulls(app: Express, root: string, engine?: CiEngine): vo
       if (!found) return;
       const { ctx, pull, loaded } = found;
       const back = `${pullsUrl(ctx)}/${pull.number}`;
-      // Merging writes to a branch, so it takes push scope over the
+      // Merging writes to a branch, so it takes the write role on the
       // repository: authorship is not enough, as it is for closing.
       if (!ctx.canPush) {
         fail(res, 403, `You do not have push access to ${ctx.collection}/${ctx.repo}.`, viewer, back);

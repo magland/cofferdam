@@ -301,7 +301,7 @@ export function registerReleases(app: Express, root: string): void {
   const form = urlencodedForm('256kb');
 
   // Writing a release is a write to the vault, so it needs the same session,
-  // CSRF check, and push scope over the repository that editing a file does.
+  // CSRF check, and the write role on the repository that editing a file does.
   function requirePusher(req: Request, res: Response, ctx: RepoCtx, viewer: Viewer | null): viewer is Viewer {
     if (!viewer) {
       fail(res, 403, 'You must be signed in to do that.', null, '/login');
@@ -350,7 +350,10 @@ export function registerReleases(app: Express, root: string): void {
   app.get(
     '/:collection/:repo/releases.atom',
     ah(async (req, res) => {
-      const loaded = await loadRepo(root, req, res, null);
+      // The viewer is resolved so a signed-in browser can read a private
+      // repository's feed; an anonymous feed reader of one gets the 404
+      // loadRepo answers.
+      const loaded = await loadRepo(root, req, res, getViewer(req, root));
       if (!loaded) return;
       const ctx = await makeCtx(root, req, loaded, loaded.defaultBranch ?? '', null);
       const base = `${baseUrlOf(req)}${repoUrl(ctx)}`;

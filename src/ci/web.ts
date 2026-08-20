@@ -3,9 +3,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
 import { stripAnsi } from '../ansi';
+import { canReadRepo } from '../perms';
 import { findRepo, isValidName } from '../scan';
 import { Viewer, getViewer, viewerIsAdmin } from '../session';
-import { canAdmin } from '../vault';
 import { ah, baseUrlOf, fail, field, loadRepo, makeCtx, requireViewerPost, send404, urlencodedForm } from '../web';
 import { artifactPath, isValidArtifactName, listArtifacts } from './artifacts';
 import { CiEngine, listWorkflowsAt } from './engine';
@@ -22,9 +22,10 @@ import { newWakeSecret, sendWake, wakeOf } from './wake';
 import { dispatchWorkflow } from './dispatch';
 import * as ciViews from './views';
 
-// The Actions pages and their operations. Reading is anonymous, as everywhere
-// else in a vault; cancelling, re-running, and dispatching require push scope
-// over the repository, and runner registration requires admin scope.
+// The Actions pages and their operations. Reading follows the repository's
+// visibility, as everywhere else in a vault; cancelling, re-running, and
+// dispatching require the write role, and runner management is the site
+// admin's, on the web.
 
 const RUNS_PER_PAGE = 50;
 const MAX_LOG_RENDER_BYTES = 4 * 1024 * 1024;
@@ -178,14 +179,17 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
     })
   );
 
-  // Artifact download. Anonymous, like every other read in a vault: a
-  // repository's build output is as public as its source.
+  // Artifact download. A repository's build output is exactly as visible as
+  // its source: anonymous on a public repository, and gone with the rest of a
+  // private one for anyone without the read role. These three routes resolve
+  // the repository themselves rather than through loadRepo, so each makes the
+  // same check.
   app.get(
     '/:collection/:repo/actions/runs/:run/artifacts/:name',
     ah(async (req, res) => {
       const viewer = getViewer(req, root);
       const repo = findRepo(root, req.params.collection, req.params.repo);
-      if (!repo) {
+      if (!repo || !canReadRepo(root, viewer?.auth ?? null, repo)) {
         send404(res, 'Repository not found', viewer);
         return;
       }
@@ -214,9 +218,10 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
     '/:collection/:repo/actions/runs/:run/log/:job/raw',
     ah(async (req, res) => {
       const repo = findRepo(root, req.params.collection, req.params.repo);
+      const readable = repo !== null && canReadRepo(root, getViewer(req, root)?.auth ?? null, repo);
       const n = parseInt(req.params.run, 10);
-      const job = repo && Number.isInteger(n) && n > 0 ? engine.jobOf(repo.collection, repo.name, n, req.params.job) : null;
-      if (!repo || !job) {
+      const job = repo && readable && Number.isInteger(n) && n > 0 ? engine.jobOf(repo.collection, repo.name, n, req.params.job) : null;
+      if (!repo || !readable || !job) {
         res.status(404).type('text').send('not found\n');
         return;
       }
@@ -253,7 +258,7 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
       const collection = req.params.collection;
       const repoName = req.params.repo;
       const repo = findRepo(root, collection, repoName);
-      if (!repo) {
+      if (!repo || !canReadRepo(root, getViewer(req, root)?.auth ?? null, repo)) {
         res.status(404).json({ error: 'not found' });
         return;
       }
@@ -428,12 +433,6 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
       send404(res, `No runner named ${req.params.name} is registered.`, viewer);
       return;
     }
-    // The scope check is the same one removal and regeneration make: a
-    // delegated administrator sees only the runners their scope covers.
-    if (!canAdmin(viewer.auth, view.allow)) {
-      fail(res, 403, `Your admin scope does not cover: ${view.allow.join(', ')}`, viewer, '/admin/runners');
-      return;
-    }
     const flash = typeof req.query.flash === 'string' ? req.query.flash : undefined;
     res.type('html').send(ciViews.runnerPage(viewer, view, baseUrlOf(req), flash));
   });
@@ -468,10 +467,6 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
       showError('Say which repositories this runner may take jobs for, as globs over collection/repo.');
       return;
     }
-    if (!canAdmin(viewer.auth, allow)) {
-      showError(`Your admin scope does not cover: ${allow.join(', ')}`);
-      return;
-    }
     const { token } = registerRunner(root, name, {
       labels: labels.length ? labels : ['ubuntu-latest'],
       allow,
@@ -491,10 +486,6 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
     const existing = loadRunners(root).runners[name];
     if (!existing) {
       send404(res, `No runner named ${name} is registered.`, viewer);
-      return;
-    }
-    if (!canAdmin(viewer.auth, existing.allow)) {
-      fail(res, 403, `Your admin scope does not cover: ${existing.allow.join(', ')}`, viewer, '/admin/runners');
       return;
     }
     const issued = regenerateRunnerToken(root, name);
@@ -520,10 +511,6 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
     const existing = loadRunners(root).runners[name];
     if (!existing) {
       send404(res, `No runner named ${name} is registered.`, viewer);
-      return;
-    }
-    if (!canAdmin(viewer.auth, existing.allow)) {
-      fail(res, 403, `Your admin scope does not cover: ${existing.allow.join(', ')}`, viewer, '/admin/runners');
       return;
     }
     const url = field(req, 'wakeUrl').trim();
@@ -568,10 +555,6 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
       send404(res, `No runner named ${name} is registered.`, viewer);
       return;
     }
-    if (!canAdmin(viewer.auth, existing.allow)) {
-      fail(res, 403, `Your admin scope does not cover: ${existing.allow.join(', ')}`, viewer, '/admin/runners');
-      return;
-    }
     const back = `/admin/runners/${encodeURIComponent(name)}`;
     const wake = wakeOf(existing);
     if (!wake) {
@@ -596,11 +579,8 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
       fail(res, 403, 'Admin access is required to manage runners.', viewer);
       return;
     }
-    const existing = loadRunners(root).runners[req.params.name];
-    if (existing && !canAdmin(viewer.auth, existing.allow)) {
-      fail(res, 403, `Your admin scope does not cover: ${existing.allow.join(', ')}`, viewer);
-      return;
-    }
+    // viewerIsAdmin above is the whole check: on the web, runners are the
+    // site admin's to manage.
     removeRunner(root, req.params.name);
     res.redirect('/admin/runners?flash=' + encodeURIComponent(`Runner ${req.params.name} removed.`));
   });

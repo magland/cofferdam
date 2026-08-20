@@ -231,7 +231,7 @@ A release hangs on a tag that already exists: notes for a tag nobody can check o
 
 There is no `release upload`. A release's downloads are the archive routes, so there is nothing to upload and no asset endpoints exist.
 
-`cofferdam collection rename` moves everything the collection holds: the repositories, their issues, pull requests, releases, sites, run histories, and LFS objects. It is one directory rename, so it costs the same on a collection of a hundred gigabytes as on an empty one. There is no `--yes`, since a rename that was a mistake is undone by renaming back; what it takes is admin scope over every repository in the collection and push scope over each of them at the new name. The old address is redirected to the new one, so links and existing clones keep working until something else is created under that name; see [The old address](vault.md#the-old-address). One thing does not move with it: token scopes naming the old collection cover nothing afterwards and have to be granted again under the new name. `cofferdam repo rename` is the same operation one level down, and can move a repository to another collection with `--collection`.
+`cofferdam collection rename` moves everything the collection holds: the repositories, their issues, pull requests, releases, sites, run histories, and LFS objects. It is one directory rename, so it costs the same on a collection of a hundred gigabytes as on an empty one. There is no `--yes`, since a rename that was a mistake is undone by renaming back; what it takes is ownership of the collection, and the owners travel with it. The old address is redirected to the new one, so links and existing clones keep working until something else is created under that name; see [The old address](vault.md#the-old-address). One thing does not move with it: token scopes naming the old collection cover nothing afterwards and have to be granted again under the new name. `cofferdam repo rename` is the same operation one level down, and can move a repository to another collection with `--collection`, which additionally takes permission to create in the destination.
 
 Tokens are named by an id rather than by their hash, and neither a token nor its hash is ever returned: only a SHA-256 hash is stored, so there is nothing to return. An id, a creation time, and any scope of its own is what a listing gives, which is what revocation takes. Revoking the token you are using is allowed and reported rather than refused; locking yourself out is your business, and `vault.json` remains hand-editable.
 
@@ -251,7 +251,7 @@ cofferdam backup verify ~/backups/myvault
 cofferdam backup prune ~/backups/myvault
 ```
 
-A vault is a directory, so a copy of one is a directory too, and `cofferdam backup` pulls it over HTTP: no shell on the server, no flyctl, no rsync at the far end. The backup directory is itself a vault, so restoring is `cofferdam serve ~/backups/myvault/current`. Repositories come across as mirrors and a repository nothing was pushed to is skipped without a request; everything else is compared by size and modification time and fetched only where it differs. The token needs admin scope over the whole vault, since the copy includes `vault.json`.
+A vault is a directory, so a copy of one is a directory too, and `cofferdam backup` pulls it over HTTP: no shell on the server, no flyctl, no rsync at the far end. The backup directory is itself a vault, so restoring is `cofferdam serve ~/backups/myvault/current`. Repositories come across as mirrors and a repository nothing was pushed to is skipped without a request; everything else is compared by size and modification time and fetched only where it differs. The token needs to belong to a site admin, since the copy includes `vault.json`.
 
 The vault URL, the exclusions, and the retention policy are recorded in the backup directory, so after the first run a cron entry is the command and a directory. [Backing up a vault](backup.md) has the options, the snapshot and hardlink rules, and an honest account of what a backup does not promise.
 
@@ -286,7 +286,7 @@ git push http://127.0.0.1:3000/mycollection/myrepo main
 # git prompts: username 'jeremy', password '<token>'
 ```
 
-Pushing to a repository that does not exist yet creates it, provided the target matches your scope; the collection directory is created as needed, and after the first push HEAD points at the pushed branch. Repositories created this way get `receive.denyNonFastForwards`, `receive.denyDeletes`, and a `receive.maxInputSize` limit of 2 GiB. Anonymous fetch stays open; only pushes require authentication.
+Pushing to a repository that does not exist yet creates it, provided you may create there: your own collection, one you own, or anywhere for a site admin. The collection directory is created as needed, and after the first push HEAD points at the pushed branch. Repositories created this way are public (a push has no way to carry the private flag; flip it in the settings or with `cofferdam repo edit --private` afterwards) and get `receive.denyNonFastForwards`, `receive.denyDeletes`, and a `receive.maxInputSize` limit of 2 GiB. Anonymous fetch stays open on public repositories; a private one asks for the same credentials a push does and serves only readers. The username in the Basic pair may be anything when the password is a valid token: a token identifies its owner by itself, as on GitHub.
 
 ### Not typing the token every time
 
@@ -374,37 +374,45 @@ cofferdam collection list
 cofferdam collection rename mycollection newname
 ```
 
-Creating one needs push scope over something inside it. An empty collection is an empty directory, so removing it again is `rmdir` in the vault.
+Creating one is creating a namespace: the collection named after you is yours to create, and any other name takes a site admin. An empty collection is an empty directory, so removing it again is `rmdir` in the vault.
 
 Renaming one is a single directory rename, since a collection holds everything of its own inside its directory, and the same operation is on the collection's **Settings** page in the web interface. Everything moves with it; token scopes naming the old collection do not, and have to be granted again under the new name. See [Renaming a repository or a collection](vault.md#renaming-a-repository-or-a-collection).
 
-### Users, tokens, and scopes
+### Users and tokens
 
-`vault.json` holds a `users` object. Each user has a list of hashed tokens, a list of push scope globs, and a list of admin scope globs, all matched against `collection/repo`, where `*` matches any characters including `/`:
+`vault.json` holds a `users` object. Each user has a list of hashed tokens, and optionally the site-admin bit:
 
 ```json
 {
+  "version": 2,
   "users": {
-    "owner": { "scope": ["*"], "admin": ["*"], "tokens": [{ "hash": "..." }] },
-    "ci": { "scope": ["mycollection/*"], "admin": [], "tokens": [{ "hash": "...", "scope": ["mycollection/site"] }] }
+    "owner": { "siteAdmin": true, "tokens": [{ "hash": "..." }] },
+    "ci": { "tokens": [{ "hash": "...", "scope": ["mycollection/site"] }] }
   }
 }
 ```
 
-`scope` says where the user may push (and, on the web, create repositories and edit files). `admin` says where the user may manage other users and delete repositories: an owner has `admin: ["*"]`, while `admin: ["mycollection/*"]` lets a user hand out push access within `mycollection` but nowhere else. A token may carry its own scope, which is intersected with the user scope; this is useful for minting a narrowly scoped token (`--token-scope`) without changing the user. Such restricted tokens carry no admin rights at all. New users default to push scope `["*"]` and no admin scope. The server re-reads the file when it changes; hand-editing it remains possible and is the escape hatch for locked-out vaults. If the file cannot be parsed, writes refuse until it is fixed, while read access continues to work.
+What a user may reach is not recorded here; it lives with the thing that grants it (see [Who may do what](vault.md#who-may-do-what)). A user owns the collection named after them, a collection lists further owners in its `collection.json`, and a repository lists collaborators with roles in its `cofferdam.json`. A token may carry a scope of its own, globs over `collection/repo`, which narrows that one token (`--token-scope`) without changing the user: outside its globs it grants nothing beyond anonymous reading, inside them it caps at the write role, and it can administer nothing. The server re-reads `vault.json` when it changes; hand-editing it remains possible and is the escape hatch for locked-out vaults. If the file cannot be parsed, writes refuse until it is fixed, while read access continues to work. A `vault.json` from before roles (no `"version": 2`) is migrated the first time the server starts, with the original kept as `vault.json.pre-roles`.
 
 ### Granting access to a collection or repository
 
-Permission is granted by adding scope globs to a user, using an actor whose admin scope covers the globs being granted. On the web this is the Grant form on the users page; over the CLI:
+Access is granted where it applies, by someone with the admin role there:
 
 ```bash
-cofferdam user add alice --scope 'mycollection/*'      # create with access to one collection
-cofferdam user grant alice --scope 'othercollection/*' # extend an existing user
-cofferdam user grant alice --admin 'mycollection/*'    # delegate user management for mycollection
-cofferdam user list                                    # review who can push where
+cofferdam user add alice                          # alice owns the collection 'alice' from the start
+cofferdam collab add mycollection/webapp alice    # the write role on one repository
+cofferdam collab add mycollection/webapp bob --role read   # read: sees it even when private
+cofferdam collab list mycollection/webapp
+cofferdam collection owner add mycollection alice # the admin role on everything in mycollection
+cofferdam user grant alice --site-admin           # everything, everywhere
+cofferdam user list                               # review who holds tokens and the site-admin bit
 ```
 
-Note that `--scope` on `cofferdam user add` applies only when creating a user; on an existing user the command refuses rather than silently replacing their permissions (run it without `--scope` to mint an additional token).
+Note that `--site-admin` on `cofferdam user add` applies only when creating a user; on an existing user the command refuses rather than silently escalating (run it plain to mint an additional token).
+
+### Private repositories
+
+`cofferdam repo create mycollection/secrets --private` creates a repository only its collaborators, the collection's owners, and site admins can see; `cofferdam repo edit mycollection/secrets --public` (or `--private`) flips an existing one, taking the admin role. To everyone else a private repository answers the same 404 an absent one does, in listings, over git, and in the API alike.
 
 ### JSON API
 

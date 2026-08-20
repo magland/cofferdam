@@ -41,7 +41,7 @@ cd ~/some/project
 git push http://127.0.0.1:3000/alice/myproject main
 ```
 
-git asks for a username and a password: give `owner` and the token. The push creates the repository, and the collection `alice` holding it, because pushing to a path that does not exist yet creates it when your token's scope allows. Reload the page and the repository is there, with its files, its history, and its README rendered.
+git asks for a username and a password: give `owner` and the token. The push creates the repository, and the collection `alice` holding it, because pushing to a path that does not exist yet creates it when you may create there; the owner may create anywhere. Reload the page and the repository is there, with its files, its history, and its README rendered.
 
 Repositories are grouped into collections, so `alice` above could as well be `research` or `tools`; a collection is a name and a directory, not an account. What is now on disk is exactly:
 
@@ -85,14 +85,14 @@ Then log in, from your own machine, and create the users:
 
 ```bash
 cofferdam login https://my-vault-name.fly.dev    # asks for the token, without echo
-cofferdam user add alice --scope 'alice/*'
+cofferdam user add alice
 ```
 
-`cofferdam user add` prints that user's token, which is what you hand them; it is the credential for both `git push` and signing in on the web. Users do not register themselves. A scope of `alice/*` is push access to everything in the collection `alice` and to nothing else, which is what most people should have; `--admin` is what delegates user management, and by default a new user has none. The same work can be done in the browser from the Admin page, if you would rather see it.
+`cofferdam user add` prints that user's token, which is what you hand them; it is the credential for both `git push` and signing in on the web. Users do not register themselves. A new user owns the collection named after them, `alice/` here, and nothing else, which is what most people should have; `cofferdam collab add` and `cofferdam collection owner add` grant more where it applies, and `--site-admin` is what delegates running the vault. The same work can be done in the browser, if you would rather see it.
 
 What you now have is a vault anyone can read and only your users can write, at a URL you can send to someone. `cofferdam deploy fly my-vault-name` again deploys an update, `cofferdam deploy fly show my-vault-name` says what is running, and the disk, the machine size, and LFS objects in a bucket are flags on the deploy. All of that, and the costs and limits of running one machine against one volume, is in [Deploying a vault](deploying.md).
 
-Two things about a hosted vault are worth being deliberate about. It is readable by anyone who finds the URL, since reads are anonymous by design, so put in it what you are content for a stranger to read. And the vault directory, `/vault` on the volume, is the entire state: a backup is a copy of that directory, and `cofferdam backup ~/backups/myvault` makes one over HTTP without a shell on the machine ([Backing up a vault](backup.md)). There is nothing else to arrange.
+Two things about a hosted vault are worth being deliberate about. It is readable by anyone who finds the URL, since reads are anonymous by design, so put in it what you are content for a stranger to read, and mark a repository private (at creation or in its settings) when you are not. And the vault directory, `/vault` on the volume, is the entire state: a backup is a copy of that directory, and `cofferdam backup ~/backups/myvault` makes one over HTTP without a shell on the machine ([Backing up a vault](backup.md)). There is nothing else to arrange.
 
 ## 3. A domain of your own
 
@@ -105,6 +105,6 @@ Both, with the exact records and commands, are in [A domain of your own](deployi
 ## Where to go next
 
 - [The vault](vault.md): the layout on disk, and how signing in relates to the tokens git uses
-- [The command line](cli.md): the `cofferdam` command, scopes, importing existing repositories, and the JSON API
+- [The command line](cli.md): the `cofferdam` command, roles and tokens, importing existing repositories, and the JSON API
 - [Deploying a vault](deploying.md): Fly.io in detail, a domain of your own, Docker and Caddy on a machine of your own, and the built-in limits
 - [Workflows](workflows.md): GitHub Actions workflows, and the runner that executes them

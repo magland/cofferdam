@@ -4,7 +4,9 @@ import * as path from 'path';
 import { withFileLock, writeFileAtomic } from './atomic';
 import { fileCache } from './filecache';
 import { collectionDir } from './layout';
+import { canReadRepo } from './perms';
 import { displayName, findRepo, isValidName } from './scan';
+import { getViewer } from './session';
 
 // Where a renamed thing used to be, in <vault>/redirects.json.
 //
@@ -329,6 +331,18 @@ function decodeSegment(segment: string): string | null {
  * rename changes none of that.
  */
 export function redirectTargetPath(root: string, pathname: string): string | null {
+  return redirectTarget(root, pathname)?.path ?? null;
+}
+
+/**
+ * The redirect for a path, along with the repository the new address names
+ * when it names one, so the middleware below can ask whether the requester
+ * may be told where it went.
+ */
+export function redirectTarget(
+  root: string,
+  pathname: string
+): { path: string; repo: { collection: string; repo: string } | null } | null {
   const segs = pathname.split('/');
   let offset = 1;
   let repoSegment = true;
@@ -356,7 +370,7 @@ export function redirectTargetPath(root: string, pathname: string): string | nul
       if (to) {
         segs[offset] = encodeURIComponent(to.collection);
         segs[offset + 1] = encodeURIComponent(to.repo) + suffix;
-        return segs.join('/');
+        return { path: segs.join('/'), repo: to };
       }
     }
   }
@@ -367,7 +381,7 @@ export function redirectTargetPath(root: string, pathname: string): string | nul
   const toCollection = resolveCollectionRedirect(root, collection);
   if (toCollection === null) return null;
   segs[offset] = encodeURIComponent(toCollection);
-  return segs.join('/');
+  return { path: segs.join('/'), repo: null };
 }
 
 /**
@@ -394,11 +408,21 @@ export function redirectTargetPath(root: string, pathname: string): string | nul
 export function registerRedirects(app: Express, root: string): void {
   app.use((req, res, next) => {
     if (!hasRedirects(root)) return next();
-    const to = redirectTargetPath(root, req.path);
+    const to = redirectTarget(root, req.path);
     if (to === null) return next();
+    // A redirect that lands on a private repository would tell whoever probes
+    // the old name that the repository exists and where it went, so it is
+    // answered only for a viewer who could read the destination; everyone
+    // else falls through to the 404 the old name would give anyway. Only the
+    // browser session is consulted: a git client following an old remote of a
+    // private repository gets the 404 and updates its remote by hand.
+    if (to.repo) {
+      const target = findRepo(root, to.repo.collection, to.repo.repo);
+      if (target && !canReadRepo(root, getViewer(req, root)?.auth ?? null, target)) return next();
+    }
     const q = req.originalUrl.indexOf('?');
     const query = q === -1 ? '' : req.originalUrl.slice(q);
     const permanent = req.method === 'GET' || req.method === 'HEAD' ? 301 : 308;
-    res.set('Cache-Control', 'no-store').redirect(permanent, to + query);
+    res.set('Cache-Control', 'no-store').redirect(permanent, to.path + query);
   });
 }

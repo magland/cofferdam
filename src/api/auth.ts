@@ -2,8 +2,9 @@ import { Request, Response } from 'express';
 import { GitRepo } from '../git';
 import { AuthLimiter } from '../limit';
 import { OpError, opErrorStatus } from '../ops';
+import { canAdminRepo, canReadRepo, canWriteRepo } from '../perms';
 import { findRepo } from '../scan';
-import { AuthResult, authenticateToken, canAdmin, canPush, loadVault } from '../vault';
+import { AuthResult, authenticateToken, loadVault } from '../vault';
 
 // Authorization for the JSON API, in one place because there is more than one
 // file of routes behind it. Only bearer tokens are accepted: session cookies
@@ -13,8 +14,8 @@ import { AuthResult, authenticateToken, canAdmin, canPush, loadVault } from '../
 // reading lives, and requiring a token on /api keeps one rule for the whole
 // surface.
 //
-// Two transports over one domain layer is two places to forget a canPush, so the
-// shape here is not a helper a handler may neglect to call. requireRepo and
+// Two transports over one domain layer is two places to forget a role check, so
+// the shape here is not a helper a handler may neglect to call. requireRepo and
 // requirePush are what produce the repository a domain function needs, and they
 // load the repository and the scope together: a handler that skips the check has
 // nothing to pass to the domain function.
@@ -94,9 +95,11 @@ function actorFor(req: Request, auth: AuthResult): Actor {
 }
 
 /**
- * The repository named by :collection and :repo, for a caller holding any valid
- * token. `:repo` is accepted with or without the .git suffix, as findRepo already
- * allows everywhere else.
+ * The repository named by :collection and :repo, for a caller allowed to read
+ * it. `:repo` is accepted with or without the .git suffix, as findRepo already
+ * allows everywhere else. A private repository the caller has no role on gets
+ * the same 404 an absent one gets, so a private name proves nothing by
+ * existing.
  */
 export function requireRepo(
   root: string,
@@ -108,7 +111,7 @@ export function requireRepo(
   if (!auth) return null;
   const collection = req.params.collection;
   const repo = findRepo(root, collection, req.params.repo);
-  if (!repo) {
+  if (!repo || !canReadRepo(root, auth, repo)) {
     apiError(res, 404, `no repository ${collection}/${req.params.repo} in this vault`);
     return null;
   }
@@ -124,14 +127,14 @@ export function requirePush(
 ): WriteContext | null {
   const found = requireRepo(root, limiter, req, res);
   if (!found) return null;
-  if (!canPush(found.auth, found.repo.collection, found.repo.name)) {
-    apiError(res, 403, `your push scope does not cover ${found.repo.collection}/${found.repo.name}`);
+  if (!canWriteRepo(root, found.auth, found.repo)) {
+    apiError(res, 403, `you do not have the write role on ${found.repo.collection}/${found.repo.name}`);
     return null;
   }
   return { ...found, actor: actorFor(req, found.auth) };
 }
 
-/** The same, for an operation that needs admin scope over the repository. */
+/** The same, for an operation that needs the admin role on the repository. */
 export function requireRepoAdmin(
   root: string,
   limiter: AuthLimiter,
@@ -140,8 +143,8 @@ export function requireRepoAdmin(
 ): WriteContext | null {
   const found = requireRepo(root, limiter, req, res);
   if (!found) return null;
-  if (!canAdmin(found.auth, [`${found.repo.collection}/${found.repo.name}`])) {
-    apiError(res, 403, `your admin scope does not cover ${found.repo.collection}/${found.repo.name}`);
+  if (!canAdminRepo(root, found.auth, found.repo)) {
+    apiError(res, 403, `you do not have the admin role on ${found.repo.collection}/${found.repo.name}`);
     return null;
   }
   return { ...found, actor: actorFor(req, found.auth) };

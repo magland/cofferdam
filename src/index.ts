@@ -134,10 +134,24 @@ async function serveCmd(args: string[], usage: () => never) {
 
 // ---- users ----
 
-const SCOPE_OPTIONS: OptionSpec[] = [
-  { name: 'scope', type: 'string[]', value: '<glob>', summary: 'Push scope, as a glob over collection/repo' },
-  { name: 'admin', type: 'string[]', value: '<glob>', summary: 'Admin scope: may manage users within it' },
+// Removed rather than renamed, and kept only to say so: glob scopes on users
+// became roles held where they apply, so a --scope that silently became an
+// unknown option would look like a typo rather than like a change of design.
+const REMOVED_SCOPE_OPTIONS: OptionSpec[] = [
+  { name: 'scope', type: 'string[]', hidden: true, summary: 'Removed: access is granted where it applies' },
+  { name: 'admin', type: 'string[]', hidden: true, summary: 'Removed: see --site-admin and collection owners' },
 ];
+
+function refuseScopeOptions(inv: Invocation): void {
+  if (inv.list('scope').length || inv.list('admin').length) {
+    throw new CliError(
+      '--scope and --admin are gone: a user owns the collection named after them, and anything more is granted ' +
+        "where it applies. Use 'cofferdam collab add' for a repository, 'cofferdam collection owner add' for a " +
+        'collection, or --site-admin for everything.',
+      EXIT_USAGE
+    );
+  }
+}
 
 // Removed rather than renamed, and kept only to say so: a `--vault` that
 // silently became an unknown option would look like a typo rather than like a
@@ -158,14 +172,14 @@ function refuseVaultOption(inv: Invocation): void {
   }
 }
 
-function formatScopes(user: { scope: string[]; admin: string[] }): string {
-  const parts = [`push: ${user.scope.join(', ') || '(none)'}`];
-  if (user.admin.length) parts.push(`admin: ${user.admin.join(', ')}`);
-  return parts.join('  ');
+function formatStanding(user: { username?: string; name?: string; siteAdmin?: boolean }): string {
+  const name = user.username ?? user.name ?? '';
+  return user.siteAdmin ? 'site admin' : `owns collection '${name}' by name`;
 }
 
 async function userAddCmd(inv: Invocation) {
   refuseVaultOption(inv);
+  refuseScopeOptions(inv);
   const username = inv.args[0];
   if (!isValidUserName(username)) {
     throw new CliError(
@@ -173,14 +187,11 @@ async function userAddCmd(inv: Invocation) {
       EXIT_USAGE
     );
   }
-  const scope = inv.list('scope');
-  const admin = inv.list('admin');
   const tokenScope = inv.list('token-scope');
   const target = await targetFrom(inv);
   const data = await api(target, 'POST', '/api/users', {
     username,
-    scope: scope.length ? scope : undefined,
-    admin: admin.length ? admin : undefined,
+    siteAdmin: inv.bool('site-admin') || undefined,
     tokenScope: tokenScope.length ? tokenScope : undefined,
   });
   const json = jsonMode(inv);
@@ -193,7 +204,7 @@ async function userAddCmd(inv: Invocation) {
       ? `Created user '${data.username}' on ${target.host}`
       : `Minted a new token for existing user '${data.username}'`
   );
-  console.log(`  ${formatScopes(data as { scope: string[]; admin: string[] })}`);
+  console.log(`  ${formatStanding(data as { username: string; siteAdmin?: boolean })}`);
   if (tokenScope.length) console.log(`  this token is restricted to: ${tokenScope.join(', ')}`);
   console.log('');
   console.log('Token (copy it now; only its hash is stored):');
@@ -204,34 +215,34 @@ async function userAddCmd(inv: Invocation) {
 
 async function userGrantCmd(inv: Invocation) {
   refuseVaultOption(inv);
+  refuseScopeOptions(inv);
   const username = inv.args[0];
-  const scope = inv.list('scope');
-  const admin = inv.list('admin');
-  if (scope.length === 0 && admin.length === 0) {
+  const grant = inv.bool('site-admin');
+  const revoke = inv.bool('revoke-site-admin');
+  if (grant === revoke) {
     throw new CliError(
-      `Nothing to grant. Example: cofferdam user grant ${username} --scope 'mycollection/*'`,
+      `Pass exactly one of --site-admin or --revoke-site-admin. Repository and collection access is granted with ` +
+        `'cofferdam collab add' and 'cofferdam collection owner add'.`,
       EXIT_USAGE
     );
   }
   const target = await targetFrom(inv);
   const data = await api(target, 'POST', `/api/users/${encodeURIComponent(username)}/grant`, {
-    scope: scope.length ? scope : undefined,
-    admin: admin.length ? admin : undefined,
+    siteAdmin: grant,
   });
   const json = jsonMode(inv);
   if (json.enabled) {
     printJson(pickObject(data, json.fields));
     return;
   }
-  console.log(`Granted to '${data.username}'`);
-  console.log(`  ${formatScopes(data as { scope: string[]; admin: string[] })}`);
+  console.log(`${data.username}: ${data.siteAdmin ? 'now a site admin' : 'no longer a site admin'}`);
 }
 
 async function userListCmd(inv: Invocation) {
   refuseVaultOption(inv);
   const target = await targetFrom(inv);
   const data = await api(target, 'GET', '/api/users');
-  const users = (data.users ?? []) as { name: string; scope: string[]; admin: string[]; tokens: number }[];
+  const users = (data.users ?? []) as { name: string; siteAdmin?: boolean; tokens: number }[];
   const json = jsonMode(inv);
   if (json.enabled) {
     printJson({ users: pickFields(users as unknown as Record<string, unknown>[], json.fields) });
@@ -244,7 +255,7 @@ async function userListCmd(inv: Invocation) {
   const width = Math.max(...users.map((u) => u.name.length));
   for (const u of users) {
     const tokens = `${u.tokens} token${u.tokens === 1 ? '' : 's'}`;
-    console.log(`${u.name.padEnd(width)}  ${tokens.padEnd(9)}  ${formatScopes(u)}`);
+    console.log(`${u.name.padEnd(width)}  ${tokens.padEnd(9)}  ${u.siteAdmin ? 'site admin' : ''}`.trimEnd());
   }
 }
 
@@ -257,7 +268,9 @@ async function whoamiCmd(inv: Invocation) {
     return;
   }
   console.log(`${data.username} @ ${target.host}`);
-  console.log(`  ${formatScopes(data as { scope: string[]; admin: string[] })}`);
+  console.log(`  ${formatStanding(data as { username: string; siteAdmin?: boolean })}`);
+  const owned = (data.ownedCollections ?? []) as string[];
+  if (owned.length) console.log(`  collections: ${owned.join(', ')}`);
   if (data.tokenScope) console.log(`  this token is restricted to: ${(data.tokenScope as string[]).join(', ')}`);
 }
 
@@ -383,7 +396,7 @@ async function loginCmd(inv: Invocation) {
   saveLogin(host);
 
   console.log(`Stored the token for '${username}' at ${target.url} (helper: ${helper}).`);
-  console.log(`  ${formatScopes(who as { scope: string[]; admin: string[] })}`);
+  console.log(`  ${formatStanding(who as { username: string; siteAdmin?: boolean })}`);
   if (who.tokenScope) console.log(`  this token is restricted to: ${(who.tokenScope as string[]).join(', ')}`);
   console.log('');
   console.log('git clone, fetch, push, and git lfs against this vault will no longer ask for a password,');
@@ -480,16 +493,68 @@ other order: making the collection first and filling it afterwards.`,
     collectionListCmd
   ),
   {
+    path: ['collection', 'owner', 'add'],
+    summary: 'Make a user an owner of a collection',
+    description: `Owners hold the admin role on every repository in the collection, may create
+repositories in it, and manage the collection itself. The user the collection
+is named after owns it by name and needs no entry.`,
+    args: [
+      { name: 'collection', required: true },
+      { name: 'username', required: true },
+    ],
+    options: [JSON_OPTION, ...TARGET_OPTIONS],
+    async run(inv) {
+      const target = await targetFrom(inv);
+      const data = await api(
+        target,
+        'PUT',
+        `/api/collections/${encodeURIComponent(inv.args[0])}/owners/${encodeURIComponent(inv.args[1])}`
+      );
+      const json = jsonMode(inv);
+      if (json.enabled) {
+        printJson(pickObject(data, json.fields));
+        return;
+      }
+      console.log(`Owners of ${data.name}: ${((data.owners ?? []) as string[]).join(', ') || '(none listed)'}`);
+    },
+  },
+  {
+    path: ['collection', 'owner', 'remove'],
+    summary: 'Remove a user from the owners of a collection',
+    args: [
+      { name: 'collection', required: true },
+      { name: 'username', required: true },
+    ],
+    options: [JSON_OPTION, ...TARGET_OPTIONS],
+    async run(inv) {
+      const target = await targetFrom(inv);
+      const data = await api(
+        target,
+        'DELETE',
+        `/api/collections/${encodeURIComponent(inv.args[0])}/owners/${encodeURIComponent(inv.args[1])}`
+      );
+      const json = jsonMode(inv);
+      if (json.enabled) {
+        printJson(pickObject(data, json.fields));
+        return;
+      }
+      console.log(`Owners of ${data.name}: ${((data.owners ?? []) as string[]).join(', ') || '(none listed)'}`);
+    },
+  },
+  {
     path: ['user', 'add'],
     summary: 'Create a user and print its token once',
-    description: `A new user defaults to push scope "*"; --admin globs let the user manage other
-users within those globs. Run again without --scope on an existing user to mint
-an additional token. Only a SHA-256 hash of a token is ever stored, so the token
-is shown once and cannot be recovered afterwards.`,
+    description: `A user owns the collection named after them, the way a GitHub account owns its
+namespace: they create repositories there and administer them. Anything more is
+granted where it applies ('cofferdam collab add' on a repository, 'cofferdam
+collection owner add' on a collection) or with --site-admin. Run again on an
+existing user to mint an additional token. Only a SHA-256 hash of a token is
+ever stored, so the token is shown once and cannot be recovered afterwards.`,
     args: [{ name: 'username', required: true }],
     options: [
-      ...SCOPE_OPTIONS,
+      { name: 'site-admin', type: 'boolean', summary: 'Admin role everywhere, plus users, runners, and settings' },
       { name: 'token-scope', type: 'string[]', value: '<glob>', summary: 'Restrict this token alone to these globs' },
+      ...REMOVED_SCOPE_OPTIONS,
       VAULT_OPTION,
       JSON_OPTION,
       ...TARGET_OPTIONS,
@@ -498,23 +563,30 @@ is shown once and cannot be recovered afterwards.`,
   },
   {
     path: ['user', 'grant'],
-    summary: "Extend an existing user's push and admin scope",
-    description: `Globs match collection/repo: "mycollection/*" is a whole collection,
-"mycollection/myrepo" a single repository, "*" everything. Existing globs are
-kept.`,
+    summary: 'Grant or withdraw the site-admin bit',
+    description: `Per-repository access is granted on the repository ('cofferdam collab add') and
+per-collection access on the collection ('cofferdam collection owner add');
+this command carries only the one bit that is the vault's own.`,
     args: [{ name: 'username', required: true }],
-    options: [...SCOPE_OPTIONS, VAULT_OPTION, JSON_OPTION, ...TARGET_OPTIONS],
+    options: [
+      { name: 'site-admin', type: 'boolean', summary: 'Make this user a site admin' },
+      { name: 'revoke-site-admin', type: 'boolean', summary: 'Withdraw the site-admin bit' },
+      ...REMOVED_SCOPE_OPTIONS,
+      VAULT_OPTION,
+      JSON_OPTION,
+      ...TARGET_OPTIONS,
+    ],
     run: userGrantCmd,
   },
   {
     path: ['user', 'list'],
-    summary: 'Show users, their scopes, and how many tokens each has',
+    summary: 'Show users, who is a site admin, and how many tokens each has',
     options: [VAULT_OPTION, JSON_OPTION, ...TARGET_OPTIONS],
     run: userListCmd,
   },
   {
     path: ['whoami'],
-    summary: 'Show the user, scopes, and token restriction for the current token',
+    summary: 'Show the user, their standing, and the token restriction for the current token',
     options: [JSON_OPTION, ...TARGET_OPTIONS],
     run: whoamiCmd,
   },
@@ -629,7 +701,7 @@ See also: cofferdam deploy fly runner show <app>, destroy <app>, cofferdam runne
     `Usage: cofferdam runner add <name> --allow <glob>... [--labels <l,...>] [--save]
 
 Prints its token once. --allow says which repositories it may take jobs for, as
-globs over collection/repo; your admin scope must cover them. Jobs never run on
+globs over collection/repo; you must own every collection they name (a site admin may name any). Jobs never run on
 the vault's machine, so a vault with no runner queues its runs and waits.`,
     runnerAddCmd
   ),

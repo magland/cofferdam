@@ -54,7 +54,7 @@ Substituting by name rather than implementing GitHub's artifact and Pages wire p
 
 ### Artifacts
 
-`upload-artifact` stores a tar in the run's directory, `download-artifact` restores it in a later job of the same run, and the run page lists what was produced with a download link. Anonymous, like every other read in a vault. Artifacts are pruned with their run, and a job may not upload more than `ci.artifactMb` (500 MB by default).
+`upload-artifact` stores a tar in the run's directory, `download-artifact` restores it in a later job of the same run, and the run page lists what was produced with a download link. As visible as the repository they belong to, like every other read in a vault. Artifacts are pruned with their run, and a job may not upload more than `ci.artifactMb` (500 MB by default).
 
 Artifacts are addressed by the job's lease, so only a job that is actually running can write one, and only into its own run.
 
@@ -68,6 +68,8 @@ Artifacts are addressed by the job's lease, so only a job that is actually runni
 ```
 
 cofferdam checks the repository out into the workspace before the job starts. On GitHub the workspace begins empty and `actions/checkout` fills it, and cofferdam's `checkout` is a re-sync of what is already there. A workflow that deliberately wants an empty workspace will be surprised.
+
+A private repository's job clones with an ephemeral token the vault mints for exactly that repository, read only, living a little longer than the job may run; a public repository's job clones anonymously and carries none. The token rides in the workspace's `origin` remote the way `actions/checkout` persists credentials, so steps that fetch from origin work unchanged, and it expires with the job. It grants reading that one repository and nothing else: no push and no API, which is the roadmap's next step.
 
 A site is served at `/<collection>/<repo>/site/`, while GitHub serves one at `<owner>.github.io/<repo>/`, and on a vault with a [sites hostname](sites.md) it is served at the root of an origin of its own instead. A site generator that reads `base_path` from `configure-pages` gets the right answer in every case, because the vault decides it and hands it to the job; one that computes its own from the repository name gets GitHub's shape and produces broken links. Pass the base path explicitly in that case, or have the generator emit relative URLs. Note that `configure-pages` therefore has to run *before* the build that uses it, which is the opposite of where a workflow copied from GitHub usually puts it.
 
@@ -83,7 +85,7 @@ A runner is registered against the vault and holds a token of its own, distinct 
 cofferdam runner add laptop --allow 'mycollection/*' --labels ubuntu-latest
 ```
 
-`--allow` takes globs over `collection/repo` and is the security boundary that matters: **a runner executes whatever those repositories' workflows contain, on the machine you start it on.** Registering one requires admin scope over exactly the globs being granted, the same rule that governs handing out push access. Grant a runner the repositories you would let run code on that machine, and no more. Docker is isolation against accidents, not against someone who wants your laptop.
+`--allow` takes globs over `collection/repo` and is the security boundary that matters: **a runner executes whatever those repositories' workflows contain, on the machine you start it on.** Registering one requires owning every collection the globs name (a site admin covers any), the same standing that governs handing out access there. Grant a runner the repositories you would let run code on that machine, and no more. Docker is isolation against accidents, not against someone who wants your laptop.
 
 The token is shown once, and only its hash is stored, as with user tokens. `--save` writes it to `~/.config/cofferdam/runner.json` (mode 0600) so later runs need no arguments. Registration is also available under **Admin > Runners** in the web interface, where each runner also has a page of its own showing its labels, the repositories it serves, whether the vault has heard from it, and the job it is running now.
 

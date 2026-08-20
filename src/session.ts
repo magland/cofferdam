@@ -5,7 +5,8 @@ import { Request, Response } from 'express';
 import { loadConfig } from './config';
 import { fileCache } from './filecache';
 import { isUnderSitesHost } from './siteshost';
-import { AuthResult, TokenRecord, canAdmin, loadVault } from './vault';
+import { isSiteAdmin } from './perms';
+import { AuthResult, TokenRecord, loadVault } from './vault';
 
 // Stateless signed-cookie sessions on top of the token model. The payload is
 // base64url JSON plus an HMAC keyed by <vault>/.secret. There is no server-side
@@ -19,7 +20,8 @@ import { AuthResult, TokenRecord, canAdmin, loadVault } from './vault';
 // session looks that token up in live vault.json, so deleting one token ends
 // the sessions it started and leaves the user's other sessions alone. The
 // token record found this way is the real one, which is why the session carries
-// no copy of the token's scope: canPush and canAdmin read it from the vault.
+// no copy of the token's scope: the role checks in src/perms.ts read it from
+// the vault.
 
 // Cookies are not scoped by origin, so any document on any host under a shared
 // parent domain can set a cookie named cofferdam_session with
@@ -164,7 +166,7 @@ function readSession(req: Request, root: string): SessionPayload | null {
 
 // A Viewer is a signed-in browser session resolved against live vault.json.
 // Its auth is the AuthResult that the session's own token would produce now, so
-// canPush/canAdmin apply unchanged; a session minted from a restricted token
+// the role checks apply unchanged; a session minted from a restricted token
 // resolves to that restricted token record and therefore has no admin rights.
 export interface Viewer {
   auth: AuthResult;
@@ -185,7 +187,7 @@ export function getViewer(req: Request, root: string): Viewer | null {
 }
 
 export function viewerIsAdmin(viewer: Viewer | null): boolean {
-  return viewer !== null && canAdmin(viewer.auth, []);
+  return viewer !== null && isSiteAdmin(viewer.auth);
 }
 
 export function checkCsrf(req: Request, viewer: Viewer): boolean {

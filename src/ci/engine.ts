@@ -3,6 +3,8 @@ import { EventEmitter } from 'events';
 import * as fs from 'fs';
 import * as path from 'path';
 import { GitRepo, execGit } from '../git';
+import { mintJobToken } from '../jobtoken';
+import { repoIsPrivate } from '../perms';
 import { findRepo, listCollections, listRepoDirs } from '../scan';
 import { globMatch } from '../vault';
 import { ExprEnv, ExprValue, evalCondition, render } from './expr';
@@ -351,7 +353,7 @@ export class CiEngine {
       full_name: `${repo.collection}/${repo.name}`,
       owner: { name: repo.collection, login: repo.collection },
       default_branch: def ?? 'main',
-      private: false,
+      private: repoIsPrivate(repo.dir),
     };
   }
 
@@ -870,9 +872,23 @@ export class CiEngine {
         // default stands
       }
     }
+    // A private repository cannot be cloned anonymously, so a job for one
+    // carries an ephemeral read token for exactly that repository (see
+    // src/jobtoken.ts), living a little longer than the job may run. A public
+    // repository's job carries none, since none is needed.
+    let cloneToken: string | undefined;
+    const onDisk = findRepo(this.root, ar.collection, ar.repo);
+    if (onDisk && repoIsPrivate(onDisk.dir)) {
+      cloneToken = mintJobToken(
+        this.root,
+        { collection: ar.collection, repo: ar.repo, run: String(ar.run.number) },
+        (timeout + 30) * 60_000
+      );
+    }
     return {
       address: { collection: ar.collection, repo: ar.repo, run: ar.run.number, job: job.id },
       lease: lease.token,
+      cloneToken,
       name: job.name,
       runsOn: job.runsOn,
       sha: ar.run.sha,

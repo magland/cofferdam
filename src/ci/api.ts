@@ -4,7 +4,8 @@ import * as path from 'path';
 import { AuthLimiter } from '../limit';
 import { isValidName } from '../scan';
 import { siteHostUrl } from '../site';
-import { AuthResult, authenticateToken, canAdmin, loadVault } from '../vault';
+import { canAdminRunnerGlobs, isSiteAdmin } from '../perms';
+import { AuthResult, authenticateToken, loadVault } from '../vault';
 import { baseUrlOf } from '../web';
 import { ArtifactError, artifactPath, artifactsDir, deploySite, isValidArtifactName, listArtifacts } from './artifacts';
 import { CiEngine } from './engine';
@@ -27,7 +28,7 @@ import { sendWake, wakeOf } from './wake';
 //
 // Runner endpoints are authenticated by a runner token (Bearer), never by a
 // session cookie and never by a user token. Registration endpoints are the
-// mirror image: a user token with admin scope, never a runner token. The two
+// mirror image: a user token with standing over the runner, never a runner token. The two
 // credential kinds do not overlap at any endpoint.
 
 const ACQUIRE_TIMEOUT_MS = 25 * 1000;
@@ -117,14 +118,15 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
   app.get('/api/runners', json, (req, res) => {
     const auth = requireAdmin(req, res);
     if (!auth) return;
-    if (!canAdmin(auth, [])) {
-      apiError(res, 403, 'admin access required (with an unrestricted token)');
-      return;
-    }
+    // A site admin sees every runner; anyone else sees the runners they could
+    // administer, which are the ones confined to collections they own.
     const registry = loadRunners(root);
+    const visible = Object.entries(registry.runners).filter(
+      ([, r]) => isSiteAdmin(auth) || canAdminRunnerGlobs(root, auth, r.allow)
+    );
     const load = engine.runnerLoad();
     res.json({
-      runners: Object.entries(registry.runners).map(([name, r]) => ({
+      runners: visible.map(([name, r]) => ({
         name,
         labels: r.labels,
         allow: r.allow,
@@ -200,9 +202,9 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
     }
     // A runner may take jobs for every repository its allow list covers, and
     // those jobs execute repository-controlled code on the runner's machine.
-    // Registering one therefore demands admin scope over exactly that set.
-    if (!canAdmin(auth, allow)) {
-      apiError(res, 403, `your admin scope does not cover: ${allow.join(', ')}`);
+    // Registering one therefore demands ownership of every collection in that set.
+    if (!canAdminRunnerGlobs(root, auth, allow)) {
+      apiError(res, 403, 'you must own every collection this runner serves; a site admin may manage any runner');
       return;
     }
     if (loadRunners(root).runners[name]) {
@@ -241,8 +243,8 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
       apiError(res, 404, `no runner named ${name}`);
       return;
     }
-    if (!canAdmin(auth, existing.allow)) {
-      apiError(res, 403, `your admin scope does not cover: ${existing.allow.join(', ')}`);
+    if (!canAdminRunnerGlobs(root, auth, existing.allow)) {
+      apiError(res, 403, 'you must own every collection this runner serves; a site admin may manage any runner');
       return;
     }
     const issued = regenerateRunnerToken(root, name);
@@ -270,8 +272,8 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
       apiError(res, 404, `no runner named ${name}`);
       return;
     }
-    if (!canAdmin(auth, existing.allow)) {
-      apiError(res, 403, `your admin scope does not cover: ${existing.allow.join(', ')}`);
+    if (!canAdminRunnerGlobs(root, auth, existing.allow)) {
+      apiError(res, 403, 'you must own every collection this runner serves; a site admin may manage any runner');
       return;
     }
     const wake = wakeFrom((req.body ?? {}) as Record<string, unknown>);
@@ -300,8 +302,8 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
       apiError(res, 404, `no runner named ${name}`);
       return;
     }
-    if (!canAdmin(auth, existing.allow)) {
-      apiError(res, 403, `your admin scope does not cover: ${existing.allow.join(', ')}`);
+    if (!canAdminRunnerGlobs(root, auth, existing.allow)) {
+      apiError(res, 403, 'you must own every collection this runner serves; a site admin may manage any runner');
       return;
     }
     const wake = wakeOf(existing);
@@ -329,8 +331,8 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
       apiError(res, 404, `no runner named ${name}`);
       return;
     }
-    if (!canAdmin(auth, existing.allow)) {
-      apiError(res, 403, `your admin scope does not cover: ${existing.allow.join(', ')}`);
+    if (!canAdminRunnerGlobs(root, auth, existing.allow)) {
+      apiError(res, 403, 'you must own every collection this runner serves; a site admin may manage any runner');
       return;
     }
     removeRunner(root, name);

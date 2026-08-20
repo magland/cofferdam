@@ -5,31 +5,23 @@ import { test } from 'node:test';
 import {
   accountForEmail,
   addUserToken,
-  AuthResult,
   authenticate,
   bootstrapVault,
-  canAdmin,
-  canAdminCollection,
-  canAdminUser,
-  canCreateCollection,
-  canPush,
-  collectionMoveBlocker,
   globMatch,
-  repoRenameBlocker,
   hashToken,
   loadVault,
   mergeContributors,
   removeUser,
   revokeToken,
+  setSiteAdmin,
   setUserEmails,
   tokenId,
-  TokenRecord,
-  UserRecord,
   Vault,
 } from '../src/vault';
 import { makeVaultDir } from './helpers';
 
-// ---- glob matching and the permission questions built on it ----
+// Who somebody is: authentication, tokens, and identity. Who may do what
+// lives in src/perms.ts and is tested in perms.test.ts.
 
 test('globMatch: * spans anything, ? one character, everything else is literal', () => {
   assert.ok(globMatch('*', 'demo/webapp'));
@@ -43,79 +35,12 @@ test('globMatch: * spans anything, ? one character, everything else is literal',
   assert.ok(globMatch('a+b', 'a+b'));
 });
 
-function makeUser(scope: string[], admin: string[] = []): UserRecord {
-  return { tokens: [], scope, admin };
-}
-
-function makeAuth(user: UserRecord, tokenScope?: string[]): AuthResult {
-  const token: TokenRecord = { hash: 'unused' };
-  if (tokenScope !== undefined) token.scope = tokenScope;
-  return { username: 'someone', user, token };
-}
-
-test('canPush follows the user scope, narrowed by a token scope when one exists', () => {
-  assert.ok(canPush(makeAuth(makeUser(['*'])), 'demo', 'webapp'));
-  assert.ok(canPush(makeAuth(makeUser(['demo/*'])), 'demo', 'webapp'));
-  assert.ok(!canPush(makeAuth(makeUser(['demo/*'])), 'other', 'webapp'));
-  assert.ok(canPush(makeAuth(makeUser(['*']), ['demo/webapp']), 'demo', 'webapp'));
-  assert.ok(!canPush(makeAuth(makeUser(['*']), ['demo/webapp']), 'demo', 'other'));
-  // A token whose scope list is empty can push nowhere.
-  assert.ok(!canPush(makeAuth(makeUser(['*']), []), 'demo', 'webapp'));
-});
-
-test('canCreateCollection matches the collection part of each glob', () => {
-  assert.ok(canCreateCollection(makeAuth(makeUser(['demo/onerepo'])), 'demo'));
-  assert.ok(!canCreateCollection(makeAuth(makeUser(['demo/onerepo'])), 'other'));
-  assert.ok(canCreateCollection(makeAuth(makeUser(['*'])), 'anything'));
-});
-
-test('canAdmin needs an unrestricted token and cover for every glob asked about', () => {
-  assert.ok(canAdmin(makeAuth(makeUser([], ['demo/*'])), ['demo/a', 'demo/b']));
-  assert.ok(!canAdmin(makeAuth(makeUser([], ['demo/*'])), ['demo/a', 'other/b']));
-  assert.ok(!canAdmin(makeAuth(makeUser([], [])), ['demo/a']));
-  // A token-scoped session has no admin rights at all.
-  assert.ok(!canAdmin(makeAuth(makeUser([], ['*']), ['*']), ['demo/a']));
-});
-
-test('canAdminCollection asks for a glob naming the collection even when it is empty', () => {
-  assert.ok(canAdminCollection(makeAuth(makeUser([], ['demo/*'])), 'demo', []));
-  assert.ok(!canAdminCollection(makeAuth(makeUser([], ['demo/*'])), 'other', []));
-  assert.ok(canAdminCollection(makeAuth(makeUser([], ['*'])), 'demo', ['a', 'b']));
-  assert.ok(!canAdminCollection(makeAuth(makeUser([], ['*']), ['*']), 'demo', []));
-});
-
-test('canAdminUser asks for admin over everything the user reaches', () => {
-  const target = makeUser(['demo/*'], ['demo/x']);
-  assert.ok(canAdminUser(makeAuth(makeUser([], ['demo/*'])), target));
-  assert.ok(!canAdminUser(makeAuth(makeUser([], ['demo/x'])), target));
-  assert.ok(canAdminUser(makeAuth(makeUser([], ['*'])), target));
-  assert.ok(!canAdminUser(makeAuth(makeUser([], ['*']), ['*']), target));
-});
-
-test('a repository rename needs admin over the source and push over the destination', () => {
-  const mover = makeAuth(makeUser(['dest/*'], ['src/*']));
-  assert.equal(repoRenameBlocker(mover, 'src', 'a', 'dest', 'a'), null);
-  assert.equal(repoRenameBlocker(mover, 'other', 'a', 'dest', 'a'), 'admin scope over other/a');
-  assert.equal(repoRenameBlocker(mover, 'src', 'a', 'elsewhere', 'a'), 'push scope over elsewhere/a');
-  // Push scope over the destination is enough; admin there is not asked for.
-  assert.ok(!canAdmin(mover, ['dest/a']));
-});
-
-test('a collection move needs push over each repository at the new name', () => {
-  const mover = makeAuth(makeUser(['dest/a', 'dest/b']));
-  assert.equal(collectionMoveBlocker(mover, ['a', 'b'], 'dest'), null);
-  assert.equal(collectionMoveBlocker(mover, ['a', 'c'], 'dest'), 'push scope over dest/c');
-  // An empty collection falls back to the weaker create question.
-  assert.equal(collectionMoveBlocker(mover, [], 'dest'), null);
-  assert.equal(collectionMoveBlocker(mover, [], 'elsewhere'), 'push scope over elsewhere');
-});
-
 // ---- authentication ----
 
 test('authenticate compares hashes and tolerates a malformed stored one', () => {
   const vault: Vault = {
     users: {
-      alice: { tokens: [{ hash: 'not-hex-at-all' }, { hash: hashToken('secret'), id: 'ab12cd34' }], scope: ['*'], admin: [] },
+      alice: { tokens: [{ hash: 'not-hex-at-all' }, { hash: hashToken('secret'), id: 'ab12cd34' }] },
     },
   };
   const hit = authenticate(vault, 'alice', 'secret');
@@ -135,8 +60,8 @@ test('tokenId falls back to a hash prefix for a record from before ids existed',
 
 const identityVault: Vault = {
   users: {
-    owner: { tokens: [], scope: ['*'], admin: ['*'], emails: ['Jeremy@Example.com'] },
-    alice: { tokens: [], scope: ['*'], admin: [] },
+    owner: { tokens: [], siteAdmin: true, emails: ['Jeremy@Example.com'] },
+    alice: { tokens: [] },
   },
 };
 
@@ -195,7 +120,7 @@ test('a committer with no email at all is grouped by name', () => {
 
 // ---- the file-backed operations, against a throwaway vault ----
 
-test('bootstrapVault creates the owner once, and holds a preset token to shape', () => {
+test('bootstrapVault creates the owner as a site admin, once, and holds a preset token to shape', () => {
   const root = makeVaultDir();
   assert.throws(() => bootstrapVault(root, 'short'), /24 to 256/);
   assert.throws(() => bootstrapVault(root, '   '), /blank/);
@@ -211,16 +136,19 @@ test('bootstrapVault creates the owner once, and holds a preset token to shape',
   assert.equal(state.status, 'ok');
   if (state.status === 'ok') {
     assert.ok(authenticate(state.vault, 'owner', preset));
+    assert.equal(state.vault.users.owner.siteAdmin, true);
+    assert.ok(!state.vault.legacy);
   }
 });
 
 test('tokens are minted, revoked by id, and a revoked token stops authenticating', () => {
   const root = makeVaultDir();
-  const { token, created, user } = addUserToken(root, 'alice', { scope: ['demo/*'] });
+  const { token, created, user } = addUserToken(root, 'alice');
   assert.ok(created);
-  assert.deepEqual(user.scope, ['demo/*']);
-  // Creating the same user again with a scope is refused rather than merged.
-  assert.throws(() => addUserToken(root, 'alice', { scope: ['*'] }), /already exists/);
+  assert.ok(!user.siteAdmin);
+  // Creating the same user again with the site-admin bit is refused rather
+  // than silently escalated.
+  assert.throws(() => addUserToken(root, 'alice', { siteAdmin: true }), /already exists/);
   const id = user.tokens[0].id;
   assert.ok(id);
   const gone = revokeToken(root, 'alice', id);
@@ -233,9 +161,22 @@ test('tokens are minted, revoked by id, and a revoked token stops authenticating
   }
 });
 
+test('setSiteAdmin grants and withdraws the bit, and the file carries a version', () => {
+  const root = makeVaultDir();
+  addUserToken(root, 'alice');
+  assert.equal(setSiteAdmin(root, 'alice', true).siteAdmin, true);
+  const raw = JSON.parse(fs.readFileSync(path.join(root, 'vault.json'), 'utf8'));
+  assert.equal(raw.version, 2);
+  assert.equal(raw.users.alice.siteAdmin, true);
+  assert.equal(setSiteAdmin(root, 'alice', false).siteAdmin, undefined);
+  const cleared = JSON.parse(fs.readFileSync(path.join(root, 'vault.json'), 'utf8'));
+  assert.equal(cleared.users.alice.siteAdmin, undefined);
+  assert.throws(() => setSiteAdmin(root, 'nobody', true), /does not exist/);
+});
+
 test('setUserEmails stores a list and an empty list clears the field', () => {
   const root = makeVaultDir();
-  addUserToken(root, 'alice', { scope: ['*'] });
+  addUserToken(root, 'alice');
   setUserEmails(root, 'alice', ['a@example.com']);
   const raw = JSON.parse(fs.readFileSync(path.join(root, 'vault.json'), 'utf8'));
   assert.deepEqual(raw.users.alice.emails, ['a@example.com']);
@@ -246,7 +187,7 @@ test('setUserEmails stores a list and an empty list clears the field', () => {
 
 test('removeUser takes the user and answers whether there was one', () => {
   const root = makeVaultDir();
-  addUserToken(root, 'alice', { scope: ['*'] });
+  addUserToken(root, 'alice');
   assert.ok(removeUser(root, 'alice'));
   assert.ok(!removeUser(root, 'alice'));
 });
@@ -260,5 +201,28 @@ test('a vault.json that does not parse is an error state, not a crash', () => {
 
 test('a username may not begin with a dot', () => {
   const root = makeVaultDir();
-  assert.throws(() => addUserToken(root, '.hidden', { scope: ['*'] }), /invalid username/);
+  assert.throws(() => addUserToken(root, '.hidden'), /invalid username/);
+});
+
+// ---- the pre-roles file shape ----
+
+test('a vault.json without the version marker reads as legacy and refuses edits', () => {
+  const root = makeVaultDir();
+  fs.writeFileSync(
+    path.join(root, 'vault.json'),
+    JSON.stringify({
+      users: { alice: { tokens: [{ hash: hashToken('secret') }], scope: ['demo/*'], admin: ['demo/x'] } },
+    })
+  );
+  const state = loadVault(root);
+  assert.equal(state.status, 'ok');
+  if (state.status === 'ok') {
+    assert.ok(state.vault.legacy);
+    assert.deepEqual(state.vault.users.alice.legacy, { scope: ['demo/*'], admin: ['demo/x'] });
+    // Tokens still authenticate, so signing in works the moment the server
+    // has migrated; the globs grant nothing until then.
+    assert.ok(authenticate(state.vault, 'alice', 'secret'));
+  }
+  assert.throws(() => addUserToken(root, 'bob'), /predates roles/);
+  assert.throws(() => setUserEmails(root, 'alice', []), /predates roles/);
 });

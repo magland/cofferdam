@@ -3,8 +3,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { AuthLimiter } from '../limit';
 import { repoPath } from '../layout';
+import { atLeast, repoIsPrivate, repoRole } from '../perms';
 import { displayName, forkParent, listCollections, listRepoDirs, repoDescription, siteDir } from '../scan';
-import { canPush } from '../vault';
 import { issueCounts } from '../issues';
 import { pullCounts } from '../pulls';
 import { listReleases } from '../releases';
@@ -22,6 +22,7 @@ export interface RepoSummary {
   description: string;
   forkedFrom: { collection: string; repo: string } | null;
   hasSite: boolean;
+  private: boolean;
 }
 
 function summarize(root: string, collection: string, dirName: string): RepoSummary {
@@ -33,6 +34,7 @@ function summarize(root: string, collection: string, dirName: string): RepoSumma
     description: repoDescription(dir) ?? '',
     forkedFrom: forkParent(dir),
     hasSite: siteDir(root, collection, name) !== null,
+    private: repoIsPrivate(dir),
   };
 }
 
@@ -46,7 +48,13 @@ export function registerRepoApi(app: Express, root: string, limiter: AuthLimiter
     if (!auth) return;
     const repos: RepoSummary[] = [];
     for (const c of listCollections(root)) {
-      for (const dirName of listRepoDirs(root, c.name)) repos.push(summarize(root, c.name, dirName));
+      for (const dirName of listRepoDirs(root, c.name)) {
+        const dir = repoPath(root, c.name, dirName);
+        // A private repository the caller has no role on is not listed, the
+        // same way its page 404s.
+        if (repoRole(root, auth, { collection: c.name, name: displayName(dirName), dir }) === null) continue;
+        repos.push(summarize(root, c.name, dirName));
+      }
     }
     res.json({ repos });
   });
@@ -55,6 +63,7 @@ export function registerRepoApi(app: Express, root: string, limiter: AuthLimiter
     const found = requireRepo(root, limiter, req, res);
     if (!found) return;
     const { repo, auth } = found;
+    const role = repoRole(root, auth, repo);
     const branches = await repo.listRefs('heads');
     const tags = await repo.listRefs('tags');
     const issues = issueCounts(root, repo.collection, repo.name);
@@ -72,7 +81,8 @@ export function registerRepoApi(app: Express, root: string, limiter: AuthLimiter
       closedPulls: pulls.closed,
       // What this token may do here, so that a caller need not discover it by
       // being refused.
-      canPush: canPush(auth, repo.collection, repo.name),
+      role,
+      canPush: atLeast(role, 'write'),
     });
   });
 

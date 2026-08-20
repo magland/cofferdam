@@ -199,7 +199,7 @@ export async function importCmd(args: string[], usage: () => never): Promise<voi
     const env = pushEnv(username, target.token);
     if ((await git([...pushArgs(tmp), 'push', '--mirror', dest], env)) !== 0) {
       throw new Error(
-        `Could not push to ${dest}.\nIf it refused the token, check that your push scope covers ${collection}/${name}.`
+        `Could not push to ${dest}.\nIf it refused the token, check that you may create in ${collection}.`
       );
     }
     if (a.lfs) {

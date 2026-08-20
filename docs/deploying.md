@@ -332,7 +332,7 @@ With a domain name pointed at the machine, the included `docker-compose.yml` add
 DOMAIN=cofferdam.example.org docker compose up -d
 docker compose logs cofferdam            # the owner token
 cofferdam login https://cofferdam.example.org
-cofferdam user add alice --scope 'alice/*'
+cofferdam user add alice
 git clone https://cofferdam.example.org/alice/some-repo
 ```
 

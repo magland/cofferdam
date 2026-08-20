@@ -13,7 +13,7 @@ git commit -m "Add a recording"
 git push
 ```
 
-Downloading is anonymous, so `git clone` followed by `git lfs pull` on a public repository needs no credentials; uploading requires push scope over the repository, the same token and the same scope as `git push`. There is no separate LFS permission and no per-repository setting to turn on.
+Downloading is anonymous, so `git clone` followed by `git lfs pull` on a public repository needs no credentials; uploading requires the write role on the repository, the same token `git push` takes. On a private repository, downloading takes the read role too, presented the same way. There is no separate LFS permission and no per-repository setting to turn on.
 
 Push-to-create still works for a repository that tracks files with LFS. git fetches the remote's refs before it runs the pre-push hook that uploads the objects, and it is that first request which creates the repository here, so the objects arrive at a repository that already exists.
 

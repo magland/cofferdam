@@ -16,7 +16,7 @@ import { send404, wildcard } from './web';
 // (src/browse.ts, src/lfs.ts); site files were not, and a document served from
 // the forge's own origin can read the visitor's session, scrape the CSRF token
 // out of any page that session can fetch, and act as them. Anyone who can write
-// <repo>.site held that capability, which is every user with push scope on the
+// <repo>.site held that capability, which is every user with the write role on the
 // repository and every workflow that publishes it.
 //
 // Two answers, and the mode says which is in force. 'sandbox' is the default and

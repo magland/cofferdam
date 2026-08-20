@@ -61,7 +61,12 @@ export const repoCommands: Command[] = [
         console.log(only ? `No repositories in ${only}` : `No repositories on ${target.host}`);
         return;
       }
-      printTable(repos.map((r) => [`${r.collection}/${r.name}`, String(r.description ?? '')]));
+      printTable(
+        repos.map((r) => [
+          `${r.collection}/${r.name}${(r as { private?: boolean }).private ? ' (private)' : ''}`,
+          String(r.description ?? ''),
+        ])
+      );
     },
   },
   {
@@ -85,6 +90,7 @@ export const repoCommands: Command[] = [
         console.log(`forked from ${from.collection}/${from.repo}`);
       }
       printTable([
+        ['visibility', data.private ? 'private' : 'public'],
         ['default branch', String(data.defaultBranch ?? '(none)')],
         ['last updated', shortDate(data.updated)],
         ['branches', String(data.branches)],
@@ -103,6 +109,7 @@ export const repoCommands: Command[] = [
     options: [
       { name: 'description', type: 'string', value: '<d>', summary: 'One-line description' },
       { name: 'readme', type: 'boolean', summary: 'Add a first commit with a README.md' },
+      { name: 'private', type: 'boolean', summary: 'Visible only to collaborators, owners, and site admins' },
       JSON_OPTION,
       ...TARGET_OPTIONS,
     ],
@@ -117,6 +124,7 @@ export const repoCommands: Command[] = [
         name: parts[1],
         description: inv.str('description') ?? undefined,
         initReadme: inv.bool('readme'),
+        private: inv.bool('private') || undefined,
       });
       const json = jsonMode(inv);
       if (json.enabled) {
@@ -152,25 +160,32 @@ export const repoCommands: Command[] = [
   },
   {
     path: ['repo', 'edit'],
-    summary: 'Change a repository description or default branch',
+    summary: 'Change a repository description, default branch, or visibility',
     args: [{ name: 'repo' }],
     options: [
       { name: 'description', type: 'string', value: '<d>', summary: 'New description' },
       { name: 'default-branch', type: 'string', value: '<b>', summary: 'New default branch' },
+      { name: 'private', type: 'boolean', summary: 'Make the repository private (takes the admin role)' },
+      { name: 'public', type: 'boolean', summary: 'Make the repository public' },
       JSON_OPTION,
       ...COMMON,
     ],
     async run(inv) {
       const description = inv.str('description');
       const defaultBranch = inv.str('default-branch');
-      if (description === null && defaultBranch === null) {
-        throw new CliError('Nothing to change. Pass --description or --default-branch.', EXIT_USAGE);
+      if (inv.bool('private') && inv.bool('public')) {
+        throw new CliError('Pass --private or --public, not both.', EXIT_USAGE);
+      }
+      const priv = inv.bool('private') ? true : inv.bool('public') ? false : undefined;
+      if (description === null && defaultBranch === null && priv === undefined) {
+        throw new CliError('Nothing to change. Pass --description, --default-branch, --private, or --public.', EXIT_USAGE);
       }
       const target = await targetFrom(inv);
       const repo = await resolveRepo(inv, target, inv.args[0] ?? null);
       const data = await api(target, 'PATCH', repoPath(repo), {
         description: description ?? undefined,
         defaultBranch: defaultBranch ?? undefined,
+        private: priv,
       });
       const json = jsonMode(inv);
       if (json.enabled) {
@@ -668,6 +683,86 @@ caller that reads, thinks, and then writes wants. 'cofferdam file view <path>
       }
       for (const h of hits) console.log(`${h.path}:${h.line}: ${String(h.text ?? '').trim()}`);
       if (data.truncated) console.error('(the server capped the results)');
+    },
+  },
+
+  // ---- collaborators ----
+  //
+  // All three take the admin role on the repository, as the API routes behind
+  // them do: who may see or write a repository is decided by the people who
+  // administer it.
+  {
+    path: ['collab', 'list'],
+    summary: "Show a repository's collaborators, and the owners standing over them",
+    args: [{ name: 'repo' }],
+    options: [JSON_OPTION, ...COMMON],
+    async run(inv) {
+      const target = await targetFrom(inv);
+      const repo = await resolveRepo(inv, target, inv.args[0] ?? null);
+      const data = await api(target, 'GET', `${repoPath(repo)}/collaborators`);
+      const json = jsonMode(inv);
+      if (json.enabled) {
+        printJson(pickObject(data, json.fields));
+        return;
+      }
+      console.log(`${repo.collection}/${repo.repo} is ${data.private ? 'private' : 'public'}`);
+      const collaborators = (data.collaborators ?? []) as { username: string; role: string }[];
+      if (collaborators.length === 0) console.log('No collaborators.');
+      else printTable(collaborators.map((c) => [c.username, c.role]));
+      const owners = (data.owners ?? []) as string[];
+      console.log(
+        `Owners of ${repo.collection} hold the admin role without being listed: ` +
+          `${[repo.collection, ...owners].join(', ')} (the first by bearing the collection's name).`
+      );
+    },
+  },
+  {
+    path: ['collab', 'add'],
+    summary: 'Give a user a role on a repository',
+    description: `read may see a private repository; write may also push and edit; admin may also
+change its settings, visibility, and collaborators. Adding a user who already
+has a role replaces it.`,
+    args: [
+      { name: 'repo', required: true },
+      { name: 'username', required: true },
+    ],
+    options: [
+      { name: 'role', type: 'string', value: '<r>', summary: 'read, write (the default), or admin' },
+      JSON_OPTION,
+      ...TARGET_OPTIONS,
+    ],
+    async run(inv) {
+      const target = await targetFrom(inv);
+      const repo = await resolveRepo(inv, target, inv.args[0]);
+      const data = await api(target, 'PUT', `${repoPath(repo)}/collaborators/${encodeURIComponent(inv.args[1])}`, {
+        role: inv.str('role') ?? 'write',
+      });
+      const json = jsonMode(inv);
+      if (json.enabled) {
+        printJson(pickObject(data, json.fields));
+        return;
+      }
+      console.log(`${data.username} now has the ${data.role} role on ${repo.collection}/${repo.repo}`);
+    },
+  },
+  {
+    path: ['collab', 'remove'],
+    summary: "Remove a user's role on a repository",
+    args: [
+      { name: 'repo', required: true },
+      { name: 'username', required: true },
+    ],
+    options: [JSON_OPTION, ...TARGET_OPTIONS],
+    async run(inv) {
+      const target = await targetFrom(inv);
+      const repo = await resolveRepo(inv, target, inv.args[0]);
+      const data = await api(target, 'DELETE', `${repoPath(repo)}/collaborators/${encodeURIComponent(inv.args[1])}`);
+      const json = jsonMode(inv);
+      if (json.enabled) {
+        printJson(pickObject(data, json.fields));
+        return;
+      }
+      console.log(`Removed ${data.removed} from ${repo.collection}/${repo.repo}`);
     },
   },
 ];

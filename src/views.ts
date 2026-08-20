@@ -35,6 +35,8 @@ export interface RepoCtx {
   /** The repository this one was forked from, if it was. */
   forkedFrom: { collection: string; repo: string } | null;
   viewer: Viewer | null;
+  /** Whether the repository is private, for the badge beside its name. */
+  isPrivate: boolean;
   canPush: boolean;
   canAdmin: boolean;
 }
@@ -330,7 +332,8 @@ export function repoHeader(
         ctx.forkedFrom.collection
       )}/${encodeURIComponent(ctx.forkedFrom.repo)}">${ctx.forkedFrom.collection}/${ctx.forkedFrom.repo}</a></span></div>`
     : '';
-  return html`<div class="repo-title">${REPO_ICON}<a href="/${encodeURIComponent(ctx.collection)}">${ctx.collection}</a> <span class="muted">/</span> <a href="${base}"><b>${ctx.repo}</b></a>${search}</div>
+  const badge = ctx.isPrivate ? html` <span class="counter" title="Only collaborators, owners, and site admins can see this repository">Private</span>` : '';
+  return html`<div class="repo-title">${REPO_ICON}<a href="/${encodeURIComponent(ctx.collection)}">${ctx.collection}</a> <span class="muted">/</span> <a href="${base}"><b>${ctx.repo}</b></a>${badge}${search}</div>
 ${parent}
 <nav class="tabs">
 ${tab('code', 'Code', base, 'code')}
@@ -383,6 +386,8 @@ export interface RepoCard {
   collection: string;
   name: string;
   description: string | null;
+  /** Shown as a badge; a private repository is only ever listed to its own readers. */
+  isPrivate?: boolean;
   updated: string | null;
   /** Where this repository's published site is, or null if it has none. */
   siteUrl?: string | null;
@@ -420,8 +425,9 @@ function repoCard(r: RepoCard, showCollection: boolean): Html {
   const ci = r.ci ? ciMark(r.ci, r.name) : '';
   const desc = r.description ? html`<p class="rc-desc">${r.description}</p>` : '';
   const when = r.updated ? html`<span class="rc-when">${timeTag(r.updated)}</span>` : '';
+  const badge = r.isPrivate ? html`<span class="counter">Private</span>` : '';
   return html`<li class="repo-card">
-<div class="rc-top"><a class="rc-name" href="${href}">${prefix}${r.name}</a><span class="rc-marks">${site}${ci}</span></div>
+<div class="rc-top"><a class="rc-name" href="${href}">${prefix}${r.name}</a>${badge}<span class="rc-marks">${site}${ci}</span></div>
 ${desc}
 <div class="rc-meta">${when}</div>
 </li>`;

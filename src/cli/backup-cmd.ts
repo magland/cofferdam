@@ -799,6 +799,18 @@ interface SyncSummary {
   pruned: string[];
 }
 
+/**
+ * Credentials for a git call against the vault, as a per-invocation config.
+ * The backup token is a site admin's, so it may read every repository the
+ * manifest names, private ones included; git alone would clone anonymously
+ * and be told a private repository is not there. The username half of the
+ * Basic pair is a placeholder: the server identifies a token by its value.
+ */
+function gitAuth(target: RemoteTarget): string[] {
+  const basic = Buffer.from(`x-token:${target.token}`, 'utf8').toString('base64');
+  return ['-c', `http.extraHeader=Authorization: Basic ${basic}`];
+}
+
 async function syncRepo(
   target: RemoteTarget,
   current: string,
@@ -813,7 +825,7 @@ async function syncRepo(
     fs.rmSync(dest, { recursive: true, force: true });
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     if (!quiet) console.error(`Cloning ${entry.collection}/${entry.repo}`);
-    await gitOrFail(['clone', '--mirror', '--', url, dest], `could not clone ${url}`);
+    await gitOrFail([...gitAuth(target), 'clone', '--mirror', '--', url, dest], `could not clone ${url}`);
     // Reflogs are the one thing git appends to in place, and an appended file
     // corrupts every snapshot that has already hardlinked it. A mirror has no
     // use for them anyway: it holds no work of its own to recover.
@@ -825,7 +837,10 @@ async function syncRepo(
   // force-pushed is followed rather than refused: this is a copy of the vault,
   // not a branch with opinions of its own. --prune is what carries a deletion
   // across.
-  await gitOrFail(['-C', dest, 'fetch', '--prune', '--', url, '+refs/*:refs/*'], `could not fetch ${url}`);
+  await gitOrFail(
+    [...gitAuth(target), '-C', dest, 'fetch', '--prune', '--', url, '+refs/*:refs/*'],
+    `could not fetch ${url}`
+  );
   return 'fetched';
 }
 
@@ -837,7 +852,7 @@ async function syncRepo(
 async function syncHead(target: RemoteTarget, current: string, entry: ManifestRepo): Promise<void> {
   const dest = path.join(current, entry.path);
   const url = `${target.host}/${encodeURIComponent(entry.collection)}/${encodeURIComponent(entry.repo)}`;
-  const r = await git(['ls-remote', '--symref', '--', url, 'HEAD']);
+  const r = await git([...gitAuth(target), 'ls-remote', '--symref', '--', url, 'HEAD']);
   if (r.code !== 0) return;
   const m = r.out.match(/^ref:\s+(\S+)\s+HEAD$/m);
   if (!m) return;
@@ -1502,7 +1517,7 @@ them - issues, pull requests, releases, sites, run history, LFS objects on the
 volume, and the vault's state files - is compared by size and modification time
 and fetched only where it differs.
 
-The token needs admin scope over the whole vault, because the copy includes
+The token needs to belong to a site admin, because the copy includes
 vault.json. The vault URL, the exclusions, and the retention policy are recorded
 in backup.json, so a cron entry is this command and a directory.
 

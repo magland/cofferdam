@@ -2,7 +2,7 @@
 
 A self-hosted git forge, GitHub-shaped: repository browsing, in-browser editing, issues, pull requests, releases, Actions-style workflows, static sites, and Git LFS. One Node process, no database, nothing installed beside it but git.
 
-Reading is anonymous. Every write is authorized by a token, and users are created by an administrator rather than registering themselves.
+Reading is anonymous, unless a repository is made private, in which case it is visible only to its collaborators, its collection's owners, and site admins. Every write is authorized by a token, and users are created by an administrator rather than registering themselves. Permissions are GitHub-shaped: a user owns the collection named after them, repositories take collaborators with read, write, or admin roles, and one site-admin bit runs the vault.
 
 ## Try it locally
 
@@ -26,20 +26,20 @@ With a [Fly.io](https://fly.io) account and flyctl installed, one command create
 npm install -g @magland/cofferdam
 cofferdam deploy fly my-vault-name       # -> https://my-vault-name.fly.dev
 cofferdam login https://my-vault-name.fly.dev
-cofferdam user add alice --scope 'alice/*'
+cofferdam user add alice
 ```
 
 The same command deploys updates. See [Deploying a vault](docs/deploying.md) for Docker, self-hosting, costs, and giving the vault a domain of your own.
 
 ## What it does
 
-- **Browsing:** files at any ref, syntax highlighting, markdown with KaTeX, history, diffs, blame, compare, search, contributors, archives. Anonymous. A collection introduces itself with a profile README, from a `.cofferdam` repository in it.
+- **Browsing:** files at any ref, syntax highlighting, markdown with KaTeX, history, diffs, blame, compare, search, contributors, archives. Anonymous, apart from private repositories. A collection introduces itself with a profile README, from a `.cofferdam` repository in it.
 - **Editing in the browser:** files, uploads, branches, tags, repositories, collections, forks, users. Controls a token cannot use are not shown.
 - **Issues and pull requests,** stored as markdown in the vault. Merge or squash, refused on conflicts.
 - **Releases** tied to a tag, with Atom feeds.
 - **Workflows:** GitHub Actions workflows, planned by the server and run by a Docker runner you start elsewhere, including one deployed to Fly.io with a command, which stops when idle and is woken by the vault when a job is queued.
 - **Sites:** a static site per repository, sandboxed by default, optionally on its own hostname.
-- **Git:** anonymous clone over smart HTTP, token-authenticated push including push-to-create, and LFS to S3 or to the vault.
+- **Git:** anonymous clone over smart HTTP for public repositories and authenticated clone for private ones, token-authenticated push including push-to-create, and LFS to S3 or to the vault.
 - **CLI and JSON API** covering everything the web UI does, plus a generic `cofferdam api`. Built for scripts: `--json` everywhere, distinct exit codes, no prompts.
 
 The frontend has no build step and no client framework: plain server-rendered HTML with a little vanilla JavaScript.
@@ -93,11 +93,11 @@ npm run test:unit  # the pure modules, in milliseconds
 npm run smoke      # end to end; npm run smoke:slow adds containerized workflow jobs
 ```
 
-The example vault has user `dev` with token `cofferdam_example_dev_token` (full scope, example vault only) and read-only `reader` with `cofferdam_example_reader_token`.
+The example vault has site admin `dev` with token `cofferdam_example_dev_token` (example vault only) and plain user `reader` with `cofferdam_example_reader_token`.
 
 ## Roadmap
 
-- Secrets, and a scoped token so a workflow can push to its own repository and call the API
+- Secrets, and widening the per-job token (today it grants read for the clone, private repositories included) so a workflow can push to its own repository and call the API
 - `actions/cache`
 - Docker actions, `container:` jobs, and service containers
 

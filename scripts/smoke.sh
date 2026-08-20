@@ -979,22 +979,36 @@ check "and no collection can shadow the address" 400 -b "$JAR" "$BASE/new/collec
 check "admin users page" 200 -b "$JAR" "$BASE/admin/users"
 CSRF="$(csrf_of)"
 check "create user alice" 200 -b "$JAR" "$BASE/admin/users" \
-  --data-urlencode "csrf=$CSRF" --data-urlencode username=alice --data-urlencode "scope=demo/*" \
-  --data-urlencode "admin="
+  --data-urlencode "csrf=$CSRF" --data-urlencode username=alice
 ALICE_TOKEN="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
 
-# A second user whose scope reaches nothing that exists, for the half of the
-# authorization checks that need a token which may read but not write. alice has
-# demo/* and so cannot stand in for it everywhere.
+# A second user with no role anywhere, for the half of the authorization
+# checks that need a token which may read public repositories but write
+# nothing. alice will own demo and so cannot stand in for it everywhere.
 check "create user narrow" 200 -b "$JAR" "$BASE/admin/users" \
-  --data-urlencode "csrf=$CSRF" --data-urlencode username=narrow \
-  --data-urlencode "scope=nowhere/*" --data-urlencode "admin="
+  --data-urlencode "csrf=$CSRF" --data-urlencode username=narrow
 NARROW_TOKEN="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
 [ -n "$NARROW_TOKEN" ] || { echo "FAIL: no token for the narrow user"; exit 1; }
-PASS=$((PASS+1)); echo "ok: a token that may read everything and write nothing"
+PASS=$((PASS+1)); echo "ok: a token that may read everything public and write nothing"
 [ -n "$ALICE_TOKEN" ] || { echo "FAIL: no token for alice shown"; exit 1; }
-check "grant to alice" 302 -b "$JAR" "$BASE/admin/users/alice/grant" \
-  --data-urlencode "csrf=$CSRF" --data-urlencode "scope=extra/thing" --data-urlencode "admin="
+
+# alice becomes a write collaborator on demo/proj and nothing else: she can
+# edit that one repository, and every other door stays shut, which is the
+# standing the checks below lean on.
+check "the repo settings page offers collaborators" 200 -b "$JAR" "$BASE/demo/proj/settings"
+body_has "a collaborators box" 'Collaborators'
+CSRF="$(csrf_of)"
+check "make alice a collaborator on demo/proj" 302 -b "$JAR" "$BASE/demo/proj/settings/collaborators" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode username=alice --data-urlencode role=write
+check "a collaborator must be a user the vault knows" 404 -b "$JAR" "$BASE/demo/proj/settings/collaborators" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode username=nobodyatall --data-urlencode role=read
+check "a made-up role is refused" 400 -b "$JAR" "$BASE/demo/proj/settings/collaborators" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode username=alice --data-urlencode role=emperor
+
+check "grant site admin from the users page" 302 -b "$JAR" "$BASE/admin/users/narrow/grant" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "siteAdmin=true"
+check "and withdraw it again" 302 -b "$JAR" "$BASE/admin/users/narrow/grant" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "siteAdmin=false"
 check "mint token for alice" 200 -b "$JAR" "$BASE/admin/users/alice/token" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "tokenScope="
 body_has "minted token shown" 'cofferdam_'
@@ -1068,6 +1082,10 @@ drop_token() {
     fs.writeFileSync(file, JSON.stringify(v, null, 2) + "\n");
   ' "$VAULT/vault.json" "$1" "$2" || { echo "FAIL: could not delete the token"; exit 1; }
 }
+
+# The session checks below open the editor, which takes the write role.
+check "revoked gets the write role on demo/proj" 302 -b "$JAR" "$BASE/demo/proj/settings/collaborators" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode username=revoked --data-urlencode role=write
 
 check "sign in with the first token" 302 -c "$REV_JAR" "$BASE/login" \
   --data-urlencode username=revoked --data-urlencode "token=$REV_ONE" --data-urlencode next=/
@@ -1149,31 +1167,40 @@ check "alice cannot import out of scope" 403 -b "$ALICE_JAR" \
 check "alice cannot create a collection out of scope" 403 -b "$ALICE_JAR" "$BASE/new/collection" \
   --data-urlencode "csrf=$ALICE_CSRF" --data-urlencode name=other
 
-# ---- a delegated collection admin is an admin, but not for vault-wide settings ----
+# ---- a collection owner administers their collection, and nothing vault-wide ----
 
 check "admin users page for delegation" 200 -b "$JAR" "$BASE/admin/users"
 CSRF="$(csrf_of)"
-check "create delegated admin" 200 -b "$JAR" "$BASE/admin/users" \
-  --data-urlencode "csrf=$CSRF" --data-urlencode username=collectionadmin \
-  --data-urlencode "scope=demo/*" --data-urlencode "admin=demo/*"
+check "create collection owner" 200 -b "$JAR" "$BASE/admin/users" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode username=collectionadmin
 COLLECTION_TOKEN="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
 [ -n "$COLLECTION_TOKEN" ] || { echo "FAIL: no token for collectionadmin"; exit 1; }
+check "the collection settings page offers owners" 200 -b "$JAR" "$BASE/demo/settings"
+body_has "an owners box" 'Add owner'
+CSRF="$(csrf_of)"
+check "make collectionadmin an owner of demo" 302 -b "$JAR" "$BASE/demo/settings/owners" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode username=collectionadmin
+check "an owner must be a user the vault knows" 404 -b "$JAR" "$BASE/demo/settings/owners" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode username=nobodyatall
 check "collectionadmin login" 302 -c "$TMP/collectionadmin.jar" "$BASE/login" \
   --data-urlencode username=collectionadmin --data-urlencode "token=$COLLECTION_TOKEN" --data-urlencode next=/
-check "collectionadmin reaches admin index" 200 -b "$TMP/collectionadmin.jar" "$BASE/admin"
-body_lacks "no appearance card for delegated admin" '/admin/appearance'
-check "collectionadmin cannot open appearance" 403 -b "$TMP/collectionadmin.jar" "$BASE/admin/appearance"
-check "collectionadmin cannot set the theme" 403 -b "$TMP/collectionadmin.jar" "$BASE/admin/appearance" \
+# Owning a collection is not vault administration: the admin pages, the theme,
+# and the user list stay the site admin's.
+check "an owner does not reach the admin index" 403 -b "$TMP/collectionadmin.jar" "$BASE/admin"
+check "an owner cannot open appearance" 403 -b "$TMP/collectionadmin.jar" "$BASE/admin/appearance"
+check "an owner cannot set the theme" 403 -b "$TMP/collectionadmin.jar" "$BASE/admin/appearance" \
   --data-urlencode "csrf=$CSRF" --data-urlencode theme=terminal
-# Admin over demo/* is admin over the collection, so its settings are theirs to
-# open; where a rename would land is a separate question, and their push scope
-# does not reach outside demo.
-check "collectionadmin reaches collection settings" 200 -b "$TMP/collectionadmin.jar" "$BASE/demo/settings"
+# The collection itself is theirs: its settings open, and a rename is theirs
+# to make and to unmake, with the owners file travelling along.
+check "an owner reaches collection settings" 200 -b "$TMP/collectionadmin.jar" "$BASE/demo/settings"
 CA_CSRF="$(csrf_of)"
-check "collectionadmin cannot rename it out of their push scope" 403 -b "$TMP/collectionadmin.jar" \
-  "$BASE/demo/settings/rename" --data-urlencode "csrf=$CA_CSRF" --data-urlencode name=elsewhere
+check "an owner may rename the collection" 302 -b "$TMP/collectionadmin.jar" \
+  "$BASE/demo/settings/rename" --data-urlencode "csrf=$CA_CSRF" --data-urlencode name=demoswap
+check "ownership travelled with the rename" 200 -b "$TMP/collectionadmin.jar" "$BASE/demoswap/settings"
+check "and back again" 302 -b "$TMP/collectionadmin.jar" \
+  "$BASE/demoswap/settings/rename" --data-urlencode "csrf=$CA_CSRF" --data-urlencode name=demo
 check "and the collection is still there" 200 "$BASE/demo"
-check "collectionadmin cannot reach another collection's settings" 403 -b "$TMP/collectionadmin.jar" \
+check "an owner cannot reach another collection's settings" 403 -b "$TMP/collectionadmin.jar" \
   "$BASE/newname/settings"
 
 # ---- anonymous sees no controls ----
@@ -1536,7 +1563,7 @@ body_has "the token's user is the author regardless" '"author":"owner"'
 api_as "a token without scope may still read" 200 "$ALICE_TOKEN" "$BASE/api/repos/apis/repo/issues"
 api_as "but not write" 403 "$ALICE_TOKEN" -H "$JSON_CT" \
   --data '{"title":"not mine"}' "$BASE/api/repos/apis/repo/issues"
-body_has "saying which repository it does not cover" 'push scope does not cover apis/repo'
+body_has "saying which repository it does not cover" 'write role on apis/repo'
 api_as "and may write where its scope does reach" 201 "$ALICE_TOKEN" -H "$JSON_CT" \
   --data '{"title":"alice was here"}' "$BASE/api/repos/demo/proj/issues"
 body_has "as herself" '"author":"alice"'
@@ -1681,21 +1708,26 @@ api "api renames it" 200 -H "$JSON_CT" --data '{"name":"renamed"}' "$BASE/api/re
 check "at its new address" 200 "$BASE/apiforks/renamed"
 no_trace_of "and nothing of it is left under the old name" apiforks made
 
-# One rename rule on both surfaces: admin scope over what is moving, push
-# scope over where it lands. mover holds exactly those two abilities and
-# nothing more, which the API used to refuse by asking for admin scope over
-# the destination where the web and the documentation ask for push.
+# One rename rule on both surfaces: the admin role on what is moving, and for
+# a move to another collection, permission to create over there. mover holds
+# exactly those two abilities and nothing more: the admin role on the one
+# repository, and ownership of the collection the move lands in.
 check "admin users page for the mover setup" 200 -b "$JAR" "$BASE/admin/users"
 CSRF="$(csrf_of)"
 check "create user mover" 200 -b "$JAR" "$BASE/admin/users" \
-  --data-urlencode "csrf=$CSRF" --data-urlencode username=mover \
-  --data-urlencode "scope=apiforks2/*" --data-urlencode "admin=apiforks/*"
+  --data-urlencode "csrf=$CSRF" --data-urlencode username=mover
 MOVER_TOKEN="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
 [ -n "$MOVER_TOKEN" ] || { echo "FAIL: no token for mover"; exit 1; }
-api_as "a move outside the mover's push scope is refused" 403 "$MOVER_TOKEN" -X POST -H "$JSON_CT" \
+api "mover gets the admin role on the fork" 200 -X PUT -H "$JSON_CT" \
+  --data '{"role":"admin"}' "$BASE/api/repos/apiforks/renamed/collaborators/mover"
+api "a collection for the move to land in" 200 -H "$JSON_CT" \
+  --data '{"name":"apiforks2"}' "$BASE/api/collections"
+api "mover becomes its owner" 200 -X PUT "$BASE/api/collections/apiforks2/owners/mover"
+body_has "and is listed" '"owners":\["mover"\]'
+api_as "a move where the mover cannot create is refused" 403 "$MOVER_TOKEN" -X POST -H "$JSON_CT" \
   --data '{"collection":"elsewhere"}' "$BASE/api/repos/apiforks/renamed/rename"
-body_has "naming the missing ability" 'push scope over elsewhere/renamed'
-api_as "admin over the source and push over the destination is enough" 200 "$MOVER_TOKEN" -X POST -H "$JSON_CT" \
+body_has "naming the missing ability" 'permission to create repositories in elsewhere'
+api_as "the admin role here and creation over there is enough" 200 "$MOVER_TOKEN" -X POST -H "$JSON_CT" \
   --data '{"collection":"apiforks2"}' "$BASE/api/repos/apiforks/renamed/rename"
 check "the repository serves at its new home" 200 "$BASE/apiforks2/renamed"
 api "moved back for the checks below" 200 -X POST -H "$JSON_CT" \
@@ -1763,7 +1795,7 @@ body_has "and how many files are in it" '"entries":2'
 
 # Tokens are named by an id, never by their hash and never by the token.
 api "api reads a user" 200 "$BASE/api/users/narrow"
-body_has "with their scope" '"scope":\["nowhere/\*"\]'
+body_has "with their standing" '"siteAdmin":false'
 body_has "and a token id" '"id":"'
 body_lacks "but no hash" '"hash"'
 NARROW_TOKEN_ID="$({ grep -o '"id":"[^"]*"' "$BODY" || true; } | head -1 | cut -d'"' -f4)"
@@ -1797,9 +1829,91 @@ body_has "naming it" '"deleted":"disposable"'
 api "a collection with something in it is refused" 409 -X DELETE "$BASE/api/collections/apis"
 body_has "plainly" 'not empty'
 api "an unknown collection is a 404" 404 -X DELETE "$BASE/api/collections/nosuchcollection"
-api_as "removing a collection needs admin scope over it" 403 "$ALICE_TOKEN" -X DELETE "$BASE/api/collections/viaapi"
-api_as "and a collection admin may remove one inside their scope" 409 "$COLLECTION_TOKEN" -X DELETE "$BASE/api/collections/demo"
+api_as "removing a collection needs an owner" 403 "$ALICE_TOKEN" -X DELETE "$BASE/api/collections/viaapi"
+api_as "and an owner may remove theirs" 409 "$COLLECTION_TOKEN" -X DELETE "$BASE/api/collections/demo"
 body_has "getting as far as the emptiness check" 'not empty'
+
+# ---- private repositories ----
+
+# A private repository disappears for everyone without a role on it: the same
+# 404 an absent repository gets, on the web, over git, and in the API, so a
+# private name proves nothing by existing.
+
+api "create a private repository" 201 -H "$JSON_CT" \
+  --data '{"collection":"vaulted","name":"hidden","private":true,"initReadme":true}' "$BASE/api/repos"
+body_has "and it says so" '"private":true'
+api "the owner reads it over the api" 200 "$BASE/api/repos/vaulted/hidden"
+body_has "flagged private" '"private":true'
+check "anonymous page is the same 404 an absent repository gets" 404 "$BASE/vaulted/hidden"
+check "as is a tree path" 404 "$BASE/vaulted/hidden/tree/main"
+check "and the issues page" 404 "$BASE/vaulted/hidden/issues"
+check "and a raw file" 404 "$BASE/vaulted/hidden/raw/main/README.md"
+api_as "a token without a role gets the 404 too" 404 "$NARROW_TOKEN" "$BASE/api/repos/vaulted/hidden"
+api "the vault's repo list shows it to the owner" 200 "$BASE/api/repos"
+body_has "by name" '"name":"hidden"'
+api_as "and leaves it out for everyone else" 200 "$NARROW_TOKEN" "$BASE/api/repos"
+body_lacks "by name" '"name":"hidden"'
+check "the front page does not list it" 200 "$BASE/"
+body_lacks "anywhere" 'vaulted/hidden'
+check "nor does the jump box data" 200 "$BASE/assets/repos.json"
+body_lacks "anywhere" 'vaulted/hidden'
+check "the owner's front page does" 200 -b "$JAR" "$BASE/"
+body_has "with a badge" 'vaulted/hidden'
+
+# The git wire: no credential gets the 401 challenge git turns into a prompt,
+# and a credential without the read role gets the not-found an absent
+# repository gives, so the two cannot be told apart.
+check "anonymous fetch of a private repository asks for credentials" 401 -D "$TMP/headers" \
+  "$BASE/vaulted/hidden/info/refs?service=git-upload-pack"
+header_has "with a challenge" 'www-authenticate: basic'
+check "an absent repository asks identically" 401 "$BASE/vaulted/nosuchthing/info/refs?service=git-upload-pack"
+check "a credential without the role is told not found" 404 -u "narrow:$NARROW_TOKEN" \
+  "$BASE/vaulted/hidden/info/refs?service=git-upload-pack"
+check "a reader fetches" 200 -u "owner:$OWNER_TOKEN" "$BASE/vaulted/hidden/info/refs?service=git-upload-pack"
+rm -rf "$TMP/hiddenclone"
+git clone -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/vaulted/hidden" "$TMP/hiddenclone" 2>/dev/null \
+  || { echo "FAIL: a reader could not clone the private repository"; exit 1; }
+[ -f "$TMP/hiddenclone/README.md" ] || { echo "FAIL: the private clone has no README"; exit 1; }
+PASS=$((PASS+2)); echo "ok: a reader's clone carries the content"
+
+# Collaborators: read may see it, write may change it, neither is the other.
+api "grant narrow the read role" 200 -X PUT -H "$JSON_CT" \
+  --data '{"role":"read"}' "$BASE/api/repos/vaulted/hidden/collaborators/narrow"
+api_as "a read collaborator sees the repository" 200 "$NARROW_TOKEN" "$BASE/api/repos/vaulted/hidden"
+api_as "and still cannot write it" 403 "$NARROW_TOKEN" -X PUT -H "$JSON_CT" \
+  --data '{"branch":"main","content":"x","message":"no"}' "$BASE/api/repos/vaulted/hidden/contents/nope.txt"
+api "the collaborator list names them" 200 "$BASE/api/repos/vaulted/hidden/collaborators"
+body_has "with the role" '"username":"narrow","role":"read"'
+api_as "reading the collaborator list takes the admin role" 403 "$NARROW_TOKEN" "$BASE/api/repos/vaulted/hidden/collaborators"
+api "remove the collaborator" 200 -X DELETE "$BASE/api/repos/vaulted/hidden/collaborators/narrow"
+api_as "and the repository disappears for them again" 404 "$NARROW_TOKEN" "$BASE/api/repos/vaulted/hidden"
+
+# Visibility is a switch, not a property fixed at creation, and it takes the
+# admin role where description takes write.
+api "making it public again" 200 -X PATCH -H "$JSON_CT" \
+  --data '{"private":false}' "$BASE/api/repos/vaulted/hidden"
+check "after which anonymous reading works" 200 "$BASE/vaulted/hidden"
+api "and private again" 200 -X PATCH -H "$JSON_CT" \
+  --data '{"private":true}' "$BASE/api/repos/vaulted/hidden"
+check "after which it is gone again" 404 "$BASE/vaulted/hidden"
+
+# A fork of a private repository starts private, so forking is never a way to
+# publish what its parent was protecting.
+api "fork the private repository" 201 -H "$JSON_CT" \
+  --data '{"collection":"vaulted","name":"hiddenfork"}' "$BASE/api/repos/vaulted/hidden/fork"
+api "the fork is private too" 200 "$BASE/api/repos/vaulted/hiddenfork"
+body_has "from birth" '"private":true'
+check "and invisible to anonymous eyes" 404 "$BASE/vaulted/hiddenfork"
+
+# A rename must not turn the old name into an oracle: the redirect is answered
+# only to eyes that could read the destination.
+api "rename the private repository" 200 -X POST -H "$JSON_CT" \
+  --data '{"name":"tucked"}' "$BASE/api/repos/vaulted/hidden/rename"
+check "the old name stays a 404 for anonymous eyes" 404 "$BASE/vaulted/hidden"
+check "and redirects for a reader" 301 -b "$JAR" -D "$TMP/headers" "$BASE/vaulted/hidden"
+header_has "to where it went" 'location: /vaulted/tucked'
+api "renamed back" 200 -X POST -H "$JSON_CT" \
+  --data '{"name":"hidden"}' "$BASE/api/repos/vaulted/tucked/rename"
 
 # Renaming a collection over the API, which is the same operation the web offers
 # on a collection's settings page.
@@ -1825,11 +1939,9 @@ api "a name that is not usable is refused" 400 -X POST -H "$JSON_CT" \
   --data '{"name":"settings"}' "$BASE/api/collections/apinew/rename"
 api "renaming a collection that is not there is a 404" 404 -X POST -H "$JSON_CT" \
   --data '{"name":"whatever"}' "$BASE/api/collections/nosuchcollection/rename"
-api_as "renaming a collection needs admin scope over it" 403 "$ALICE_TOKEN" -X POST -H "$JSON_CT" \
+api_as "renaming a collection is the owners' alone" 403 "$ALICE_TOKEN" -X POST -H "$JSON_CT" \
   --data '{"name":"alicesnow"}' "$BASE/api/collections/apinew/rename"
-api_as "and push scope over where it lands" 403 "$COLLECTION_TOKEN" -X POST -H "$JSON_CT" \
-  --data '{"name":"elsewhere"}' "$BASE/api/collections/demo/rename"
-body_has "naming what is out of reach" 'push scope'
+body_has "saying whose it is" 'not an owner'
 
 
 api "api reads the vault settings" 200 "$BASE/api/config"
@@ -1846,7 +1958,7 @@ api "changing nothing is refused" 400 -X PATCH -H "$JSON_CT" --data '{}' "$BASE/
 # Not merely an admin: a delegated collection administrator should not restyle
 # the whole vault, which is the rule the web applies to the same setting.
 api_as "vault settings need admin over everything" 403 "$COLLECTION_TOKEN" "$BASE/api/config"
-body_has "saying as much" 'whole vault'
+body_has "saying as much" 'site admin required'
 api "put the theme back" 200 -X PATCH -H "$JSON_CT" --data '{"theme":"paper"}' "$BASE/api/config"
 
 # The hostname sites are served from is the setting a hosted vault most needs to
@@ -1961,7 +2073,7 @@ PASS=$((PASS+1)); echo "ok: login recorded the vault URL"
 run_ok "whoami needs no arguments after login" cli whoami
 body_has "whoami names the logged-in user and vault" "owner @ $BASE"
 run_ok "user list needs no arguments after login" cli user list
-body_has "user list came from the vault" 'push: *'
+body_has "user list came from the vault" 'site admin'
 run_ok "runner list needs no arguments after login" cli runner list
 
 # ---- the command registry, `cofferdam api`, and the output contract ----
@@ -2102,9 +2214,12 @@ body_has "saying the tag stayed" 'tag itself is still there'
 
 # A user of its own to revoke and remove, so that the checks further down still
 # have the narrow user they expect.
-run_ok "user add, to have one to remove" cli user add spare --scope 'nowhere/*'
+run_ok "user add, to have one to remove" cli user add spare
+run_code "the old --scope option says where access went" 2 cli user add spare2 --scope 'nowhere/*'
+grep -q 'collab add' "$BODY.err" || { echo "FAIL: the refusal does not point at collab add"; cat "$BODY.err"; exit 1; }
+PASS=$((PASS+1)); echo "ok: pointing at the commands that grant it now"
 run_ok "user view" cli user view spare
-body_has "with their scope" 'push: nowhere/\*'
+body_has "with their standing" "owns collection 'spare' by name"
 run_ok "user token list" cli user token list spare
 CLI_TOKEN_ID="$(head -1 "$BODY" | awk '{print $1}')"
 [ -n "$CLI_TOKEN_ID" ] || { echo "FAIL: no token id listed"; exit 1; }
@@ -4127,7 +4242,7 @@ done
 
 check "supplied owner token works" 200 -H "authorization: Bearer $PRESET_TOKEN" "$PRESET_BASE/api/whoami"
 body_has "it belongs to the owner" '"username":"owner"'
-body_has "and the owner may do anything" '"\*"'
+body_has "and the owner may do anything" '"siteAdmin":true'
 check "another token is still refused" 401 -H "authorization: Bearer cofferdam_wrong" "$PRESET_BASE/api/whoami"
 grep -q "$PRESET_TOKEN" "$PRESET_LOG" && { echo "FAIL: the server logged the supplied owner token"; exit 1; }
 PASS=$((PASS+1)); echo "ok: the supplied token was not echoed into the log"

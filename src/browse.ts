@@ -13,10 +13,11 @@ import { atomFeed } from './atom';
 import { latestRun } from './ci/runs';
 import { renderDiff } from './diff';
 import { collectionDir, repoPath } from './layout';
-import { displayName, isValidName, listCollections, listRepoDirs, repoDescription, siteDir } from './scan';
-import { getViewer } from './session';
+import { canAdminCollection, repoIsPrivate, repoRole } from './perms';
+import { displayName, findRepo, isValidName, listCollections, listRepoDirs, repoDescription, siteDir } from './scan';
+import { Viewer, getViewer } from './session';
 import { serveSite, siteHostUrl } from './site';
-import { canAdminCollection, loadVault, mergeContributors } from './vault';
+import { loadVault, mergeContributors } from './vault';
 import * as views from './views';
 import { encPath, repoUrl } from './views';
 import { LoadedRepo, ah, baseUrlOf, loadRepo, makeCtx, send404, sendBusy, wildcard } from './web';
@@ -43,13 +44,22 @@ export const IMAGE_TYPES: Record<string, string> = {
 
 export function registerBrowse(app: Express, root: string, gates: Gates, lfs: LfsContext | null = null): void {
   /**
-   * What a listing says about one repository. The three facts beyond the name
-   * come from three different places, so they are gathered once here and used
-   * by both the front page and a collection's own.
+   * What a listing says about one repository. The facts beyond the name come
+   * from different places, so they are gathered once here and used by both
+   * the front page and a collection's own. A private repository the viewer
+   * has no role on is not listed at all, matching the 404 its page gives.
    */
-  async function repoCards(req: Request, collection: string): Promise<views.RepoCard[]> {
+  async function repoCards(req: Request, collection: string, viewer: Viewer | null): Promise<views.RepoCard[]> {
+    const visible = listRepoDirs(root, collection).filter(
+      (d) =>
+        repoRole(root, viewer?.auth ?? null, {
+          collection,
+          name: displayName(d),
+          dir: repoPath(root, collection, d),
+        }) !== null
+    );
     return Promise.all(
-      listRepoDirs(root, collection).map(async (d) => {
+      visible.map(async (d) => {
         const name = displayName(d);
         const repo = new GitRepo(repoPath(root, collection, d), collection, name);
         // A repository with a site is linked straight to it from the listing,
@@ -63,6 +73,7 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
           collection,
           name,
           description: repoDescription(repo.dir),
+          isPrivate: repoIsPrivate(repo.dir),
           updated: await repo.lastUpdated(),
           siteUrl: !hasSite
             ? null
@@ -90,9 +101,12 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
   app.get(
     '/',
     ah(async (req, res) => {
-      const collections = listCollections(root);
-      const repos = (await Promise.all(collections.map((c) => repoCards(req, c.name)))).flat();
-      res.type('html').send(views.homePage(root, collections, repos, sortParam(req), getViewer(req, root)));
+      const viewer = getViewer(req, root);
+      const cardsPer = await Promise.all(listCollections(root).map((c) => repoCards(req, c.name, viewer)));
+      // The counts beside collection names count what this viewer can see,
+      // for the same reason the cards do.
+      const collections = listCollections(root).map((c, i) => ({ name: c.name, repoCount: cardsPer[i].length }));
+      res.type('html').send(views.homePage(root, collections, cardsPer.flat(), sortParam(req), viewer));
     })
   );
 
@@ -115,17 +129,17 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
         send404(res, `Collection ${collection} not found`, viewer);
         return;
       }
+      // The profile lives in the .cofferdam repository, so a private one
+      // introduces the collection only to viewers who could read it.
+      const profileRepo = findRepo(root, collection, '.cofferdam');
+      const profileVisible = profileRepo === null || repoRole(root, viewer?.auth ?? null, profileRepo) !== null;
       const [cards, profile] = await Promise.all([
-        repoCards(req, collection),
-        collectionProfile(root, collection),
+        repoCards(req, collection, viewer),
+        profileVisible
+          ? collectionProfile(root, collection)
+          : Promise.resolve({ readme: null, addUrl: `/new?collection=${encodeURIComponent(collection)}` }),
       ]);
-      const canSettings =
-        viewer !== null &&
-        canAdminCollection(
-          viewer.auth,
-          collection,
-          cards.map((c) => c.name)
-        );
+      const canSettings = viewer !== null && canAdminCollection(root, viewer.auth, collection);
       res
         .type('html')
         .send(views.collectionPage(collection, cards, sortParam(req), viewer, canSettings, profile));
@@ -372,7 +386,7 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
   app.get(
     '/:collection/:repo/raw/*',
     ah(async (req, res) => {
-      const loaded = await loadRepo(root, req, res, null);
+      const loaded = await loadRepo(root, req, res, getViewer(req, root));
       if (!loaded) return;
       const { ref, path: filePath } = loaded.repo.resolveRefAndPath(wildcard(req), loaded.refNames);
       if (!isValidRefName(ref) || !isValidRepoPath(filePath) || filePath === '') {
@@ -405,18 +419,21 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
         res.redirect(302, dl.href);
         return;
       }
-      // Reading is anonymous, so a raw file may be cached publicly; the
-      // question is only for how long. A full commit id can never come to
-      // name different bytes, so under one the answer is forever. Under a
-      // branch or tag it is "until it changes", which HTTP spells as
-      // revalidate every time: the ETag is a hash of the bytes themselves, so
-      // an unchanged file costs a 304 and no body, whichever commit now holds
-      // it. The pointer redirect above returns before this on purpose: a
-      // redirect to a presigned URL expires and must not be cached.
+      // Reading a public repository is anonymous, so its raw files may be
+      // cached publicly; the question is only for how long. A full commit id
+      // can never come to name different bytes, so under one the answer is
+      // forever. Under a branch or tag it is "until it changes", which HTTP
+      // spells as revalidate every time: the ETag is a hash of the bytes
+      // themselves, so an unchanged file costs a 304 and no body, whichever
+      // commit now holds it. The pointer redirect above returns before this
+      // on purpose: a redirect to a presigned URL expires and must not be
+      // cached. A private repository's bytes were served to one reader and
+      // must never come out of a shared cache for another.
+      const cacheScope = repoIsPrivate(loaded.repo.dir) ? 'private' : 'public';
       if (/^[0-9a-f]{40}$/.test(ref)) {
-        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        res.setHeader('Cache-Control', `${cacheScope}, max-age=31536000, immutable`);
       } else {
-        res.setHeader('Cache-Control', 'public, no-cache');
+        res.setHeader('Cache-Control', `${cacheScope}, no-cache`);
         res.setHeader('ETag', `"${crypto.createHash('sha256').update(buf).digest('hex').slice(0, 32)}"`);
         if (req.fresh) {
           res.status(304).end();
@@ -466,10 +483,11 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
       // saves: the commit the ref resolves to determines every byte of the
       // archive, so it is the validator, checked before a slot is taken or
       // git is spawned. An archive of a full commit id is immutable outright.
+      const cacheScope = repoIsPrivate(loaded.repo.dir) ? 'private' : 'public';
       if (ref === sha) {
-        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        res.setHeader('Cache-Control', `${cacheScope}, max-age=31536000, immutable`);
       } else {
-        res.setHeader('Cache-Control', 'public, no-cache');
+        res.setHeader('Cache-Control', `${cacheScope}, no-cache`);
         res.setHeader('ETag', `"${sha}"`);
         if (req.fresh) {
           res.status(304).end();

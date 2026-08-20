@@ -18,7 +18,7 @@ import { encPath } from './views';
  * repository, and the collection page only reads it.
  *
  * The repository is otherwise ordinary. It appears in the collection's listing
- * like any other, its own README shows on its own page, and push scope over it
+ * like any other, its own README shows on its own page, and the write role on it
  * is what decides who may change the profile.
  */
 export const PROFILE_REPO = '.cofferdam';

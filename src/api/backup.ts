@@ -6,8 +6,8 @@ import { execGit } from '../git';
 import { AuthLimiter, BUSY_RETRY_SECONDS, Gates } from '../limit';
 import { COLLECTIONS_DIR, REPOS_DIR, collectionDir, collectionsDir, reposDir } from '../layout';
 import { containedIn } from '../ops';
+import { isSiteAdmin } from '../perms';
 import { isBareRepo, isValidName } from '../scan';
-import { canAdmin } from '../vault';
 import { createLfsStore } from '../lfsstore';
 import { apiError, requireApiAuth } from './auth';
 
@@ -204,14 +204,14 @@ async function refsDigest(dir: string): Promise<string> {
 
 export function registerBackupApi(app: Express, root: string, limiter: AuthLimiter, gates: Gates): void {
   // The manifest necessarily names vault.json and .secret, and a fetch will
-  // hand over their contents, so nothing narrower than admin over the whole
-  // vault is enough. A restricted (token-scoped) token is refused by canAdmin
-  // whatever its user's scope, which is the behaviour wanted here.
+  // hand over their contents, so nothing narrower than site admin is enough.
+  // A restricted (token-scoped) token is refused by isSiteAdmin whatever its
+  // user's standing, which is the behaviour wanted here.
   function requireVaultAdmin(req: Request, res: Response) {
     const auth = requireApiAuth(root, limiter, req, res);
     if (!auth) return null;
-    if (!canAdmin(auth, ['*'])) {
-      apiError(res, 403, 'a backup needs admin scope over the whole vault, with an unrestricted token');
+    if (!isSiteAdmin(auth)) {
+      apiError(res, 403, 'a backup needs a site admin, with an unrestricted token');
       return null;
     }
     return auth;

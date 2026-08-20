@@ -426,7 +426,7 @@ ${csrfField(viewer)}
 <div class="field"><label for="labels">Labels</label><input type="text" id="labels" name="labels" value="ubuntu-latest">
 <p class="muted small">Matched against a job's <code>runs-on</code>. Space or comma separated.</p></div>
 <div class="field"><label for="allow">Repositories</label><input type="text" id="allow" name="allow" placeholder="mycollection/*" required>
-<p class="muted small">Globs over <code>collection/repo</code>. A runner executes whatever those repositories' workflows say, on the machine you start it on, so grant it only what you trust. Your own admin scope must cover what you grant.</p></div>
+<p class="muted small">Globs over <code>collection/repo</code>. A runner executes whatever those repositories' workflows say, on the machine you start it on, so grant it only what you trust.</p></div>
 <button type="submit" class="btn btn-primary">Register runner</button>
 </form>
 </div>`;

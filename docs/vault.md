@@ -14,11 +14,12 @@ A vault is a plain directory. Its collections are in `collections/`, and a colle
   redirects.json                (where renamed things used to be; created on the first rename)
   collections/
     alice/
+      collection.json           (the collection's explicit owners; created when one is added)
       repos/
         .cofferdam.git/         (the collection's profile README; see below)
         hello-numerics.git/     (bare repository)
         hello-numerics.runs/    (its workflow runs and logs)
-        webapp.git/
+        webapp.git/             (holds cofferdam.json: visibility and collaborators)
         webapp.site/            (static site for webapp)
         webapp.issues/          (its issues, one directory each)
         webapp.pulls/           (its pull requests, one directory each)
@@ -35,6 +36,35 @@ Two levels of the tree hold only things somebody named, and nothing else. That i
 
 There is nothing else: no database, and no state outside this directory. That is what makes backing up a vault `cp -a` and moving one to another machine `rsync`, and it means each part of a vault can be read, written, and grepped with ordinary tools while the server is running, since the server reads what is on disk on every request. Both of those need a shell where the vault is, which a vault on a Fly volume does not have; [Backing up a vault](backup.md) is the same copy pulled over HTTP instead, and is what to use for a hosted vault. Each of these directories is described alongside the feature that writes it: [issues and pull requests](issues-and-pull-requests.md), [sites](sites.md), [workflows](workflows.md), and [Git LFS](lfs.md).
 
+## Who may do what
+
+Authorization is GitHub-shaped: roles on repositories, owners on collections, and one site-admin bit, each stored with the thing it protects.
+
+- **A user owns the collection named after them.** Nothing records this; it follows from the name, the way a GitHub account owns its namespace. An owner holds the admin role on every repository in the collection, may create repositories in it (including by push-to-create), and manages the collection itself: its settings, its owners, its name.
+- **A collection may list further owners** in `collections/<name>/collection.json`:
+
+  ```json
+  { "owners": ["bob"] }
+  ```
+
+  The file sits beside `repos/`, so it moves with the collection when the collection is renamed. Owners and site admins edit the list, on the collection's settings page, with `cofferdam collection owner add`, or over the API.
+- **A repository may list collaborators**, each with a role, in `cofferdam.json` inside the bare repository, beside git's own `config`. The same file carries the private flag:
+
+  ```json
+  { "private": true, "collaborators": { "carol": "read", "dave": "write" } }
+  ```
+
+  The roles order as `read` < `write` < `admin`. *read* may see a private repository; *write* may also push, edit files in the browser, and manage branches, tags, issues, and releases; *admin* may also change the repository's settings, visibility, and collaborators, rename it, and delete it. A repository with no `cofferdam.json` is public with no collaborators, which is what every repository was before the file existed. Collaborators are managed on the repository's settings page, with `cofferdam collab add`, or over the API.
+- **A site admin** (`"siteAdmin": true` on the user in `vault.json`) holds the admin role everywhere and manages users, runners, and the vault's own settings. The `owner` user a fresh vault creates is one.
+
+Anyone may read a public repository, signed in or not. A private repository is visible to its collaborators, the collection's owners, and site admins, and to nobody else: everyone else gets the same 404 an absent repository gets, on the web, over git, in the API, and in every listing, so a private name proves nothing by existing. A repository is made private at creation (`--private`, or the checkbox on the new-repository form) or from its settings page later; push-to-create always creates public repositories, since a push has no way to carry the flag. A fork of a private repository starts private. One deliberate exception: a private repository's published site stays public, like GitHub Pages on a private repository, because the sites hostname serves without sessions; withdraw the site directory if the site must go too.
+
+A token may be minted with a scope, globs over `collection/repo`, which narrows what its holder may reach: outside its globs the token grants nothing beyond what an anonymous visitor gets, and inside them it caps at the write role, so a restricted token can never administer anything. This is how a script or a CI job is given one repository and nothing else.
+
+### A vault.json from before roles
+
+`vault.json` used to grant push and admin globs per user. A file written that way (it lacks `"version": 2`) is translated the first time a server that knows roles starts: admin scope over everything becomes the site-admin bit, scope over a whole collection becomes ownership of it, and scope over a single repository becomes a collaborator entry with the matching role (`write` for push scope, `admin` for admin scope). The original file is kept beside the new one as `vault.json.pre-roles`, and each translation that rounds up (there is no collection-wide write role to round down to) is printed as the server starts. Token scopes are unchanged: they narrowed a token before and they narrow one now.
+
 ## A collection's profile README
 
 A collection page is a list of repository names, which says what a collection holds but not what it is for. A collection can introduce itself instead: a repository named `.cofferdam` in the collection, holding `profile/README.md`, has that file rendered above the listing. GitHub reads an organization's profile out of a `.github` repository the same way, and the convention is borrowed rather than invented so that the file needs no new place in the vault and no new way to edit it.
@@ -46,7 +76,7 @@ collections/
       .cofferdam.git/       ->  profile/README.md is shown on /alice
 ```
 
-The repository is an ordinary one. It is created by pushing to `/alice/.cofferdam` or from the new-repository form, it appears in the collection's listing like any other, its own root `README.md` shows on its own page rather than on the collection's, and push scope over `alice/.cofferdam` is what decides who may change the profile. The file is read from the repository's default branch, so a change to it can be reviewed as a pull request first. Relative links and images in it resolve against `profile/`, as they do in any other README the interface renders, and `#12` still points at that repository's issue 12.
+The repository is an ordinary one. It is created by pushing to `/alice/.cofferdam` or from the new-repository form, it appears in the collection's listing like any other, its own root `README.md` shows on its own page rather than on the collection's, and the write role on `alice/.cofferdam` is what decides who may change the profile. The file is read from the repository's default branch, so a change to it can be reviewed as a pull request first. Relative links and images in it resolve against `profile/`, as they do in any other README the interface renders, and `#12` still points at that repository's issue 12. Making the `.cofferdam` repository private hides the profile from anyone who could not read the repository, along with the repository itself.
 
 Nothing is required. A collection without the repository, without the file, or with the file empty renders exactly as it did before, and a viewer who could administer the collection is offered a link to write one. Names beginning with a dot are otherwise unusual in a vault, and a leading dot is allowed for a repository alone: a collection or a user may not begin with one.
 
@@ -66,9 +96,9 @@ One thing does not move: Git LFS objects in a bucket. Their keys are a bucket's,
 
 ## Signing in on the web
 
-Users sign in with their username and an existing token, the same credential git uses for pushing; there are no passwords and no separate web credential. The server sets a signed, stateless session cookie (30 days, `HttpOnly`, `SameSite=Lax`, `Secure` over HTTPS). The signing key lives in `<vault>/.secret`; rotating that file invalidates every session at once, and permissions are re-derived from `vault.json` on every request, so a scope taken away from a user applies to their open session on their next click. A session is bound to the token it was created with, and that token is looked up in `vault.json` on every request, so deleting one token ends the sessions started with it and leaves the user's other sessions untouched. Deleting the user ends all of theirs, and rotating `.secret` remains the way to end every session on the server at once.
+Users sign in with their username and an existing token, the same credential git uses for pushing; there are no passwords and no separate web credential. The server sets a signed, stateless session cookie (30 days, `HttpOnly`, `SameSite=Lax`, `Secure` over HTTPS). The signing key lives in `<vault>/.secret`; rotating that file invalidates every session at once, and permissions are re-derived from `vault.json` on every request, so a role taken away from a user applies to their open session on their next click. A session is bound to the token it was created with, and that token is looked up in `vault.json` on every request, so deleting one token ends the sessions started with it and leaves the user's other sessions untouched. Deleting the user ends all of theirs, and rotating `.secret` remains the way to end every session on the server at once.
 
-Abilities in the interface mirror the token model exactly. Push scope over a repository enables creating it, editing files, and managing branches and tags; admin scope enables user management and repository deletion. Signing in with a restricted (token-scoped) token carries that restriction into the session, and such sessions have no admin rights. Controls a user cannot use are simply not shown.
+Abilities in the interface mirror the roles exactly. The write role on a repository enables editing files and managing branches, tags, issues, and releases; the admin role adds the repository's settings, visibility, collaborators, rename, and deletion; the site-admin bit adds user, runner, and vault management. Signing in with a restricted (token-scoped) token carries that restriction into the session, and such sessions can administer nothing. Controls a user cannot use are simply not shown.
 
 File edits use optimistic concurrency: the edit form records the commit it was loaded against, and if the branch moves before you commit, the edit is refused with a conflict page rather than clobbering the other change. Web commits are authored as `<username> <username@noreply.<host>>`. Contributor listings resolve that synthetic address back to the user, and an administrator can list a user's real git author emails on the user's admin page (`/admin/users/<name>`, stored as an `emails` field in `vault.json`), so one person pushing under their own identity and editing in the browser shows as one contributor rather than two. That page is also where each token a user holds is listed and revoked; revocation applies to the next request, for git and for web sessions alike.
 
@@ -76,11 +106,11 @@ One deliberate asymmetry: repositories created by push set `receive.denyDeletes`
 
 ## Renaming a repository or a collection
 
-A repository is renamed, or moved to another collection, from its own Settings page; the two are one operation, since both are a directory rename. A collection is renamed from a Settings page of its own, at `/<collection>/settings`, reached from the button beside its name. Both take admin scope over what is moving and push scope over where it lands, which for a collection means every repository in it: renaming a collection moves all of them, so admin scope has to cover each one, and push scope has to cover each one at the new name. An empty collection has nothing to ask about, so an admin glob naming the collection is enough. Nothing is confirmed by typing the name, as deletion is: a rename that was a mistake is undone by renaming it back.
+A repository is renamed, or moved to another collection, from its own Settings page; the two are one operation, since both are a directory rename. Renaming in place takes the admin role on the repository; moving it to another collection is also a creation over there, so that half additionally takes permission to create in the destination collection, exactly as a transfer does on GitHub. A collection is renamed from a Settings page of its own, at `/<collection>/settings`, reached from the button beside its name; that takes ownership of the collection, and the owners file moves with it, so the owners after the rename are the owners before it. Nothing is confirmed by typing the name, as deletion is: a rename that was a mistake is undone by renaming it back.
 
 Both are also operations of the CLI and the JSON API, as everything in the web interface is: `cofferdam repo rename`, `cofferdam collection rename`, and the `POST /api/repos/:c/:r/rename` and `POST /api/collections/:name/rename` routes behind them. Neither takes a `--yes` or a confirmation, for the reason above.
 
-Everything a repository or a collection has accumulated moves with it, including sites, workflow runs, issues, pull requests, releases, and Git LFS objects. One thing does not: token scopes in `vault.json` still name the old collection, so a scope that covered `oldname/*` covers nothing after the rename and has to be granted again under the new name; the page says so before the rename is made. Rewriting scopes automatically was considered and not done, since a glob is a statement about what a user may reach rather than a pointer to a directory, and quietly widening one is worse than leaving it to be granted deliberately.
+Everything a repository or a collection has accumulated moves with it, including sites, workflow runs, issues, pull requests, releases, and Git LFS objects. Collaborators travel inside the repository and owners inside the collection, so roles survive a rename untouched. One thing does not: token scopes in `vault.json` still name the old collection, so a scope that covered `oldname/*` covers nothing after the rename and has to be granted again under the new name; the page says so before the rename is made. Rewriting scopes automatically was considered and not done, since a glob is a statement about what a user may reach rather than a pointer to a directory, and quietly widening one is worse than leaving it to be granted deliberately.
 
 ### The old address
 

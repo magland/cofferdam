@@ -26,8 +26,19 @@ import {
   setDescription,
   writeFile,
 } from '../ops';
+import {
+  canAdminRepo,
+  canCreateRepo,
+  collectionOwners,
+  removeCollaborator,
+  repoAccess,
+  repoIsPrivate,
+  repoRenameBlocker,
+  setCollaborator,
+  setRepoPrivate,
+} from '../perms';
 import { findRepo, isValidName, reservedRepoSuffix } from '../scan';
-import { canPush, repoRenameBlocker } from '../vault';
+import { loadVault } from '../vault';
 import {
   Actor,
   ReadContext,
@@ -36,6 +47,7 @@ import {
   bodyOf,
   requireApiAuth,
   requirePush,
+  requireRepo,
   requireRepoAdmin,
   sendOpError,
   stringField,
@@ -376,12 +388,16 @@ export function registerWriteApi(
       apiError(res, 400, `a repository name may not end in ${reserved}, which is reserved for the directories a repository keeps beside it`);
       return;
     }
-    if (!canPush(auth, collection, name)) {
-      apiError(res, 403, `your push scope does not cover ${collection}/${name}`);
+    if (!canCreateRepo(root, auth, collection, name)) {
+      apiError(res, 403, `you are not allowed to create repositories in ${collection}`);
       return;
     }
     if (findRepo(root, collection, name)) {
       apiError(res, 409, `repository ${collection}/${name} already exists`);
+      return;
+    }
+    if (body.private !== undefined && typeof body.private !== 'boolean') {
+      apiError(res, 400, '"private" must be a boolean');
       return;
     }
     const host = (req.get('host') ?? 'localhost').replace(/:\d+$/, '');
@@ -389,21 +405,23 @@ export function registerWriteApi(
       const created = await createRepoWithReadme(root, collection, name, {
         description: stringField(body, 'description') ?? '',
         readme: body.initReadme === true,
+        private: body.private === true,
         author: { name: auth.username, email: `${auth.username}@noreply.${host}` },
       });
       if (created.sha) {
         firePush(root, engine, { collection, name }, 'main', null, created.sha, auth.username);
       }
-      res.status(201).json({ collection, name, created: true, sha: created.sha });
+      res.status(201).json({ collection, name, created: true, private: body.private === true, sha: created.sha });
     } catch (e) {
       sendOpError(res, e, 'could not create the repository');
     }
   });
 
   app.post('/api/repos/:collection/:repo/fork', async (req, res) => {
-    // Reading the source is what forking needs; creating the fork needs push
-    // scope where it lands, which is checked below rather than here.
-    const source = requirePush(root, limiter, req, res);
+    // Reading the source is what forking needs; creating the fork needs
+    // permission to create where it lands, which is checked below rather than
+    // here.
+    const source = requireRepo(root, limiter, req, res);
     if (!source) return;
     const body = bodyOf(req);
     const collection = stringField(body, 'collection');
@@ -412,8 +430,8 @@ export function registerWriteApi(
       apiError(res, 400, 'a valid "collection" is required');
       return;
     }
-    if (!canPush(source.auth, collection, name)) {
-      apiError(res, 403, `your push scope does not cover ${collection}/${name}`);
+    if (!canCreateRepo(root, source.auth, collection, name)) {
+      apiError(res, 403, `you are not allowed to create repositories in ${collection}`);
       return;
     }
     try {
@@ -430,18 +448,32 @@ export function registerWriteApi(
     const body = bodyOf(req);
     const description = stringField(body, 'description');
     const defaultBranch = stringField(body, 'defaultBranch');
-    if (description === null && defaultBranch === null) {
-      apiError(res, 400, 'nothing to change; provide "description" and/or "defaultBranch"');
+    const priv = body.private;
+    if (priv !== undefined && typeof priv !== 'boolean') {
+      apiError(res, 400, '"private" must be a boolean');
+      return;
+    }
+    if (description === null && defaultBranch === null && priv === undefined) {
+      apiError(res, 400, 'nothing to change; provide "description", "defaultBranch", and/or "private"');
+      return;
+    }
+    // Visibility is the one setting here that takes the admin role rather than
+    // write: publishing a repository, or withdrawing one from everybody who
+    // could see it, is the repository's own business the way deleting it is.
+    if (priv !== undefined && !canAdminRepo(root, ctx.auth, ctx.repo)) {
+      apiError(res, 403, `changing visibility needs the admin role on ${ctx.repo.collection}/${ctx.repo.name}`);
       return;
     }
     try {
       if (description !== null) setDescription(ctx.repo.dir, description);
       if (defaultBranch !== null) await setDefaultBranch(ctx.repo.dir, defaultBranch);
+      if (priv !== undefined) setRepoPrivate(ctx.repo.dir, priv);
       const branches = await ctx.repo.listRefs('heads');
       res.json({
         collection: ctx.repo.collection,
         name: ctx.repo.name,
         defaultBranch: await ctx.repo.defaultBranch(branches),
+        private: repoIsPrivate(ctx.repo.dir),
         changed: true,
       });
     } catch (e) {
@@ -450,7 +482,7 @@ export function registerWriteApi(
   });
 
   // Renaming and deleting are the two operations the web puts behind a typed
-  // confirmation, so they take admin scope over the repository rather than push.
+  // confirmation, so they take the admin role on the repository rather than write.
   app.post('/api/repos/:collection/:repo/rename', async (req, res) => {
     const ctx = requireRepoAdmin(root, limiter, req, res);
     if (!ctx) return;
@@ -461,9 +493,10 @@ export function registerWriteApi(
       apiError(res, 400, '"name" and "collection" must be usable names');
       return;
     }
-    // The same rule the web settings page applies: admin over what is moving
-    // (which requireRepoAdmin has established), push over where it lands.
-    const blocker = repoRenameBlocker(ctx.auth, ctx.repo.collection, ctx.repo.name, collection, name);
+    // The same rule the web settings page applies: admin on what is moving
+    // (which requireRepoAdmin has established), and for a move to another
+    // collection, permission to create over there.
+    const blocker = repoRenameBlocker(root, ctx.auth, ctx.repo, collection, name);
     if (blocker) {
       apiError(res, 403, `renaming this repository needs ${blocker}`);
       return;
@@ -493,5 +526,56 @@ export function registerWriteApi(
     } catch (e) {
       sendOpError(res, e, 'could not delete the repository');
     }
+  });
+
+  // ---- collaborators ----
+
+  // All three take the admin role on the repository: who may see or write a
+  // repository is decided by the people who administer it, and the list of
+  // who those people are is itself not public.
+
+  app.get('/api/repos/:collection/:repo/collaborators', (req, res) => {
+    const ctx = requireRepoAdmin(root, limiter, req, res);
+    if (!ctx) return;
+    const access = repoAccess(ctx.repo.dir);
+    res.json({
+      collaborators: Object.entries(access.collaborators).map(([username, role]) => ({ username, role })),
+      owners: collectionOwners(root, ctx.repo.collection),
+      private: access.private,
+    });
+  });
+
+  app.put('/api/repos/:collection/:repo/collaborators/:user', (req, res) => {
+    const ctx = requireRepoAdmin(root, limiter, req, res);
+    if (!ctx) return;
+    const username = req.params.user;
+    const role = stringField(bodyOf(req), 'role') ?? 'write';
+    if (role !== 'read' && role !== 'write' && role !== 'admin') {
+      apiError(res, 400, '"role" must be "read", "write", or "admin"');
+      return;
+    }
+    // Only a user the vault knows: a collaborator entry for a name nobody
+    // holds grants nothing today and, worse, would grant everything it says
+    // to whoever is given the name later.
+    const state = loadVault(root);
+    if (state.status !== 'ok' || !state.vault.users[username]) {
+      apiError(res, 404, `no user ${username} in this vault`);
+      return;
+    }
+    setCollaborator(ctx.repo.dir, username, role);
+    res.json({ username, role });
+  });
+
+  app.delete('/api/repos/:collection/:repo/collaborators/:user', (req, res) => {
+    const ctx = requireRepoAdmin(root, limiter, req, res);
+    if (!ctx) return;
+    const username = req.params.user;
+    const access = repoAccess(ctx.repo.dir);
+    if (access.collaborators[username] === undefined) {
+      apiError(res, 404, `${username} is not a collaborator on ${ctx.repo.collection}/${ctx.repo.name}`);
+      return;
+    }
+    removeCollaborator(ctx.repo.dir, username);
+    res.json({ removed: username });
   });
 }

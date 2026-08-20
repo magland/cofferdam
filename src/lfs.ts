@@ -4,7 +4,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Transform } from 'stream';
 import { pipeline } from 'stream/promises';
-import { checkPushAuth } from './githttp';
+import { GitRepo } from './git';
+import { checkPushAuth, checkReadAuth } from './githttp';
 import { AuthLimiter } from './limit';
 import { LfsContext, SignedAction, localObjectPath, verifyTransfer } from './lfsstore';
 import { findRepo } from './scan';
@@ -111,20 +112,48 @@ export function registerLfs(app: Express, root: string, lfs: LfsContext | null, 
     return true;
   }
 
-  // Upload (and verify) reuse the push authorization; a 401 carries
-  // LFS-Authenticate, which is the header git-lfs looks for.
-  function requireUploadAuth(req: Request, res: Response, collection: string, repoName: string): boolean {
-    const check = checkPushAuth(root, authLimiter, req, collection, repoName);
+  function sendDenied(
+    res: Response,
+    check: { status: number; message: string; retryAfter?: number }
+  ): void {
+    if (check.status === 401) {
+      // LFS-Authenticate is the header git-lfs looks for.
+      res.setHeader('LFS-Authenticate', 'Basic realm="cofferdam"');
+      res.setHeader('WWW-Authenticate', 'Basic realm="cofferdam"');
+    }
+    if (check.retryAfter !== undefined) res.setHeader('Retry-After', String(check.retryAfter));
+    lfsError(res, check.status, check.message);
+  }
+
+  // Upload (and verify) reuse the push authorization.
+  function requireUploadAuth(req: Request, res: Response, repo: GitRepo): boolean {
+    const check = checkPushAuth(root, authLimiter, req, repo.collection, repo.name, repo);
     if (!check.ok) {
-      if (check.status === 401) {
-        res.setHeader('LFS-Authenticate', 'Basic realm="cofferdam"');
-        res.setHeader('WWW-Authenticate', 'Basic realm="cofferdam"');
-      }
-      if (check.retryAfter !== undefined) res.setHeader('Retry-After', String(check.retryAfter));
-      lfsError(res, check.status, check.message);
+      sendDenied(res, check);
       return false;
     }
     return true;
+  }
+
+  /**
+   * The repository these LFS objects belong to, readable by this request, or
+   * null having sent the refusal. Reading follows the git wire's rule
+   * (checkReadAuth): public repositories serve anonymously, and a private one
+   * answers exactly as an absent one does.
+   */
+  function requireRepoRead(req: Request, res: Response): GitRepo | null {
+    const repo = findRepo(root, req.params.collection, req.params.repo);
+    const check = checkReadAuth(root, authLimiter, req, repo);
+    if (!check.ok) {
+      sendDenied(res, check);
+      return null;
+    }
+    if (!repo) {
+      // Unreachable: checkReadAuth answers ok only for a repository it saw.
+      lfsError(res, 404, 'repository not found');
+      return null;
+    }
+    return repo;
   }
 
   // ---- Batch API ----
@@ -135,11 +164,8 @@ export function registerLfs(app: Express, root: string, lfs: LfsContext | null, 
     jsonErr,
     lah(async (req, res) => {
       if (unavailable(res) || !store) return;
-      const repo = findRepo(root, req.params.collection, req.params.repo);
-      if (!repo) {
-        lfsError(res, 404, 'repository not found');
-        return;
-      }
+      const repo = requireRepoRead(req, res);
+      if (!repo) return;
       const body = (req.body ?? {}) as Record<string, unknown>;
       const operation = body.operation;
       if (operation !== 'download' && operation !== 'upload') {
@@ -177,9 +203,10 @@ export function registerLfs(app: Express, root: string, lfs: LfsContext | null, 
         }
         parsed.push({ oid: rec.oid, size: rec.size });
       }
-      // Download is anonymous, matching anonymous clone: a public repository
-      // must support `git clone` plus `git lfs pull` with no credentials.
-      if (operation === 'upload' && !requireUploadAuth(req, res, repo.collection, repo.name)) return;
+      // Download needs no more than the read access requireRepoRead already
+      // established, matching anonymous clone: a public repository must
+      // support `git clone` plus `git lfs pull` with no credentials.
+      if (operation === 'upload' && !requireUploadAuth(req, res, repo)) return;
 
       const base = baseUrlOf(req);
       const authz = req.get('authorization');
@@ -246,11 +273,8 @@ export function registerLfs(app: Express, root: string, lfs: LfsContext | null, 
     jsonErr,
     lah(async (req, res) => {
       if (unavailable(res) || !store) return;
-      const repo = findRepo(root, req.params.collection, req.params.repo);
-      if (!repo) {
-        lfsError(res, 404, 'repository not found');
-        return;
-      }
+      const repo = requireRepoRead(req, res);
+      if (!repo) return;
       const body = (req.body ?? {}) as Record<string, unknown>;
       const oid = body.oid;
       const size = body.size;
@@ -262,7 +286,7 @@ export function registerLfs(app: Express, root: string, lfs: LfsContext | null, 
         lfsError(res, 422, 'invalid object size');
         return;
       }
-      if (!requireUploadAuth(req, res, repo.collection, repo.name)) return;
+      if (!requireUploadAuth(req, res, repo)) return;
       const info = await store.head(repo.collection, repo.name, oid);
       if (!info) {
         lfsError(res, 404, 'object not found');

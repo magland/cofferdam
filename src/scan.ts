@@ -69,7 +69,7 @@ export const repoSiblingSuffixes = ['.site', '.runs', '.issues', '.pulls', '.rel
 
 // Suffixes a repository may not be created under. A repository named
 // webapp.site would land on exactly the path the repository webapp keeps its
-// site in, so without this a user with push scope could shadow another
+// site in, so without this a user with the write role could shadow another
 // repository's site, or have their own issues served as that repository's.
 // The list is the siblings plus two the siblings do not name: .lfs, which is
 // where LFS objects sit when no bucket is configured, and .git, the ordinary

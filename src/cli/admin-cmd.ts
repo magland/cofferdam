@@ -16,7 +16,7 @@ const YES_OPTION: OptionSpec = {
 export const adminCommands: Command[] = [
   {
     path: ['user', 'view'],
-    summary: "Show one user's scopes and the tokens they hold",
+    summary: "Show one user's standing and the tokens they hold",
     description: `Never a token, and never a token's hash: only a SHA-256 hash is stored, so there
 is nothing to show even if it were a good idea. What comes back is the id
 revocation takes, when the token was minted, and any scope of its own.`,
@@ -32,8 +32,7 @@ revocation takes, when the token was minted, and any scope of its own.`,
         return;
       }
       console.log(`${data.name} @ ${target.host}`);
-      console.log(`  push: ${(data.scope as string[]).join(', ') || '(none)'}`);
-      if ((data.admin as string[]).length) console.log(`  admin: ${(data.admin as string[]).join(', ')}`);
+      console.log(`  ${data.siteAdmin ? 'site admin' : `owns collection '${data.name}' by name`}`);
       console.log('');
       if (tokens.length === 0) {
         console.log('No tokens, so this user cannot sign in or push.');
@@ -130,8 +129,8 @@ keep working, until something else is created under that name. Token scopes
 naming the old collection are the exception: they cover nothing afterwards and
 have to be granted again under the new name.
 
-Takes admin scope over every repository in the collection, and push scope over
-each of them at the new name. No --yes: a rename is undone by renaming back.`,
+Takes ownership of the collection; the owners travel with it. No --yes: a
+rename is undone by renaming back.`,
     args: [
       { name: 'name', required: true },
       { name: 'new-name', required: true },

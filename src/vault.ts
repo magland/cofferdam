@@ -28,8 +28,13 @@ export function tokenId(t: TokenRecord): string {
 
 export interface UserRecord {
   tokens: TokenRecord[];
-  scope: string[];
-  admin: string[];
+  /**
+   * Site admins hold the admin role on every repository and manage users,
+   * runners, and the vault itself. Everything finer-grained lives with the
+   * thing it protects: collection owners in collection.json, repository
+   * collaborators in the repository's cofferdam.json; see src/perms.ts.
+   */
+  siteAdmin?: boolean;
   /**
    * Git author emails that belong to this user, beside the synthetic
    * `<user>@noreply.<host>` the web editor writes, which is theirs without
@@ -37,11 +42,24 @@ export interface UserRecord {
    * in the browser is otherwise two contributors with two faces.
    */
   emails?: string[];
+  /**
+   * The glob scopes a pre-roles vault.json granted this user, carried only
+   * from parsing such a file to the migration that rewrites it (see
+   * src/migrate.ts). Nothing else reads them: an unmigrated vault grants
+   * nothing beyond anonymous reading, and the server migrates on startup
+   * before it listens.
+   */
+  legacy?: { scope: string[]; admin: string[] };
 }
 
 export interface Vault {
   users: Record<string, UserRecord>;
+  /** True when the file predates roles and awaits migration. */
+  legacy?: boolean;
 }
+
+/** The version written to vault.json since roles replaced glob scopes. */
+export const VAULT_VERSION = 2;
 
 export type VaultState =
   | { status: 'ok'; vault: Vault }
@@ -64,6 +82,11 @@ function normalizeVault(parsed: unknown): Vault {
   if (typeof usersRaw !== 'object' || usersRaw === null) {
     throw new Error('vault.json must have a "users" object');
   }
+  // A file without the version marker was written before roles existed and
+  // still carries glob scopes. Its users and tokens parse as usual, and the
+  // globs ride along in `legacy` for the migration to translate; the file is
+  // legacy as a whole, so half-migrated states cannot exist.
+  const legacy = (parsed as Record<string, unknown>).version !== VAULT_VERSION;
   const users: Record<string, UserRecord> = {};
   for (const [name, u] of Object.entries(usersRaw as Record<string, unknown>)) {
     if (typeof u !== 'object' || u === null) {
@@ -102,9 +125,14 @@ function normalizeVault(parsed: unknown): Vault {
     if (!emails) {
       throw new Error(`user ${name}: "emails" must be a list of strings`);
     }
-    users[name] = { tokens, scope, admin, ...(emails.length ? { emails } : {}) };
+    users[name] = {
+      tokens,
+      ...(rec.siteAdmin === true ? { siteAdmin: true } : {}),
+      ...(emails.length ? { emails } : {}),
+      ...(legacy ? { legacy: { scope, admin } } : {}),
+    };
   }
-  return { users };
+  return { users, ...(legacy ? { legacy: true } : {}) };
 }
 
 const cache = fileCache<VaultState>({
@@ -181,109 +209,16 @@ export function authenticateToken(vault: Vault, tokenPlain: string): AuthResult 
   return null;
 }
 
-export function canPush(auth: AuthResult, collection: string, repo: string): boolean {
-  const target = `${collection}/${repo}`;
-  const matches = (globs: string[]) => globs.some((g) => globMatch(g, target));
-  if (!matches(auth.user.scope)) return false;
-  if (auth.token.scope !== undefined && !matches(auth.token.scope)) return false;
-  return true;
-}
-
-/**
- * Whether a user may create the collection named, which is a weaker question
- * than canPush over any repository in it: a push scope of
- * `mycollection/onerepo` lets its holder create `mycollection` implicitly, by
- * pushing that one repository, so making the empty directory first is refused
- * for no gain. The collection part of each glob is what is matched, and a glob
- * with no slash in it (`*`) covers every collection.
- */
-export function canCreateCollection(auth: AuthResult, collection: string): boolean {
-  const collectionOf = (glob: string) => (glob.includes('/') ? glob.slice(0, glob.indexOf('/')) : glob);
-  const matches = (globs: string[]) => globs.some((g) => globMatch(collectionOf(g), collection));
-  if (!matches(auth.user.scope)) return false;
-  if (auth.token.scope !== undefined && !matches(auth.token.scope)) return false;
-  return true;
-}
-
-export function canAdmin(auth: AuthResult, globs: string[]): boolean {
-  if (auth.token.scope !== undefined) return false;
-  if (auth.user.admin.length === 0) return false;
-  return globs.every((g) => auth.user.admin.some((a) => globMatch(a, g)));
-}
-
-/**
- * Whether a user may administer a collection as a whole, which is what
- * renaming one asks. A rename moves every repository in the collection, so
- * admin scope has to cover each of them one by one; asking that alone would
- * be too weak for an empty collection, where there is nothing to cover and
- * `canAdmin` would answer yes to any administrator, so at least one of the
- * actor's admin globs must also name this collection. The collection part of
- * each glob is what is matched, as in canCreateCollection, and a glob with no
- * slash in it (`*`) covers every collection.
- */
-export function canAdminCollection(auth: AuthResult, collection: string, repos: string[]): boolean {
-  const collectionOf = (glob: string) => (glob.includes('/') ? glob.slice(0, glob.indexOf('/')) : glob);
-  if (auth.token.scope !== undefined) return false;
-  if (!auth.user.admin.some((a) => globMatch(collectionOf(a), collection))) return false;
-  return canAdmin(
-    auth,
-    repos.map((r) => `${collection}/${r}`)
-  );
-}
-
-// The three rules below are composites of the primitives above, and each is
-// asked by the web interface and by the JSON API. They live here, once,
-// because two surfaces spelling one rule out by hand is how the surfaces
-// drift apart: the API asked for admin scope over a rename's destination for
-// as long as the web and the documentation asked for push. The blockers
-// return the missing ability as a phrase rather than answering false, so
-// each surface can word its own refusal around the same rule.
-
-/**
- * Admin over everything a user can reach, which is what touching the user
- * asks: their tokens open every door their scope and admin globs name, so
- * listing, revoking, or deleting is touching all of it. Whether someone may
- * touch themselves is the caller's question, since the surfaces answer it
- * differently: a user may read their own record and revoke their own tokens,
- * and may not delete themselves.
- */
-export function canAdminUser(auth: AuthResult, user: UserRecord): boolean {
-  return canAdmin(auth, [...user.scope, ...user.admin]);
-}
-
-/**
- * The ability a repository rename is missing, or null when none is. Two
- * abilities, because a move is a deletion here and a creation there: admin
- * scope over what is moving, push scope over where it lands.
- */
-export function repoRenameBlocker(
-  auth: AuthResult,
-  collection: string,
-  repo: string,
-  toCollection: string,
-  toRepo: string
-): string | null {
-  if (!canAdmin(auth, [`${collection}/${repo}`])) return `admin scope over ${collection}/${repo}`;
-  if (!canPush(auth, toCollection, toRepo)) return `push scope over ${toCollection}/${toRepo}`;
-  return null;
-}
-
-/**
- * The push half of renaming a collection: every repository lands in the new
- * collection, so push scope has to cover each of them there, and an empty
- * collection is the weaker question canCreateCollection answers. The admin
- * half is canAdminCollection, asked separately because it also gates the
- * settings page where no destination exists yet.
- */
-export function collectionMoveBlocker(auth: AuthResult, repos: string[], to: string): string | null {
-  const unpushable = repos.find((r) => !canPush(auth, to, r));
-  if (unpushable !== undefined) return `push scope over ${to}/${unpushable}`;
-  if (!canCreateCollection(auth, to)) return `push scope over ${to}`;
-  return null;
-}
+// Who may do what lives in src/perms.ts, which reads roles and ownership from
+// where each is stored; this file holds only who somebody is.
 
 function writeVault(file: string, vault: Vault): void {
-  writeFileAtomic(file, JSON.stringify(vault, null, 2) + '\n', { mode: 0o600 });
+  const users: Record<string, unknown> = {};
+  for (const [name, u] of Object.entries(vault.users)) {
+    const { legacy: _legacy, ...rest } = u;
+    users[name] = rest;
+  }
+  writeFileAtomic(file, JSON.stringify({ version: VAULT_VERSION, users }, null, 2) + '\n', { mode: 0o600 });
 }
 
 /**
@@ -298,16 +233,30 @@ function editVault<T>(root: string, fn: (file: string) => T): T {
   return withFileLock(path.join(root, `${VAULT_FILE}.lock`), () => fn(vaultFilePath(root)));
 }
 
+// Reread under the lock, refusing a pre-roles file: writeVault writes the
+// current shape, so editing a legacy file in place would silently drop the
+// glob scopes the migration still has to translate.
+function readVaultForEdit(file: string): Vault {
+  const vault = normalizeVault(JSON.parse(fs.readFileSync(file, 'utf8')));
+  if (vault.legacy) {
+    throw new Error('vault.json predates roles; start the server once to migrate it');
+  }
+  return vault;
+}
+
 // The body of addUserToken, without the lock, so that bootstrapVault can put
 // its own check-then-act inside the same one rather than nesting a second.
 function addUserTokenLocked(
   file: string,
   username: string,
-  opts: { scope?: string[]; admin?: string[]; tokenScope?: string[]; token?: string }
+  opts: { siteAdmin?: boolean; tokenScope?: string[]; token?: string }
 ): { token: string; created: boolean; user: UserRecord } {
   let vault: Vault = { users: {} };
   if (fs.existsSync(file)) {
     vault = normalizeVault(JSON.parse(fs.readFileSync(file, 'utf8')));
+    if (vault.legacy) {
+      throw new Error('vault.json predates roles; start the server once to migrate it');
+    }
   }
   let user = vault.users[username];
   const created = !user;
@@ -315,12 +264,10 @@ function addUserTokenLocked(
     // A leading dot is allowed in a repository's name and in nothing else; a
     // user carrying one would be a name the interface hides for no reason.
     if (isDotName(username)) throw new Error(`invalid username ${username}`);
-    user = { tokens: [], scope: opts.scope ?? ['*'], admin: opts.admin ?? [] };
+    user = { tokens: [], ...(opts.siteAdmin ? { siteAdmin: true } : {}) };
     vault.users[username] = user;
-  } else if (opts.scope || opts.admin) {
-    throw new Error(
-      `user ${username} already exists; use 'cofferdam user grant ${username} --scope <glob>' to extend its scope`
-    );
+  } else if (opts.siteAdmin) {
+    throw new Error(`user ${username} already exists; site admin is granted from the admin page or the users API`);
   }
   // A caller may supply the token instead of taking a minted one, which is how
   // a vault can be bootstrapped with a token its operator already holds. Only
@@ -336,31 +283,44 @@ function addUserTokenLocked(
 export function addUserToken(
   root: string,
   username: string,
-  opts: { scope?: string[]; admin?: string[]; tokenScope?: string[]; token?: string } = {}
+  opts: { siteAdmin?: boolean; tokenScope?: string[]; token?: string } = {}
 ): { token: string; created: boolean; user: UserRecord } {
   return editVault(root, (file) => addUserTokenLocked(file, username, opts));
 }
 
-export function grantScope(
-  root: string,
-  username: string,
-  globs: { scope?: string[]; admin?: string[] }
-): UserRecord {
+/**
+ * The last step of the permissions migration (src/migrate.ts): rewrite a
+ * pre-roles vault.json in the current shape, granting the site-admin bit to
+ * the users named. The glob scopes are dropped here and only here, after the
+ * migration has translated them into ownership and collaborator files; the
+ * original file survives as the backup the migration wrote first.
+ */
+export function finishPermsMigration(root: string, siteAdmins: string[]): void {
+  editVault(root, (file) => {
+    const vault = normalizeVault(JSON.parse(fs.readFileSync(file, 'utf8')));
+    if (!vault.legacy) return;
+    delete vault.legacy;
+    for (const [name, user] of Object.entries(vault.users)) {
+      delete user.legacy;
+      if (siteAdmins.includes(name)) user.siteAdmin = true;
+    }
+    writeVault(file, vault);
+  });
+}
+
+/** Grant or withdraw the site-admin bit. */
+export function setSiteAdmin(root: string, username: string, value: boolean): UserRecord {
   return editVault(root, (file) => {
     if (!fs.existsSync(file)) {
       throw new Error(`no vault.json at ${file}; create the user first with: cofferdam user add ${username}`);
     }
-    const vault = normalizeVault(JSON.parse(fs.readFileSync(file, 'utf8')));
+    const vault = readVaultForEdit(file);
     const user = vault.users[username];
     if (!user) {
       throw new Error(`user ${username} does not exist; create it with: cofferdam user add ${username}`);
     }
-    for (const g of globs.scope ?? []) {
-      if (!user.scope.includes(g)) user.scope.push(g);
-    }
-    for (const g of globs.admin ?? []) {
-      if (!user.admin.includes(g)) user.admin.push(g);
-    }
+    if (value) user.siteAdmin = true;
+    else delete user.siteAdmin;
     writeVault(file, vault);
     return user;
   });
@@ -401,8 +361,7 @@ export function bootstrapVault(
   return editVault(root, (file) => {
     if (fs.existsSync(file)) return null;
     const { token } = addUserTokenLocked(file, 'owner', {
-      scope: ['*'],
-      admin: ['*'],
+      siteAdmin: true,
       ...(preset ? { token: preset } : {}),
     });
     return { username: 'owner', token, preset: preset !== '' };
@@ -417,7 +376,7 @@ export function bootstrapVault(
  */
 export function revokeToken(root: string, username: string, id: string): { revoked: boolean; remaining: number } {
   return editVault(root, (file) => {
-    const vault = normalizeVault(JSON.parse(fs.readFileSync(file, 'utf8')));
+    const vault = readVaultForEdit(file);
     const user = vault.users[username];
     if (!user) throw new Error(`no user ${username}`);
     const before = user.tokens.length;
@@ -431,7 +390,7 @@ export function revokeToken(root: string, username: string, id: string): { revok
 /** Replace the git author emails aliased to a user. An empty list clears them. */
 export function setUserEmails(root: string, username: string, emails: string[]): UserRecord {
   return editVault(root, (file) => {
-    const vault = normalizeVault(JSON.parse(fs.readFileSync(file, 'utf8')));
+    const vault = readVaultForEdit(file);
     const user = vault.users[username];
     if (!user) throw new Error(`no user ${username}`);
     if (emails.length) user.emails = emails;
@@ -506,7 +465,7 @@ export function mergeContributors(
 /** Remove a user, and with them every token they hold. */
 export function removeUser(root: string, username: string): boolean {
   return editVault(root, (file) => {
-    const vault = normalizeVault(JSON.parse(fs.readFileSync(file, 'utf8')));
+    const vault = readVaultForEdit(file);
     if (!vault.users[username]) return false;
     delete vault.users[username];
     writeVault(file, vault);

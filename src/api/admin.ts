@@ -11,16 +11,8 @@ import { forgetCollectionRedirects } from '../redirects';
 import { displayName, isValidName, listRepoDirs } from '../scan';
 import { normalizeHostname } from '../siteshost';
 import { DEFAULT_THEME, findTheme, themeNames } from '../themes';
-import {
-  canAdmin,
-  canAdminCollection,
-  canAdminUser,
-  collectionMoveBlocker,
-  loadVault,
-  removeUser,
-  revokeToken,
-  tokenId,
-} from '../vault';
+import { canAdminCollection, isSiteAdmin } from '../perms';
+import { loadVault, removeUser, revokeToken, tokenId } from '../vault';
 import { apiError, bodyOf, requireApiAuth, sendOpError, stringField } from './auth';
 
 // Administration: users, their tokens, collections, and the vault's own settings.
@@ -42,16 +34,16 @@ export function registerAdminApi(
   const repoCtx: RepoContext = { lfs: lfs?.store, runs: engine };
 
   /**
-   * An admin over everything, which is what a vault-wide setting takes. Not
-   * merely an admin: a delegated collection administrator should not restyle the
-   * whole vault or remove a collection that is not theirs, which is the same rule
-   * canSetTheme applies on the web.
+   * A site admin, which is what a vault-wide setting takes. Not merely a
+   * collection owner: an owner should not restyle the whole vault or remove a
+   * collection that is not theirs, which is the same rule canSetTheme applies
+   * on the web.
    */
   const requireOwner = (req: Parameters<typeof requireApiAuth>[2], res: Parameters<typeof requireApiAuth>[3]) => {
     const auth = requireApiAuth(root, limiter, req, res);
     if (!auth) return null;
-    if (!canAdmin(auth, ['*'])) {
-      apiError(res, 403, 'admin scope over the whole vault is required');
+    if (!isSiteAdmin(auth)) {
+      apiError(res, 403, 'site admin required (with an unrestricted token)');
       return null;
     }
     return auth;
@@ -61,9 +53,9 @@ export function registerAdminApi(
 
   /**
    * Rename a collection, with everything in it. The same operation the web
-   * offers on a collection's settings page, and the same two questions: admin
-   * scope over what is moving, which for a collection means every repository
-   * in it, and push scope over where it lands.
+   * offers on a collection's settings page, and the same question: ownership
+   * of the collection. The owners file moves with the collection, so the
+   * owners after the rename are the owners before it.
    *
    * Unlike a repository rename this is not offered under a typed
    * confirmation, here or on the web. A rename is undone by renaming back, and
@@ -88,18 +80,13 @@ export function registerAdminApi(
       return;
     }
     const repos = listRepoDirs(root, name).map(displayName);
-    if (!canAdminCollection(auth, name, repos)) {
-      apiError(res, 403, `your admin scope does not cover ${name} and everything in it`);
+    if (!canAdminCollection(root, auth, name)) {
+      apiError(res, 403, `you are not an owner of ${name}`);
       return;
     }
     const to = stringField(bodyOf(req), 'name')?.trim() ?? '';
     if (!isValidName(to)) {
       apiError(res, 400, 'a valid "name" is required (letters, digits, dot, underscore, dash; not a reserved word)');
-      return;
-    }
-    const blocker = collectionMoveBlocker(auth, repos, to);
-    if (blocker) {
-      apiError(res, 403, `renaming this collection needs ${blocker}`);
       return;
     }
     try {
@@ -117,8 +104,8 @@ export function registerAdminApi(
     const auth = requireApiAuth(root, limiter, req, res);
     if (!auth) return;
     const name = req.params.name;
-    if (!canAdmin(auth, [`${name}/*`])) {
-      apiError(res, 403, `your admin scope does not cover ${name}`);
+    if (!canAdminCollection(root, auth, name)) {
+      apiError(res, 403, `you are not an owner of ${name}`);
       return;
     }
     if (!isValidName(name)) {
@@ -174,16 +161,15 @@ export function registerAdminApi(
       apiError(res, 404, `no user ${req.params.name}`);
       return;
     }
-    // A user may read their own record; reading anyone else's needs admin scope
-    // over what that user can reach.
-    if (req.params.name !== auth.username && !canAdminUser(auth, user)) {
-      apiError(res, 403, `your admin scope does not cover user ${req.params.name}`);
+    // A user may read their own record; reading anyone else's takes a site
+    // admin.
+    if (req.params.name !== auth.username && !isSiteAdmin(auth)) {
+      apiError(res, 403, 'site admin required to touch another user');
       return;
     }
     res.json({
       name: req.params.name,
-      scope: user.scope,
-      admin: user.admin,
+      siteAdmin: user.siteAdmin === true,
       tokens: user.tokens.map((t) => ({ id: tokenId(t), created: t.created ?? null, scope: t.scope ?? null })),
     });
   });
@@ -201,8 +187,8 @@ export function registerAdminApi(
       apiError(res, 404, `no user ${req.params.name}`);
       return;
     }
-    if (req.params.name !== auth.username && !canAdminUser(auth, user)) {
-      apiError(res, 403, `your admin scope does not cover user ${req.params.name}`);
+    if (req.params.name !== auth.username && !isSiteAdmin(auth)) {
+      apiError(res, 403, 'site admin required to touch another user');
       return;
     }
     // Never the token, and never the hash either: an id is what revocation
@@ -226,8 +212,8 @@ export function registerAdminApi(
       return;
     }
     const ownToken = req.params.name === auth.username && tokenId(auth.token) === req.params.id;
-    if (req.params.name !== auth.username && !canAdminUser(auth, user)) {
-      apiError(res, 403, `your admin scope does not cover user ${req.params.name}`);
+    if (req.params.name !== auth.username && !isSiteAdmin(auth)) {
+      apiError(res, 403, 'site admin required to touch another user');
       return;
     }
     let result;
@@ -259,8 +245,8 @@ export function registerAdminApi(
       apiError(res, 404, `no user ${req.params.name}`);
       return;
     }
-    if (!canAdminUser(auth, user)) {
-      apiError(res, 403, `your admin scope does not cover user ${req.params.name}`);
+    if (!isSiteAdmin(auth)) {
+      apiError(res, 403, 'site admin required to touch another user');
       return;
     }
     // Deleting yourself would leave a vault an owner cannot administer except by

@@ -192,7 +192,7 @@ export function registerCiRunApi(app: Express, root: string, limiter: AuthLimite
       .sendFile(path.resolve(file));
   });
 
-  // Cancelling, re-running, and dispatching write, so they take push scope over
+  // Cancelling, re-running, and dispatching write, so they take the write role on
   // the repository, which is what the web requires of them too.
   app.post('/api/repos/:collection/:repo/runs/:n/cancel', (req, res) => {
     const ctx = requirePush(root, limiter, req, res);
