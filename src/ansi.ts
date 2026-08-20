@@ -28,9 +28,9 @@ interface Style {
 
 const DEFAULT: Style = { bold: false, dim: false, italic: false, underline: false, fgClass: null, fgColor: null };
 
-// The palette is fixed rather than themed: mid-tone hues picked to stay
-// legible on light and dark backgrounds alike, since the six themes share one
-// stylesheet. Classes are defined in src/style.ts.
+// Each class resolves to an --ansi-* token the active theme defines (see
+// themes.ts), so a dark theme brightens the palette and a light one darkens
+// it, like every other colour in the interface.
 const FG_CLASS: Record<number, string> = {
   30: 'a-blk', 31: 'a-red', 32: 'a-grn', 33: 'a-yel',
   34: 'a-blu', 35: 'a-mag', 36: 'a-cyn', 37: 'a-wht',

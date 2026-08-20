@@ -59,6 +59,28 @@ export interface ThemeVars {
   fontUi: string;
   fontHead: string;
   fontMono: string;
+  /**
+   * The sixteen terminal colours job logs are rendered with (src/ansi.ts).
+   * "Black" and "white" are greys, since the true extremes vanish against one
+   * background or the other; the light and dark sets below suit most themes,
+   * and a theme may of course name its own.
+   */
+  ansiBlack: string;
+  ansiRed: string;
+  ansiGreen: string;
+  ansiYellow: string;
+  ansiBlue: string;
+  ansiMagenta: string;
+  ansiCyan: string;
+  ansiWhite: string;
+  ansiBrightBlack: string;
+  ansiBrightRed: string;
+  ansiBrightGreen: string;
+  ansiBrightYellow: string;
+  ansiBrightBlue: string;
+  ansiBrightMagenta: string;
+  ansiBrightCyan: string;
+  ansiBrightWhite: string;
 }
 
 export interface Theme {
@@ -77,6 +99,49 @@ const MONO =
   'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace';
 const SERIF = 'ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif';
 
+// Terminal colours tuned for each ground: dark-enough hues for a light page,
+// bright-enough ones for a dark page. Primer's ANSI sets, which are the ones
+// GitHub renders its own logs with.
+// The blue is VS Code's light-terminal blue rather than Primer's #0969da,
+// which is the GitHub theme's accent: the smoke suite (rightly) checks that
+// one theme's signature colours do not leak into another's root block.
+const ANSI_LIGHT = {
+  ansiBlack: '#57606a',
+  ansiRed: '#cf222e',
+  ansiGreen: '#116329',
+  ansiYellow: '#9a6700',
+  ansiBlue: '#0451a5',
+  ansiMagenta: '#8250df',
+  ansiCyan: '#1b7c83',
+  ansiWhite: '#6e7781',
+  ansiBrightBlack: '#8c959f',
+  ansiBrightRed: '#a40e26',
+  ansiBrightGreen: '#1a7f37',
+  ansiBrightYellow: '#b08800',
+  ansiBrightBlue: '#218bff',
+  ansiBrightMagenta: '#a475f9',
+  ansiBrightCyan: '#3192aa',
+  ansiBrightWhite: '#8c959f',
+};
+const ANSI_DARK = {
+  ansiBlack: '#6e7681',
+  ansiRed: '#ff7b72',
+  ansiGreen: '#3fb950',
+  ansiYellow: '#d29922',
+  ansiBlue: '#58a6ff',
+  ansiMagenta: '#bc8cff',
+  ansiCyan: '#39c5cf',
+  ansiWhite: '#b1bac4',
+  ansiBrightBlack: '#8c959f',
+  ansiBrightRed: '#ffa198',
+  ansiBrightGreen: '#56d364',
+  ansiBrightYellow: '#e3b341',
+  ansiBrightBlue: '#79c0ff',
+  ansiBrightMagenta: '#d2a8ff',
+  ansiBrightCyan: '#56d4dd',
+  ansiBrightWhite: '#d0d7de',
+};
+
 export const THEMES: Theme[] = [
   {
     name: 'paper',
@@ -85,6 +150,7 @@ export const THEMES: Theme[] = [
     dark: false,
     hljs: 'rose-pine-dawn',
     vars: {
+      ...ANSI_LIGHT,
       bg: '#fbf9f5',
       fg: '#2b2621',
       fgMuted: '#6c6157',
@@ -134,6 +200,7 @@ export const THEMES: Theme[] = [
     dark: false,
     hljs: 'github',
     vars: {
+      ...ANSI_LIGHT,
       bg: '#ffffff',
       fg: '#1f2328',
       fgMuted: '#57606a',
@@ -183,6 +250,7 @@ export const THEMES: Theme[] = [
     dark: false,
     hljs: 'atom-one-light',
     vars: {
+      ...ANSI_LIGHT,
       bg: '#ffffff',
       fg: '#1c1e2b',
       fgMuted: '#5a5f72',
@@ -232,6 +300,7 @@ export const THEMES: Theme[] = [
     dark: true,
     hljs: 'github-dark',
     vars: {
+      ...ANSI_DARK,
       bg: '#0f1319',
       fg: '#e6edf3',
       fgMuted: '#9198a1',
@@ -281,6 +350,7 @@ export const THEMES: Theme[] = [
     dark: true,
     hljs: 'monokai',
     vars: {
+      ...ANSI_DARK,
       bg: '#08090b',
       fg: '#d5ded7',
       fgMuted: '#7f8c84',

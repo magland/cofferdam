@@ -807,21 +807,21 @@ textarea {
 .step > summary:hover { background: var(--surface); }
 .step > summary .step-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .joblog { background: var(--code-bg); color: var(--fg); font-family: var(--font-mono); font-size: 12px; line-height: 1.5; padding: 10px 12px; margin: 0; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
-/* SGR colours from job output (src/ansi.ts). One fixed mid-tone palette rather
-   than one per theme, picked to stay legible on light and dark alike; "black"
-   and "white" become grays for the same reason. */
+/* SGR colours from job output (src/ansi.ts). The sixteen ANSI tokens belong to
+   the theme like every other colour here, so a dark theme brightens them and a
+   light one darkens them. */
 .joblog .a-b { font-weight: 600; }
 .joblog .a-d { opacity: 0.65; }
 .joblog .a-i { font-style: italic; }
 .joblog .a-u { text-decoration: underline; }
-.joblog .a-blk { color: #6e7781; } .joblog .a-bblk { color: #8c959f; }
-.joblog .a-red { color: #d1494e; } .joblog .a-bred { color: #e5534b; }
-.joblog .a-grn { color: #3f9e49; } .joblog .a-bgrn { color: #57ab5a; }
-.joblog .a-yel { color: #b08800; } .joblog .a-byel { color: #c69026; }
-.joblog .a-blu { color: #4c8fe0; } .joblog .a-bblu { color: #539bf5; }
-.joblog .a-mag { color: #a371f7; } .joblog .a-bmag { color: #b083f0; }
-.joblog .a-cyn { color: #2f9ba8; } .joblog .a-bcyn { color: #39c5cf; }
-.joblog .a-wht { color: #8c959f; } .joblog .a-bwht { color: #a8b3bd; }
+.joblog .a-blk { color: var(--ansi-black); } .joblog .a-bblk { color: var(--ansi-bright-black); }
+.joblog .a-red { color: var(--ansi-red); } .joblog .a-bred { color: var(--ansi-bright-red); }
+.joblog .a-grn { color: var(--ansi-green); } .joblog .a-bgrn { color: var(--ansi-bright-green); }
+.joblog .a-yel { color: var(--ansi-yellow); } .joblog .a-byel { color: var(--ansi-bright-yellow); }
+.joblog .a-blu { color: var(--ansi-blue); } .joblog .a-bblu { color: var(--ansi-bright-blue); }
+.joblog .a-mag { color: var(--ansi-magenta); } .joblog .a-bmag { color: var(--ansi-bright-magenta); }
+.joblog .a-cyn { color: var(--ansi-cyan); } .joblog .a-bcyn { color: var(--ansi-bright-cyan); }
+.joblog .a-wht { color: var(--ansi-white); } .joblog .a-bwht { color: var(--ansi-bright-white); }
 .step .joblog { border-top: 1px solid var(--border); }
 .joblog.live { border-top: 2px solid var(--border); max-height: 70vh; overflow-y: auto; }
 @media (max-width: 700px) {
