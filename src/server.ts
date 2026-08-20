@@ -223,7 +223,7 @@ export function createApp(root: string) {
   // browse routes, and more-specific wildcard routes before their prefixes.
   // LFS registers before git HTTP so its /info/lfs/* routes are matched ahead
   // of any /info/refs handling.
-  registerApi(app, root, authLimiter, gates, engine);
+  registerApi(app, root, authLimiter, gates, lfs, engine);
   registerCiApi(app, root, engine, authLimiter);
   registerLfs(app, root, lfs, authLimiter);
   registerGitHttp(app, root, gates, authLimiter, engine);

@@ -1,13 +1,25 @@
 import { Express } from 'express';
 import * as fs from 'fs';
+import { CiEngine } from '../ci/engine';
 import { CiConfig, SitesConfig, isPlausibleHostname, loadConfig, saveConfig } from '../config';
 import { AuthLimiter } from '../limit';
+import { LfsContext } from '../lfsstore';
 import { REPOS_DIR, collectionDir, reposDir } from '../layout';
-import { isValidName } from '../scan';
+import { renameCollection } from '../ops';
+import { displayName, isValidName, listRepoDirs } from '../scan';
 import { normalizeHostname } from '../siteshost';
 import { DEFAULT_THEME, findTheme, themeNames } from '../themes';
-import { canAdmin, loadVault, removeUser, revokeToken, tokenId } from '../vault';
-import { apiError, bodyOf, requireApiAuth } from './auth';
+import {
+  canAdmin,
+  canAdminCollection,
+  canCreateCollection,
+  canPush,
+  loadVault,
+  removeUser,
+  revokeToken,
+  tokenId,
+} from '../vault';
+import { apiError, bodyOf, requireApiAuth, sendOpError, stringField } from './auth';
 
 // Administration: users, their tokens, collections, and the vault's own settings.
 //
@@ -15,7 +27,13 @@ import { apiError, bodyOf, requireApiAuth } from './auth';
 // there is nothing to return even if it were a good idea; what a caller gets is an
 // id, a creation time, and a scope, which is enough to revoke one.
 
-export function registerAdminApi(app: Express, root: string, limiter: AuthLimiter): void {
+export function registerAdminApi(
+  app: Express,
+  root: string,
+  limiter: AuthLimiter,
+  lfs: LfsContext | null = null,
+  engine?: CiEngine
+): void {
   /**
    * An admin over everything, which is what a vault-wide setting takes. Not
    * merely an admin: a delegated collection administrator should not restyle the
@@ -33,6 +51,64 @@ export function registerAdminApi(app: Express, root: string, limiter: AuthLimite
   };
 
   // ---- collections ----
+
+  /**
+   * Rename a collection, with everything in it. The same operation the web
+   * offers on a collection's settings page, and the same two questions: admin
+   * scope over what is moving, which for a collection means every repository
+   * in it, and push scope over where it lands.
+   *
+   * Unlike a repository rename this is not offered under a typed
+   * confirmation, here or on the web. A rename is undone by renaming back, and
+   * the confirmation belongs to deletion.
+   */
+  app.post('/api/collections/:name/rename', async (req, res) => {
+    const auth = requireApiAuth(root, limiter, req, res);
+    if (!auth) return;
+    const name = req.params.name;
+    if (!isValidName(name)) {
+      apiError(res, 400, 'that is not a usable collection name');
+      return;
+    }
+    let isDir = false;
+    try {
+      isDir = fs.statSync(collectionDir(root, name)).isDirectory();
+    } catch {
+      isDir = false;
+    }
+    if (!isDir) {
+      apiError(res, 404, `no collection ${name} in this vault`);
+      return;
+    }
+    const repos = listRepoDirs(root, name).map(displayName);
+    if (!canAdminCollection(auth, name, repos)) {
+      apiError(res, 403, `your admin scope does not cover ${name} and everything in it`);
+      return;
+    }
+    const to = stringField(bodyOf(req), 'name')?.trim() ?? '';
+    if (!isValidName(to)) {
+      apiError(res, 400, 'a valid "name" is required (letters, digits, dot, underscore, dash; not a reserved word)');
+      return;
+    }
+    // Every repository lands in the new collection, so push scope has to cover
+    // each of them there; an empty collection is the weaker question
+    // canCreateCollection answers.
+    const unpushable = repos.filter((r) => !canPush(auth, to, r));
+    if (unpushable.length > 0 || !canCreateCollection(auth, to)) {
+      const what = unpushable.length > 0 ? `${to}/${unpushable[0]}` : to;
+      apiError(res, 403, `your push scope does not cover ${what}`);
+      return;
+    }
+    try {
+      // The engine indexes runs under each repository's old identity; drop
+      // them before the directories move out from under it.
+      for (const repo of repos) engine?.forgetRepo(name, repo);
+      await renameCollection(root, name, to, lfs?.store);
+      res.json({ name: to, renamedFrom: name, repos: repos.length, renamed: true });
+    } catch (e) {
+      sendOpError(res, e, 'could not rename the collection');
+    }
+  });
 
   // Only an empty one, and only a directory: a collection is a directory, so
   // removing it is an rmdir and refusing a non-empty one is the filesystem's own

@@ -207,6 +207,13 @@ together.`,
         printJson(pickObject(data, json.fields));
         return;
       }
+      // As for a collection: asking for the name it already has is answered as
+      // changed:false, and printing "Now undefined/undefined" for it would be
+      // a report of something that did not happen.
+      if (data.changed === false) {
+        console.log(String(data.message ?? 'Nothing changed.'));
+        return;
+      }
       console.log(`Now ${data.collection}/${data.name}`);
     },
   },

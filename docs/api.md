@@ -44,6 +44,8 @@ GET    /api/whoami                     the user, scopes, and restriction of this
 GET    /api/collections                collections and how many repositories each holds
 GET    /api/collections/:name          one collection and the repositories in it
 POST   /api/collections                create an empty one            {name}
+POST   /api/collections/:name/rename   rename it, and everything in it {name}
+                                       (admin over every repository in it, push over where it lands)
 DELETE /api/collections/:name          remove an empty one            (admin over the collection)
 GET    /api/users                      every user                     (admin)
 POST   /api/users                      create a user, or mint a token {username, scope?, admin?, tokenScope?}
@@ -57,6 +59,8 @@ DELETE /api/users/:name/tokens/:id     revoke one token
 `POST /api/users` returns the token once. Only its SHA-256 hash is stored, so it cannot be recovered afterwards.
 
 A token listing never contains a token or its hash. What it contains is an `id`, which is what revocation takes; a token minted before ids existed is identified by the first eight characters of its hash instead, so an existing vault needs no migration.
+
+Renaming a collection moves everything in it: the repositories, their issues, pull requests, releases, sites, run histories, and Git LFS objects. It is one directory rename, so it costs the same on a collection of one repository as on a collection of a hundred gigabytes, except for LFS objects in a bucket, whose keys name the collection and are copied to the new prefix. Two things it does not carry: remotes pointing at the old address, and token scopes in `vault.json` naming the old collection, which cover nothing afterwards and have to be granted again. Asking for the name the collection already has answers `{"changed": false}` rather than an error, as elsewhere in this API. See [Renaming a repository or a collection](vault.md#renaming-a-repository-or-a-collection).
 
 A user may read their own record and their own token ids without admin scope. Removing a user refuses to remove the caller: unlike revoking one token, that cannot be undone by minting another. Revoking the token currently in use **is** allowed, and the response says `wasThisToken: true` rather than refusing; locking yourself out is your business, and `vault.json` remains hand-editable.
 

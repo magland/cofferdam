@@ -1579,6 +1579,35 @@ api_as "removing a collection needs admin scope over it" 403 "$ALICE_TOKEN" -X D
 api_as "and a collection admin may remove one inside their scope" 409 "$COLLECTION_TOKEN" -X DELETE "$BASE/api/collections/demo"
 body_has "getting as far as the emptiness check" 'not empty'
 
+# Renaming a collection over the API, which is the same operation the web offers
+# on a collection's settings page.
+api "a collection to rename over the api" 201 -H "$JSON_CT" \
+  --data '{"collection":"apiold","name":"moving","initReadme":true}' "$BASE/api/repos"
+api "api renames a collection" 200 -X POST -H "$JSON_CT" \
+  --data '{"name":"apinew"}' "$BASE/api/collections/apiold/rename"
+body_has "saying where it came from" '"renamedFrom":"apiold"'
+body_has "and how much moved with it" '"repos":1'
+api "the collection is at the new name" 200 "$BASE/api/collections/apinew"
+body_has "with its repository" '"moving"'
+api "and gone from the old one" 404 "$BASE/api/collections/apiold"
+api "the repository moved with it" 200 "$BASE/api/repos/apinew/moving"
+api "renaming onto an existing collection is refused" 409 -X POST -H "$JSON_CT" \
+  --data '{"name":"apis"}' "$BASE/api/collections/apinew/rename"
+# nochange is a success with a body saying nothing happened, as everywhere else
+# in this API, rather than a 400.
+api "renaming to its own name changes nothing" 200 -X POST -H "$JSON_CT" \
+  --data '{"name":"apinew"}' "$BASE/api/collections/apinew/rename"
+body_has "and says so" '"changed":false'
+api "a name that is not usable is refused" 400 -X POST -H "$JSON_CT" \
+  --data '{"name":"settings"}' "$BASE/api/collections/apinew/rename"
+api "renaming a collection that is not there is a 404" 404 -X POST -H "$JSON_CT" \
+  --data '{"name":"whatever"}' "$BASE/api/collections/nosuchcollection/rename"
+api_as "renaming a collection needs admin scope over it" 403 "$ALICE_TOKEN" -X POST -H "$JSON_CT" \
+  --data '{"name":"alicesnow"}' "$BASE/api/collections/apinew/rename"
+api_as "and push scope over where it lands" 403 "$COLLECTION_TOKEN" -X POST -H "$JSON_CT" \
+  --data '{"name":"elsewhere"}' "$BASE/api/collections/demo/rename"
+body_has "naming what is out of reach" 'push scope'
+
 
 api "api reads the vault settings" 200 "$BASE/api/config"
 body_has "with the theme" '"theme":'
@@ -1891,7 +1920,17 @@ run_code "user delete refuses without --yes" 2 cli user delete spare
 run_ok "user delete with --yes" cli user delete spare --yes
 run_code "and the user is gone" 4 cli user view spare
 
-run_ok "collection add, to have one to remove" cli collection add throwaway
+run_ok "collection add, to have one to rename and remove" cli collection add throwaway
+run_ok "collection rename" cli collection rename throwaway keptaway
+body_has "reporting the new name and what moved" 'Now keptaway, with 0 repositories'
+check "the collection is at the new name" 200 "$BASE/keptaway"
+check "and gone from the old one" 404 "$BASE/throwaway"
+run_ok "collection rename to its own name reports no change" cli collection rename keptaway keptaway
+body_has "rather than a rename that did not happen" 'already its name'
+run_code "collection rename onto an existing one is a conflict" 5 cli collection rename keptaway demo
+run_code "collection rename of one that is not there is a 404" 4 cli collection rename nosuchone x
+run_ok "collection rename --json" cli collection rename keptaway throwaway --json
+body_has "with the fields a program reads" '"renamedFrom": "keptaway"'
 run_code "collection delete refuses without --yes" 2 cli collection delete throwaway
 run_ok "collection delete with --yes" cli collection delete throwaway --yes
 check "and the collection is gone" 404 "$BASE/throwaway"
