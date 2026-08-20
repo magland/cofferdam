@@ -1,13 +1,10 @@
 import hljs from 'highlight.js';
+import { esc } from './html';
 
-export function esc(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+// esc lives in html.ts now, beside the template tag that made it the
+// exception rather than the rule; re-exported here so the files that still
+// escape by hand keep their import until they are converted.
+export { esc } from './html';
 
 const EXT_LANG: Record<string, string> = {
   js: 'javascript',
