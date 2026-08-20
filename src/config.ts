@@ -46,6 +46,13 @@ export interface LimitsConfig {
   push: number;
   search: number;
   tree: number;
+  /**
+   * Gigabytes the vault may send out in one UTC day, over everything. 0
+   * disables. The one setting in this block that is read per request rather
+   * than at startup, because the moment it needs changing is the moment the
+   * vault has stopped answering.
+   */
+  egressGbPerDay: number;
 }
 
 export interface VaultConfig {
@@ -80,7 +87,10 @@ const DEFAULTS: VaultConfig = {
   ci: { runs: 100, days: 0, artifactMb: 500 },
   sites: { host: '' },
   network: { trustProxy: false },
-  limits: { requestsPerMinute: 600, authFailures: 10, clone: 4, push: 4, search: 2, tree: 4 },
+  // 20 GB a day is generous for a personal forge and cheap if it is ever all
+  // sent: it is the number that stops a crawler or a CI loop turning a host
+  // that bills for egress and does not cap it into a bill nobody chose.
+  limits: { requestsPerMinute: 600, authFailures: 10, clone: 4, push: 4, search: 2, tree: 4, egressGbPerDay: 20 },
 };
 
 function defaults(): VaultConfig {
@@ -154,6 +164,10 @@ export function loadConfig(root: string): VaultConfig {
         typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : fallback;
       const slots = (v: unknown, fallback: number) =>
         typeof v === 'number' && Number.isFinite(v) && v >= 1 ? Math.floor(v) : fallback;
+      // Not floored, unlike the two above: half a gigabyte is a reasonable
+      // budget to give a vault, and 0 disables the cap.
+      const gigabytes = (v: unknown, fallback: number) =>
+        typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : fallback;
       config.limits = {
         requestsPerMinute: limit(limits.requestsPerMinute, DEFAULTS.limits.requestsPerMinute),
         authFailures: limit(limits.authFailures, DEFAULTS.limits.authFailures),
@@ -161,6 +175,7 @@ export function loadConfig(root: string): VaultConfig {
         push: slots(limits.push, DEFAULTS.limits.push),
         search: slots(limits.search, DEFAULTS.limits.search),
         tree: slots(limits.tree, DEFAULTS.limits.tree),
+        egressGbPerDay: gigabytes(limits.egressGbPerDay, DEFAULTS.limits.egressGbPerDay),
       };
     }
   } catch {

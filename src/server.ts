@@ -8,6 +8,7 @@ import { registerCiApi } from './ci/api';
 import { CiEngine } from './ci/engine';
 import { registerCiWeb } from './ci/web';
 import { loadConfig } from './config';
+import { createEgress, egressMessage } from './egress';
 import { clientKey, createAuthLimiter, createGates, createLimiter } from './limit';
 import { registerCompare } from './compare';
 import { registerFind, registerSearch } from './find';
@@ -92,6 +93,21 @@ export function createApp(root: string) {
   // counts that cannot be rebuilt per request without discarding them.
   app.set('trust proxy', config.network.trustProxy);
 
+  // Outgoing bytes, counted per repository and capped per day. The cap is read
+  // through loadConfig on every call rather than captured here, unlike the rest
+  // of the limits block: it is the one limit whose value an operator needs to
+  // change while the vault is refusing to answer.
+  const egress = createEgress(root, () => loadConfig(root).limits.egressGbPerDay);
+
+  // First of all, because it has to attach its listeners before anything can
+  // end the response. What it counts is what reaches the socket, so it is
+  // indifferent to what wraps the body after this point: whatever answers the
+  // request, and in whatever encoding, those bytes are charged to somebody.
+  app.use((req, res, next) => {
+    egress.watch(req, res);
+    next();
+  });
+
   // Ahead of every route and every other middleware, because it works by
   // wrapping the response: anything mounted earlier would answer uncompressed.
   // That includes the sites served from this process and the error pages.
@@ -129,6 +145,22 @@ export function createApp(root: string) {
     res
       .type('html')
       .send(views.errorPage(429, 'Too many requests from this address. Try again in a moment.', { viewer: null }));
+  });
+
+  // The daily egress budget, checked before any route can produce a body.
+  //
+  // Registered after the counter and before the sites middleware, for the same
+  // reason the request limiter is: a site's own hostname is where the bytes
+  // mostly go, so it has to be inside the budget rather than in front of it.
+  //
+  // The refusal is HTML for every client, as the 429 above is. A git client
+  // shows the body it did not expect, which reads worse than a plain line but
+  // says the same thing, and one shape of refusal is one place to change it.
+  app.use((req, res, next) => {
+    const decision = egress.allow(req);
+    if (!decision) return next();
+    res.status(503).setHeader('Retry-After', String(decision.retryAfter));
+    res.type('html').send(views.errorPage(503, egressMessage(decision), { viewer: null }));
   });
 
   // Sites served from their own hostname are answered before every other route,
@@ -231,12 +263,12 @@ export function createApp(root: string) {
   // browse routes, and more-specific wildcard routes before their prefixes.
   // LFS registers before git HTTP so its /info/lfs/* routes are matched ahead
   // of any /info/refs handling.
-  registerApi(app, root, authLimiter, gates, lfs, engine);
+  registerApi(app, root, authLimiter, gates, lfs, engine, egress);
   registerCiApi(app, root, engine, authLimiter);
   registerLfs(app, root, lfs, authLimiter);
   registerGitHttp(app, root, gates, authLimiter, engine);
   registerCiWeb(app, root, engine);
-  registerWebOps(app, root, authLimiter, lfs, engine);
+  registerWebOps(app, root, authLimiter, lfs, engine, egress);
   registerCompare(app, root);
   registerIssues(app, root);
   registerPulls(app, root, engine);

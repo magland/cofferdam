@@ -1,7 +1,8 @@
 import { avatar } from './avatar';
+import { EgressSnapshot } from './egress';
 import { IconName, icon } from './icons';
 import { MARK } from './logo';
-import { esc } from './render';
+import { esc, formatSize } from './render';
 import { Viewer } from './session';
 import { Theme } from './themes';
 import { UserRecord, canAdmin } from './vault';
@@ -498,20 +499,24 @@ ${csrfField(viewer)}
  */
 export function adminShell(
   viewer: Viewer,
-  active: 'index' | 'users' | 'runners' | 'appearance',
+  active: 'index' | 'users' | 'runners' | 'appearance' | 'egress',
   title: string,
   path: string,
   body: string
 ): string {
   const item = (id: string, href: string, label: string, glyph: IconName) =>
     `<a class="${active === id ? 'current' : ''}" href="${href}">${icon(glyph)}<span>${label}</span></a>`;
-  // Appearance is vault-wide, so it is offered only to an administrator whose
-  // scope covers the whole vault; the same check the route makes.
-  const canTheme = canAdmin(viewer.auth, ['*']);
+  // Appearance and the egress budget are vault-wide, so they are offered only
+  // to an administrator whose scope covers the whole vault; the same check the
+  // routes make. The egress breakdown says which repositories are being read and
+  // how heavily, which is more than a collection administrator is owed about a
+  // collection that is not theirs.
+  const canVault = canAdmin(viewer.auth, ['*']);
   const nav = `<aside class="admin-side"><div class="side-block"><h3>${icon('sliders')}Administration</h3><div class="side-links">
 ${item('users', '/admin/users', 'Users', 'people')}
 ${item('runners', '/admin/runners', 'Runners', 'server')}
-${canTheme ? item('appearance', '/admin/appearance', 'Appearance', 'appearance') : ''}
+${canVault ? item('egress', '/admin/egress', 'Egress', 'upload') : ''}
+${canVault ? item('appearance', '/admin/appearance', 'Appearance', 'appearance') : ''}
 </div></div></aside>`;
   return layout(title, `<div class="admin-layout">${nav}<div class="admin-main">${body}</div></div>`, {
     viewer,
@@ -519,7 +524,7 @@ ${canTheme ? item('appearance', '/admin/appearance', 'Appearance', 'appearance')
   });
 }
 
-export function adminIndexPage(viewer: Viewer, canTheme: boolean): string {
+export function adminIndexPage(viewer: Viewer, canVault: boolean): string {
   const card = (href: string, title: string, blurb: string) =>
     `<a class="card" href="${href}"><b>${esc(title)}</b><span class="muted small">${esc(blurb)}</span></a>`;
   const content = `<h1>Administration</h1>
@@ -527,17 +532,132 @@ export function adminIndexPage(viewer: Viewer, canTheme: boolean): string {
 ${card('/admin/users', 'Users', 'Create users, grant push and admin scope, mint tokens.')}
 ${card('/admin/runners', 'Runners', 'Register the machines that execute workflow jobs.')}
 ${
-  canTheme
+  canVault
+    ? card('/admin/egress', 'Egress', 'See what has been sent out today, per repository, and cap what a day may send.')
+    : ''
+}
+${
+  canVault
     ? card('/admin/appearance', 'Appearance', 'Choose the theme this vault is served with.')
     : ''
 }
 </div>
 ${
-  canTheme
+  canVault
     ? ''
-    : `<p class="muted small">Appearance is a vault-wide setting, so it is limited to administrators whose admin scope covers everything.</p>`
+    : `<p class="muted small">Appearance and the egress budget are vault-wide settings, so they are limited to administrators whose admin scope covers everything.</p>`
 }`;
   return adminShell(viewer, 'index', 'Administration', '/admin', content);
+}
+
+/**
+ * What the vault has sent out today, and the cap on it.
+ *
+ * The page a bill sends someone looking, so it answers the two questions in
+ * that order: how much has gone out today and which repository it went for,
+ * then how to bound it. The breakdown is the honest part of the design and the
+ * cap is the useful one, and both are on one page because a number without a
+ * lever is just worrying.
+ */
+export function egressPage(
+  viewer: Viewer,
+  snap: EgressSnapshot,
+  opts: { lfsBucket: boolean; msg?: string }
+): string {
+  const capped = snap.capBytes > 0;
+  const share = capped ? Math.min(1, snap.total / snap.capBytes) : 0;
+  // Amber before the vault stops answering rather than after, since the point
+  // of looking at this page is to act before it does.
+  const level = !capped ? 'off' : share >= 1 ? 'over' : share >= 0.8 ? 'near' : 'under';
+  const meter = capped
+    ? `<div class="egress-meter"><span class="fill ${level}" style="width:${(share * 100).toFixed(1)}%"></span></div>`
+    : '';
+  const hours = Math.floor(snap.resetsIn / 3600);
+  const mins = Math.round((snap.resetsIn % 3600) / 60);
+  const resets = hours > 0 ? `${hours}h ${mins}m` : `${Math.max(1, mins)}m`;
+
+  const banner = snap.overBudget
+    ? `<div class="form-error">This vault has reached its daily limit and is refusing ordinary requests. Administration pages
+and signing in keep working. The counters reset at 00:00 UTC, in ${esc(resets)}; raising the limit below takes effect
+immediately.</div>`
+    : '';
+
+  const rows =
+    snap.rows.length > 0
+      ? snap.rows
+          .map((r) => {
+            const bracketed = r.repo.startsWith('(');
+            const name = bracketed
+              ? `<span class="muted">${esc(r.repo)}</span>`
+              : `<a href="/${encPath(r.repo)}">${esc(r.repo)}</a>`;
+            const what = r.site ? '<span class="counter">site</span>' : '';
+            return `<tr><td>${name} ${what}</td><td class="right mono">${esc(formatSize(r.bytes))}</td></tr>`;
+          })
+          .join('')
+      : `<tr><td colspan="2" class="muted">Nothing has gone out yet today.</td></tr>`;
+
+  const history =
+    snap.history.length > 0
+      ? `<h2>Earlier days</h2>
+<table class="listing"><tbody><tr><th>Day (UTC)</th><th class="right">Out</th></tr>
+${snap.history
+  .map((d) => `<tr><td class="mono">${esc(d.day)}</td><td class="right mono">${esc(formatSize(d.total))}</td></tr>`)
+  .join('')}
+</tbody></table>
+<p class="muted small">Up to 30 days are kept, in <span class="mono">egress.json</span> at the root of the vault.</p>`
+      : '';
+
+  const content = `<div class="page-head"><h1>Egress</h1></div>
+${flashBanner(opts.msg)}
+${banner}
+<p class="muted">Bytes this server has written to clients, counted per repository and totalled per UTC day. A site served
+from its own hostname is counted against the repository it belongs to, on a row of its own.</p>
+<div class="egress-total">
+<b class="mono">${esc(formatSize(snap.total))}</b>
+<span class="muted">${
+    capped ? `of ${esc(formatSize(snap.capBytes))} today` : 'today, with no limit set'
+  }</span>
+</div>
+${meter}
+<p class="muted small">${esc(snap.day)} UTC. Resets in ${esc(resets)}.</p>
+
+<table class="listing"><tbody><tr><th>Repository</th><th class="right">Out today</th></tr>${rows}</tbody></table>
+
+<h2>Daily limit</h2>
+<div class="form-box">
+<form method="post" action="/admin/egress">
+${csrfField(viewer)}
+<div class="field">
+<label for="egressGbPerDay">Gigabytes per day</label>
+<input type="number" id="egressGbPerDay" name="egressGbPerDay" min="0" step="any" value="${esc(String(snap.capGb))}">
+<p class="muted small">Once a day's total reaches this, every ordinary request is refused with a 503 until 00:00 UTC.
+Administration pages, signing in, and the stylesheet they need keep working, within a further 64 MB, so that the limit
+can be raised from here. 0 sends without a limit.</p>
+</div>
+<button type="submit" class="btn btn-primary">${icon('check')}<span>Save limit</span></button>
+</form>
+</div>
+
+${history}
+
+<h2>What is not counted</h2>
+<ul class="muted small">
+<li>Bytes are counted as they are written to the socket, so they include response headers and are compressed already.
+What a host meters will be a little higher, since it also carries TCP and TLS framing.</li>
+${
+  opts.lfsBucket
+    ? `<li>Git LFS objects are served from the configured bucket through presigned URLs, so those downloads never pass
+through this server and are not in these numbers; the bucket's own metering is where they show up. The limit still
+reaches them, one step earlier: a client has to ask this server for a presigned URL before it can fetch anything, and
+that request is refused like any other once the day's budget is spent. Only URLs signed in the previous hour keep
+working.</li>`
+    : ''
+}
+<li>Counts are written to disk at most every 30 seconds, so a hard kill can lose up to that much. Two servers sharing
+one vault add their counts together at each write, and each may send up to 30 seconds past the limit before it sees the
+other's.</li>
+</ul>`;
+  return adminShell(viewer, 'egress', 'Egress', '/admin/egress', content);
 }
 
 export function appearancePage(

@@ -2,6 +2,7 @@ import express, { Express, Request, Response } from 'express';
 import * as fs from 'fs';
 import { CiEngine } from './ci/engine';
 import { loadConfig, saveConfig } from './config';
+import { Egress } from './egress';
 import { isValidRefName, isValidRepoPath, isValidSha } from './git';
 import { firePush } from './ci/trigger';
 import { AuthLimiter } from './limit';
@@ -102,7 +103,8 @@ export function registerWebOps(
   root: string,
   authLimiter: AuthLimiter,
   lfs: LfsContext | null = null,
-  engine?: CiEngine
+  engine?: CiEngine,
+  egress?: Egress
 ): void {
   // A commit made in the browser is a push like any other as far as workflows
   // are concerned, so the same event goes to the CI engine, through the same
@@ -1152,22 +1154,63 @@ export function registerWebOps(
     return viewer;
   }
 
-  // The theme is vault-wide, so changing it takes admin scope over everything:
-  // a delegated collection administrator should not restyle the whole vault.
-  function canSetTheme(viewer: Viewer): boolean {
+  // The theme and the egress budget are vault-wide, so changing either takes
+  // admin scope over everything: a delegated collection administrator should not
+  // restyle the whole vault, nor decide how many gigabytes it may send.
+  function canSetVaultWide(viewer: Viewer): boolean {
     return canAdmin(viewer.auth, ['*']);
   }
 
   app.get('/admin', (req, res) => {
     const viewer = requireAdminPage(req, res);
     if (!viewer) return;
-    res.type('html').send(forms.adminIndexPage(viewer, canSetTheme(viewer)));
+    res.type('html').send(forms.adminIndexPage(viewer, canSetVaultWide(viewer)));
+  });
+
+  app.get('/admin/egress', (req, res) => {
+    const viewer = requireAdminPage(req, res);
+    if (!viewer) return;
+    if (!canSetVaultWide(viewer)) {
+      const why = 'The egress budget is vault-wide, so it requires admin scope over the whole vault.';
+      fail(res, 403, why, viewer, '/admin');
+      return;
+    }
+    if (!egress) {
+      fail(res, 500, 'This server is not counting outgoing bytes.', viewer, '/admin');
+      return;
+    }
+    const msg = typeof req.query.msg === 'string' ? req.query.msg : undefined;
+    res.type('html').send(
+      forms.egressPage(viewer, egress.snapshot(), { lfsBucket: lfs?.offloaded ?? false, msg })
+    );
+  });
+
+  app.post('/admin/egress', form, (req, res) => {
+    const viewer = requireAdminPost(req, res);
+    if (!viewer) return;
+    if (!canSetVaultWide(viewer)) {
+      const why = 'The egress budget is vault-wide, so it requires admin scope over the whole vault.';
+      fail(res, 403, why, viewer, '/admin');
+      return;
+    }
+    const raw = field(req, 'egressGbPerDay').trim();
+    const gb = Number(raw);
+    if (raw === '' || !Number.isFinite(gb) || gb < 0) {
+      fail(res, 400, 'Give a number of gigabytes per day, or 0 to send without a limit.', viewer, '/admin/egress');
+      return;
+    }
+    // The whole block is written back, since saveConfig replaces a top-level key
+    // rather than merging into it. Every other field keeps the value it has, so a
+    // vault that has tuned its concurrencies by hand does not lose them here.
+    saveConfig(root, { limits: { ...loadConfig(root).limits, egressGbPerDay: gb } });
+    const msg = gb > 0 ? `Daily egress limit set to ${gb} GB.` : 'Daily egress limit removed.';
+    res.redirect(`/admin/egress?msg=${encodeURIComponent(msg)}`);
   });
 
   app.get('/admin/appearance', (req, res) => {
     const viewer = requireAdminPage(req, res);
     if (!viewer) return;
-    if (!canSetTheme(viewer)) {
+    if (!canSetVaultWide(viewer)) {
       fail(res, 403, 'Changing the theme requires admin scope over the whole vault.', viewer, '/admin');
       return;
     }
@@ -1178,7 +1221,7 @@ export function registerWebOps(
   app.post('/admin/appearance', form, (req, res) => {
     const viewer = requireAdminPost(req, res);
     if (!viewer) return;
-    if (!canSetTheme(viewer)) {
+    if (!canSetVaultWide(viewer)) {
       fail(res, 403, 'Changing the theme requires admin scope over the whole vault.', viewer, '/admin');
       return;
     }

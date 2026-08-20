@@ -222,6 +222,7 @@ cofferdam config view
 cofferdam config set --theme slate --ci-runs 50
 cofferdam config set --ci-days 30 --ci-artifact-mb 100
 cofferdam config set --sites-host vault-sites.example.org
+cofferdam config set --egress-gb-per-day 50
 ```
 
 A release hangs on a tag that already exists: notes for a tag nobody can check out are notes about nothing, so `cofferdam tag create` comes first. Creating and editing are the same call underneath, since a release is keyed by its tag, which takes a whole class of "already exists, retry as an edit" logic out of a caller. Deleting a release deletes its notes and leaves the tag; the two are separate operations.
@@ -232,9 +233,11 @@ There is no `release upload`. A release's downloads are the archive routes, so t
 
 Tokens are named by an id rather than by their hash, and neither a token nor its hash is ever returned: only a SHA-256 hash is stored, so there is nothing to return. An id, a creation time, and any scope of its own is what a listing gives, which is what revocation takes. Revoking the token you are using is allowed and reported rather than refused; locking yourself out is your business, and `vault.json` remains hand-editable.
 
-`cofferdam config set` reaches the theme, the CI retention settings, and the hostname repository sites are served from. Those are the settings the server consults per request, so a change is in effect on the next one; `--sites-host ''` clears it, putting sites back on the vault's own hostname under the sandbox, and a value that is not a plausible hostname is refused rather than stored (see [A domain of your own](deploying.md#a-domain-of-your-own)). This is the reason there is a command at all: a vault's settings should not need a shell on the machine holding its disk.
+`cofferdam config set` reaches the theme, the CI retention settings, the hostname repository sites are served from, and the daily cap on outgoing bytes. Those are the settings the server consults per request, so a change is in effect on the next one; `--sites-host ''` clears it, putting sites back on the vault's own hostname under the sandbox, and a value that is not a plausible hostname is refused rather than stored (see [A domain of your own](deploying.md#a-domain-of-your-own)). This is the reason there is a command at all: a vault's settings should not need a shell on the machine holding its disk.
 
-`network.trustProxy` and the `limits` block are not reachable here. They are read once when the server starts, since they hold live counters that cannot be rebuilt per request, so a command that changed them would report a change the running server had not made. Edit `config.json` in the vault and restart.
+`--egress-gb-per-day` caps the bytes the vault may send in one UTC day, 20 GB by default and `0` for no cap. Past it, ordinary requests are refused with `503` until the next UTC midnight, while the administration pages and signing in keep working so the cap can be raised from the vault itself. `cofferdam api /api/egress` shows what has gone out today, per repository, which is the same breakdown `/admin/egress` draws. See [Outgoing bytes](deploying.md#outgoing-bytes).
+
+`network.trustProxy` and the rest of the `limits` block are not reachable here. They are read once when the server starts, since they hold live counters that cannot be rebuilt per request, so a command that changed them would report a change the running server had not made. Edit `config.json` in the vault and restart.
 
 ### Backing up a vault
 

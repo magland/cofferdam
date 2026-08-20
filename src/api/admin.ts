@@ -1,7 +1,8 @@
 import { Express } from 'express';
 import * as fs from 'fs';
 import { CiEngine } from '../ci/engine';
-import { CiConfig, SitesConfig, isPlausibleHostname, loadConfig, saveConfig } from '../config';
+import { CiConfig, LimitsConfig, SitesConfig, isPlausibleHostname, loadConfig, saveConfig } from '../config';
+import { Egress } from '../egress';
 import { AuthLimiter } from '../limit';
 import { LfsContext } from '../lfsstore';
 import { REPOS_DIR, collectionDir, reposDir } from '../layout';
@@ -33,7 +34,8 @@ export function registerAdminApi(
   root: string,
   limiter: AuthLimiter,
   lfs: LfsContext | null = null,
-  engine?: CiEngine
+  engine?: CiEngine,
+  egress?: Egress
 ): void {
   /**
    * An admin over everything, which is what a vault-wide setting takes. Not
@@ -290,7 +292,7 @@ export function registerAdminApi(
     const auth = requireOwner(req, res);
     if (!auth) return;
     const body = bodyOf(req);
-    const changes: { theme?: string; ci?: CiConfig; sites?: SitesConfig } = {};
+    const changes: { theme?: string; ci?: CiConfig; sites?: SitesConfig; limits?: LimitsConfig } = {};
     if (body.theme !== undefined) {
       if (typeof body.theme !== 'string' || !findTheme(body.theme)) {
         apiError(res, 400, `"theme" must be one of: ${themeNames().join(', ')} (default ${DEFAULT_THEME})`);
@@ -343,14 +345,72 @@ export function registerAdminApi(
       }
       changes.sites = { host };
     }
+    // One field of the limits block is writable, and only the one: the daily
+    // egress cap is read per request, so a change to it is in force on the next
+    // one. The rest of the block is read at startup, so a route that changed it
+    // would report a change the running server had not made.
+    //
+    // The whole block is written back, merged over what is on disk, because
+    // saveConfig replaces a top-level key rather than merging into it.
+    if (body.limits !== undefined) {
+      if (typeof body.limits !== 'object' || body.limits === null || Array.isArray(body.limits)) {
+        apiError(res, 400, '"limits" must be an object');
+        return;
+      }
+      const limits = body.limits as Record<string, unknown>;
+      const unknown = Object.keys(limits).filter((k) => k !== 'egressGbPerDay');
+      if (unknown.length > 0) {
+        apiError(
+          res,
+          400,
+          `only "egressGbPerDay" can be set here; ${unknown.join(', ')} ${
+            unknown.length === 1 ? 'is' : 'are'
+          } read when the server starts, so edit config.json in the vault and restart`
+        );
+        return;
+      }
+      const gb = limits.egressGbPerDay;
+      if (typeof gb !== 'number' || !Number.isFinite(gb) || gb < 0) {
+        apiError(res, 400, '"egressGbPerDay" must be a number of gigabytes, 0 to send without a daily limit');
+        return;
+      }
+      changes.limits = { ...loadConfig(root).limits, egressGbPerDay: gb };
+    }
     if (Object.keys(changes).length === 0) {
-      apiError(res, 400, 'nothing to change; provide "theme", "ci", and/or "sites"');
+      apiError(res, 400, 'nothing to change; provide "theme", "ci", "sites", and/or "limits"');
       return;
     }
-    // network and limits are deliberately not writable here: they are read once
-    // at startup, so a route that changed them would report a change the running
-    // server had not made. docs/deploying.md says to edit config.json and
-    // restart.
+    // network is deliberately not writable here, and neither is the rest of
+    // limits: both are read once at startup, so a route that changed them would
+    // report a change the running server had not made. docs/deploying.md says to
+    // edit config.json and restart.
     res.json(saveConfig(root, changes));
+  });
+
+  // ---- outgoing bytes ----
+
+  /**
+   * What the vault has sent today, per repository, and what it sent on the days
+   * before. The same numbers /admin/egress shows, for anyone who would rather
+   * watch a bill from a script.
+   *
+   * Owner scope, like the rest of the vault's own settings: the breakdown says
+   * which repositories are being read and how heavily, which is more than a
+   * collection administrator is owed about a collection that is not theirs.
+   */
+  app.get('/api/egress', (req, res) => {
+    const auth = requireOwner(req, res);
+    if (!auth) return;
+    if (!egress) {
+      apiError(res, 503, 'this server is not counting outgoing bytes');
+      return;
+    }
+    const snap = egress.snapshot();
+    res.json({
+      ...snap,
+      // Said here as well as on the page: a caller adding these numbers up
+      // against a hosting bill needs to know what is missing from them.
+      lfsBucketExcluded: lfs?.offloaded ?? false,
+    });
   });
 }
