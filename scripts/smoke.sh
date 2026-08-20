@@ -1191,6 +1191,20 @@ grep -qi 'content-security-policy: sandbox' "$TMP/headers" || { echo "FAIL: raw 
 grep -qi 'content-type: text/plain' "$TMP/headers" || { echo "FAIL: raw content-type not text/plain"; exit 1; }
 PASS=$((PASS+2)); echo "ok: raw CSP and content-type"
 
+# Reading is anonymous, so a raw file is publicly cacheable: revalidated by
+# ETag under a branch, so an unchanged file costs a 304 and no body, and
+# immutable under a full commit id, which can never name different bytes.
+header_has "a raw file under a branch is revalidated rather than cached blind" 'cache-control: public, no-cache'
+RAW_ETAG="$(grep -i '^etag:' "$TMP/headers" | tr -d '\r' | awk '{print $2}')"
+[ -n "$RAW_ETAG" ] || { echo "FAIL: raw file has no ETag"; cat "$TMP/headers"; exit 1; }
+check "an unchanged raw file costs a 304" 304 -H "If-None-Match: $RAW_ETAG" "$BASE/demo/proj/raw/main/README.md"
+check "a changed raw file is sent in full" 200 -H 'If-None-Match: "stale"' "$BASE/demo/proj/raw/main/README.md"
+MAIN_SHA="$(git -C "$VAULT/collections/demo/repos/proj.git" rev-parse main)"
+check "a sha-addressed raw file" 200 -D "$TMP/headers" "$BASE/demo/proj/raw/$MAIN_SHA/README.md"
+header_has "a sha-addressed raw file is immutable" 'cache-control: public, max-age=31536000, immutable'
+check "a missing file 404s" 404 -D "$TMP/headers" "$BASE/demo/proj/raw/$MAIN_SHA/no-such-file"
+header_lacks "the 404 is not cacheable" 'immutable'
+
 # ---- contributors, and history by author ----
 
 check "repo home lists contributors" 200 "$BASE/demo/proj"
@@ -1252,6 +1266,19 @@ check "source archive as zip" 200 "$BASE/demo/proj/archive/main.zip"
 PASS=$((PASS+1)); echo "ok: zip archive is a zip"
 check "archive of an unknown ref 404s" 404 "$BASE/demo/proj/archive/nope.zip"
 check "archive in an unknown format 404s" 404 "$BASE/demo/proj/archive/main.rar"
+
+# An archive is a subprocess and a stream, so the 304 is checked before either
+# is spent: the commit the ref resolves to determines every byte, so it is the
+# entity tag, and a full commit id in the URL is immutable outright.
+check "archive under a branch carries headers" 200 -D "$TMP/headers" -o /dev/null "$BASE/demo/proj/archive/main.tar.gz"
+header_has "archive under a branch is revalidated" 'cache-control: public, no-cache'
+ARCH_SHA="$(grep -i '^etag:' "$TMP/headers" | tr -d '\r"' | awk '{print $2}')"
+[ -n "$ARCH_SHA" ] || { echo "FAIL: archive has no ETag"; cat "$TMP/headers"; exit 1; }
+check "an unchanged archive costs a 304 and no subprocess" 304 -H "If-None-Match: \"$ARCH_SHA\"" "$BASE/demo/proj/archive/main.tar.gz"
+check "a sha-addressed archive" 200 -D "$TMP/headers" -o /dev/null "$BASE/demo/proj/archive/$ARCH_SHA.zip"
+header_has "a sha-addressed archive is immutable" 'cache-control: public, max-age=31536000, immutable'
+check "an abbreviated commit id archive" 200 -D "$TMP/headers" -o /dev/null "$BASE/demo/proj/archive/${ARCH_SHA:0:12}.tar.gz"
+header_lacks "an abbreviated id is not immutable, since it can become ambiguous" 'immutable'
 
 # ---- pull requests ----
 

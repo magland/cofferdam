@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import { Express, Request, Response } from 'express';
 import * as fs from 'fs';
 import { GitRepo, isValidRefName, isValidRepoPath } from './git';
@@ -404,6 +405,24 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
         res.redirect(302, dl.href);
         return;
       }
+      // Reading is anonymous, so a raw file may be cached publicly; the
+      // question is only for how long. A full commit id can never come to
+      // name different bytes, so under one the answer is forever. Under a
+      // branch or tag it is "until it changes", which HTTP spells as
+      // revalidate every time: the ETag is a hash of the bytes themselves, so
+      // an unchanged file costs a 304 and no body, whichever commit now holds
+      // it. The pointer redirect above returns before this on purpose: a
+      // redirect to a presigned URL expires and must not be cached.
+      if (/^[0-9a-f]{40}$/.test(ref)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      } else {
+        res.setHeader('Cache-Control', 'public, no-cache');
+        res.setHeader('ETag', `"${crypto.createHash('sha256').update(buf).digest('hex').slice(0, 32)}"`);
+        if (req.fresh) {
+          res.status(304).end();
+          return;
+        }
+      }
       const ext = (filePath.split('.').pop() ?? '').toLowerCase();
       // Repository content must never be able to inject HTML into this
       // origin: non-image types are served as text/plain in a sandbox.
@@ -438,9 +457,24 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
       // A ref this repository has, or a commit id: never an arbitrary
       // revision expression out of a URL.
       const known = loaded.refNames.includes(ref) || /^[0-9a-f]{7,40}$/.test(ref);
-      if (!isValidRefName(ref) || !known || !(await loaded.repo.resolve(ref))) {
+      const sha = isValidRefName(ref) && known ? await loaded.repo.resolve(ref) : null;
+      if (!sha) {
         send404(res, `Ref ${ref} not found`, viewer);
         return;
+      }
+      // An archive is a subprocess and a stream, which is exactly what a 304
+      // saves: the commit the ref resolves to determines every byte of the
+      // archive, so it is the validator, checked before a slot is taken or
+      // git is spawned. An archive of a full commit id is immutable outright.
+      if (ref === sha) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      } else {
+        res.setHeader('Cache-Control', 'public, no-cache');
+        res.setHeader('ETag', `"${sha}"`);
+        if (req.fresh) {
+          res.status(304).end();
+          return;
+        }
       }
       // The slot is held until the stream ends, which is what the gate is for: an
       // archive holds a subprocess and a socket for as long as the client cares
