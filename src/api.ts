@@ -3,7 +3,7 @@ import express, { Express, Request, Response } from 'express';
 import * as ops from './ops';
 import { MAX_UPLOAD_SIZE, OpError, opErrorStatus } from './ops';
 import { collectionDir } from './layout';
-import { displayName, isValidName, listCollections, listRepoDirs } from './scan';
+import { displayName, isValidName, isValidUserName, listCollections, listRepoDirs } from './scan';
 import { addUserToken, canAdmin, canCreateCollection, grantScope, loadVault } from './vault';
 import { apiError, requireApiAuth as authenticateRequest } from './api/auth';
 import { Egress } from './egress';
@@ -156,7 +156,7 @@ export function registerApi(
     if (!auth) return;
     const body = (req.body ?? {}) as Record<string, unknown>;
     const username = typeof body.username === 'string' ? body.username : '';
-    if (!isValidName(username)) {
+    if (!isValidUserName(username)) {
       apiError(res, 400, 'a valid "username" is required');
       return;
     }

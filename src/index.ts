@@ -32,7 +32,7 @@ import { collectionAddCmd, collectionListCmd, importCmd } from './import-cli';
 import { deployDestroyCmd, deployFlyCmd, deployShowCmd } from './deploy-cli';
 import { runnerAddCmd, runnerListCommand, runnerRemoveCmd, runnerRunCmd } from './runner-cli';
 import { seedTrustProxy } from './config';
-import { isValidName } from './scan';
+import { isValidUserName } from './scan';
 import { DEFAULT_THEME, themeNames } from './themes';
 import { bootstrapVault } from './vault';
 
@@ -162,8 +162,11 @@ function formatScopes(user: { scope: string[]; admin: string[] }): string {
 async function userAddCmd(inv: Invocation) {
   refuseVaultOption(inv);
   const username = inv.args[0];
-  if (!isValidName(username)) {
-    throw new CliError('A valid username is required (letters, digits, dot, underscore, dash)', EXIT_USAGE);
+  if (!isValidUserName(username)) {
+    throw new CliError(
+      'A valid username is required (letters, digits, dot, underscore, dash, not starting with a dot)',
+      EXIT_USAGE
+    );
   }
   const scope = inv.list('scope');
   const admin = inv.list('admin');

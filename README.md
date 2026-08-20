@@ -33,7 +33,7 @@ The same command deploys updates. See [Deploying a vault](docs/deploying.md) for
 
 ## What it does
 
-- **Browsing:** files at any ref, syntax highlighting, markdown with KaTeX, history, diffs, blame, compare, search, contributors, archives. Anonymous.
+- **Browsing:** files at any ref, syntax highlighting, markdown with KaTeX, history, diffs, blame, compare, search, contributors, archives. Anonymous. A collection introduces itself with a profile README, from a `.cofferdam` repository in it.
 - **Editing in the browser:** files, uploads, branches, tags, repositories, collections, forks, users. Controls a token cannot use are not shown.
 - **Issues and pull requests,** stored as markdown in the vault. Merge or squash, refused on conflicts.
 - **Releases** tied to a tag, with Atom feeds.

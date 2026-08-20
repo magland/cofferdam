@@ -15,6 +15,7 @@ A vault is a plain directory. Its collections are in `collections/`, and a colle
   collections/
     alice/
       repos/
+        .cofferdam.git/         (the collection's profile README; see below)
         hello-numerics.git/     (bare repository)
         hello-numerics.runs/    (its workflow runs and logs)
         webapp.git/
@@ -33,6 +34,21 @@ The `.git` suffix on repository directory names is optional; it is stripped for 
 Two levels of the tree hold only things somebody named, and nothing else. That is what `collections/` and `repos/` are for: the vault's own files sit beside its collections rather than among them, and a collection can gain files of its own without any of them being a name a collection or a repository may then never be called. A file added to the vault later takes no name away from a vault that already exists.
 
 There is nothing else: no database, and no state outside this directory. That is what makes backing up a vault `cp -a` and moving one to another machine `rsync`, and it means each part of a vault can be read, written, and grepped with ordinary tools while the server is running, since the server reads what is on disk on every request. Both of those need a shell where the vault is, which a vault on a Fly volume does not have; [Backing up a vault](backup.md) is the same copy pulled over HTTP instead, and is what to use for a hosted vault. Each of these directories is described alongside the feature that writes it: [issues and pull requests](issues-and-pull-requests.md), [sites](sites.md), [workflows](workflows.md), and [Git LFS](lfs.md).
+
+## A collection's profile README
+
+A collection page is a list of repository names, which says what a collection holds but not what it is for. A collection can introduce itself instead: a repository named `.cofferdam` in the collection, holding `profile/README.md`, has that file rendered above the listing. GitHub reads an organization's profile out of a `.github` repository the same way, and the convention is borrowed rather than invented so that the file needs no new place in the vault and no new way to edit it.
+
+```
+collections/
+  alice/
+    repos/
+      .cofferdam.git/       ->  profile/README.md is shown on /alice
+```
+
+The repository is an ordinary one. It is created by pushing to `/alice/.cofferdam` or from the new-repository form, it appears in the collection's listing like any other, its own root `README.md` shows on its own page rather than on the collection's, and push scope over `alice/.cofferdam` is what decides who may change the profile. The file is read from the repository's default branch, so a change to it can be reviewed as a pull request first. Relative links and images in it resolve against `profile/`, as they do in any other README the interface renders, and `#12` still points at that repository's issue 12.
+
+Nothing is required. A collection without the repository, without the file, or with the file empty renders exactly as it did before, and a viewer who could administer the collection is offered a link to write one. Names beginning with a dot are otherwise unusual in a vault, and a leading dot is allowed for a repository alone: a collection or a user may not begin with one.
 
 ## A vault from before this layout
 

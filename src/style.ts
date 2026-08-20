@@ -1173,6 +1173,12 @@ a.chip.label:hover { text-decoration: none; filter: brightness(1.1); }
 .lede { margin: calc(-1 * var(--s3)) 0 var(--s4); color: var(--fg-muted); font-size: var(--t-sm); }
 .vault-note { margin-top: var(--s5); }
 
+/* A collection's profile README, above its repository listing. A .box takes
+   its space from above, and here the listing follows it, so the gap below is
+   added rather than inherited. */
+.profile-box { margin-bottom: var(--s6); }
+.profile-hint { margin: 0 0 var(--s5); }
+
 /* --- what a finger has to hit ---
 
    Under a coarse pointer every control grows to --touch, which is the one

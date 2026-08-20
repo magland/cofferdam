@@ -6,6 +6,7 @@ import { Gates } from './limit';
 import { LfsContext } from './lfsstore';
 import { isMarkdownFile, renderMarkdown } from './markdown';
 import { parsePointer } from './pointer';
+import { collectionProfile } from './profile';
 import { esc, highlightCode, isBinary } from './render';
 import { atomFeed } from './atom';
 import { latestRun } from './ci/runs';
@@ -109,7 +110,10 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
         send404(res, `Collection ${collection} not found`, viewer);
         return;
       }
-      const cards = await repoCards(req, collection);
+      const [cards, profile] = await Promise.all([
+        repoCards(req, collection),
+        collectionProfile(root, collection),
+      ]);
       const canSettings =
         viewer !== null &&
         canAdminCollection(
@@ -119,7 +123,7 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
         );
       res
         .type('html')
-        .send(views.collectionPage(collection, cards, sortParam(req), viewer, canSettings));
+        .send(views.collectionPage(collection, cards, sortParam(req), viewer, canSettings, profile));
     })
   );
 

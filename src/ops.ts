@@ -11,6 +11,7 @@ import { REPOS_DIR, collectionDir, repoPath, reposDir } from './layout';
 import {
   displayName,
   findRepo,
+  isDotName,
   isValidName,
   listRepoDirs,
   repoSiblingSuffixes,
@@ -98,7 +99,7 @@ function tmpFile(prefix: string): string {
  * first and filled afterwards, by an import or a push.
  */
 export function createCollection(root: string, name: string): string {
-  if (!isValidName(name)) throw new OpError('invalid collection name');
+  if (!isValidName(name) || isDotName(name)) throw new OpError('invalid collection name');
   const dir = collectionDir(root, name);
   if (fs.existsSync(dir)) throw new OpError(`collection ${name} already exists`, 'exists');
   fs.mkdirSync(dir, { recursive: true });
@@ -120,8 +121,20 @@ function checkNewRepoName(name: string): void {
   }
 }
 
+/**
+ * Refuse a dot-prefixed collection. A repository's collection is created on
+ * the way when it does not exist, here and in fork and move alike, so the
+ * three of them are where a collection can come into being under a name
+ * nobody typed into the new-collection form. Only a repository may carry a
+ * leading dot; see isDotName in src/scan.ts.
+ */
+function checkNewCollectionName(collection: string): void {
+  if (isDotName(collection)) throw new OpError('a collection name may not begin with a dot');
+}
+
 export async function createRepo(root: string, collection: string, name: string): Promise<GitRepo> {
   if (!isValidName(collection) || !isValidName(name)) throw new OpError('invalid collection or repository name');
+  checkNewCollectionName(collection);
   checkNewRepoName(name);
   fs.mkdirSync(reposDir(root, collection), { recursive: true });
   const dir = repoPath(root, collection, `${name}.git`);
@@ -157,6 +170,7 @@ export async function forkRepo(
   if (!isValidName(toCollection) || !isValidName(toName)) {
     throw new OpError('invalid collection or repository name');
   }
+  checkNewCollectionName(toCollection);
   checkNewRepoName(toName);
   if (toCollection === collection && toName === name) {
     throw new OpError('a repository cannot be forked onto itself');
@@ -643,6 +657,7 @@ export async function renameRepo(
   if (!isValidName(toCollection) || !isValidName(toName)) {
     throw new OpError('invalid collection or repository name');
   }
+  checkNewCollectionName(toCollection);
   checkNewRepoName(toName);
   if (toCollection === collection && toName === name) throw new OpError('that is already its name', 'nochange');
   if (findRepo(root, toCollection, toName)) {
@@ -708,7 +723,9 @@ export async function renameCollection(
   toName: string,
   lfs?: LfsStore | null
 ): Promise<void> {
-  if (!isValidName(name) || !isValidName(toName)) throw new OpError('invalid collection name');
+  if (!isValidName(name) || !isValidName(toName) || isDotName(toName)) {
+    throw new OpError('invalid collection name');
+  }
   const dir = collectionDir(root, name);
   let isDir = false;
   try {

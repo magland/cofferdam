@@ -709,6 +709,57 @@ check "save settings" 302 -b "$JAR" "$BASE/demo/proj/settings" \
 check "collection page shows description" 200 "$BASE/demo"
 body_has "description updated" 'A refreshed description'
 
+# ---- a collection's profile README ----
+#
+# The file is read from a .cofferdam repository in the collection, which is an
+# ordinary repository under a name only a repository may carry: a leading dot.
+# The checks therefore cover both halves, that the dot name works everywhere a
+# name is used and that the collection page reads the file out of it.
+
+check "a collection without a profile" 200 -b "$JAR" "$BASE/demo"
+body_has "offers to write one to whoever may administer it" 'no profile README'
+body_has "and points the offer at the new-repository form" 'name=\.cofferdam'
+check "anonymously, the same page offers nothing" 200 "$BASE/demo"
+body_lacks "no prompt for a viewer who could not act on it" 'no profile README'
+
+check "new repo form prefilled from the offer" 200 -b "$JAR" "$BASE/new?collection=demo&name=.cofferdam"
+CSRF="$(csrf_of)"
+body_has "the name arrives filled in" 'name="name" value="\.cofferdam"'
+check "create demo/.cofferdam" 302 -b "$JAR" "$BASE/new" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=.cofferdam \
+  --data-urlencode "description=About this collection" --data-urlencode init=1
+check "a dot-named repository browses like any other" 200 "$BASE/demo/.cofferdam"
+check "and is listed in its collection" 200 "$BASE/demo"
+body_has "under its own name" 'href="/demo/\.cofferdam"'
+
+check "new file form in the profile directory" 200 -b "$JAR" "$BASE/demo/.cofferdam/new/main/profile"
+CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
+PROFILE_MD=$'# Everything demo\n\nSee [proj](proj.md) for the project.\n'
+check "write profile/README.md" 302 -b "$JAR" "$BASE/demo/.cofferdam/new/main/profile" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
+  --data-urlencode filename=README.md \
+  --data-urlencode "content=$PROFILE_MD" \
+  --data-urlencode "message="
+check "the collection page renders it" 200 "$BASE/demo"
+body_has "the profile heading" 'Everything demo'
+body_has "in a box naming the file it came from" 'profile/README\.md'
+body_has "linking to the file in the repository" 'href="/demo/\.cofferdam/blob/main/profile/README\.md"'
+body_has "with relative links resolved against profile/" 'href="/demo/\.cofferdam/blob/main/profile/proj\.md"'
+check "a signed-in administrator is no longer prompted" 200 -b "$JAR" "$BASE/demo"
+body_lacks "the offer is gone once there is a profile" 'no profile README'
+check "the repository's own page is unaffected" 200 "$BASE/demo/.cofferdam"
+body_has "showing its own README rather than the profile" 'About this collection'
+
+# Only a repository may begin with a dot. A collection or a user under such a
+# name would be hidden in the vault and hidden in the interface for nothing.
+check "a dot-named collection is refused" 400 -b "$JAR" "$BASE/new/collection" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode name=.hidden
+check "and so is one created on the way to a repository" 400 -b "$JAR" "$BASE/new" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=.hidden --data-urlencode name=thing
+body_has "saying which half of the name is the problem" 'begin with a dot'
+check "a dot-named user is refused" 400 -b "$JAR" "$BASE/admin/users" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode username=.ghost
+
 # ---- renaming and moving a repository ----
 
 check "settings page again" 200 -b "$JAR" "$BASE/demo/proj/settings"

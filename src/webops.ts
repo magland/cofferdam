@@ -17,6 +17,7 @@ import {
   displayName,
   findRepo,
   isValidName,
+  isValidUserName,
   listCollections,
   listRepoDirs,
   repoDescription,
@@ -390,7 +391,11 @@ export function registerWebOps(
     if (!viewer) return;
     const collections = listCollections(root).map((o) => o.name);
     const collection = typeof req.query.collection === 'string' ? req.query.collection : '';
-    res.type('html').send(forms.newRepoPage(viewer, collections, { collection }));
+    // A name may be suggested too, which is how the prompt to write a
+    // collection's profile README arrives here with .cofferdam already filled
+    // in (see src/profile.ts).
+    const name = typeof req.query.name === 'string' ? req.query.name : '';
+    res.type('html').send(forms.newRepoPage(viewer, collections, { collection, name }));
   });
 
   app.post(
@@ -410,7 +415,10 @@ export function registerWebOps(
           .send(forms.newRepoPage(viewer, collections, { collection, name, description }, error));
       };
       if (!isValidName(collection) || !isValidName(name)) {
-        rerender(400, 'Collection and repository names may use letters, digits, dot, underscore, and dash, and must not be reserved words.');
+        rerender(
+          400,
+          'Collection and repository names may use letters, digits, dot, underscore, and dash, and must not be reserved words. Only a repository may begin with a dot.'
+        );
         return;
       }
       const reserved = reservedRepoSuffix(name);
@@ -1253,8 +1261,14 @@ export function registerWebOps(
     if (!viewer) return;
     const username = field(req, 'username').trim();
     const backUrl = '/admin/users';
-    if (!isValidName(username)) {
-      fail(res, 400, 'A valid username is required (letters, digits, dot, underscore, dash).', viewer, backUrl);
+    if (!isValidUserName(username)) {
+      fail(
+        res,
+        400,
+        'A valid username is required (letters, digits, dot, underscore, dash, not starting with a dot).',
+        viewer,
+        backUrl
+      );
       return;
     }
     const state = loadVault(root);

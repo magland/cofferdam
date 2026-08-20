@@ -7,6 +7,9 @@ import { THEMES, activeTheme, darkFor } from './themes';
 import { WORDMARK } from './logo';
 import { IconName, icon } from './icons';
 import { avatar } from './avatar';
+// Type only: profile.ts builds its URLs with encPath from here, so a value
+// import in this direction would close a cycle.
+import type { CollectionProfile } from './profile';
 
 export interface RepoCtx {
   collection: string;
@@ -801,7 +804,11 @@ export function collectionPage(
   viewer: Viewer | null,
   // Whether the viewer may reach the collection's settings, which is the only
   // way to the rename. A control nobody can use is not shown, as elsewhere.
-  canAdminCollection: boolean
+  canAdminCollection: boolean,
+  // The collection's profile README, read from its .cofferdam repository; see
+  // src/profile.ts. Rendered above the listing, since it is what the page is
+  // for once a collection has one.
+  profile: CollectionProfile | null = null
 ): string {
   const body =
     repoList.length === 0
@@ -823,9 +830,21 @@ export function collectionPage(
         collection
       )}">${icon('plus')}<span>New repository</span></a>`
     : '';
+  // The prompt to write a profile goes only to a viewer who could administer
+  // the collection, and only while there is none: a page with a profile says
+  // what it has to say, and the file is edited from the repository holding it.
+  const profileBox = profile?.readme
+    ? `<div class="box profile-box" id="profile"><div class="box-header">${icon('book')}<a href="${
+        profile.readme.url
+      }">${esc(profile.readme.name)}</a></div><div class="box-body markdown-body">${profile.readme.html}</div></div>`
+    : profile && canAdminCollection
+      ? `<p class="muted small profile-hint">This collection has no profile README. <a href="${
+          profile.addUrl
+        }">Add one</a> at <span class="mono">.cofferdam/profile/README.md</span> to introduce it here.</p>`
+      : '';
   const content = `<div class="page-head"><h1 class="with-avatar">${avatar(collection, 28, 'square')}${esc(
     collection
-  )}</h1><span class="right-group">${settingsBtn}${newBtn}</span></div>${body}`;
+  )}</h1><span class="right-group">${settingsBtn}${newBtn}</span></div>${profileBox}${body}`;
   return layout(collection, content, {
     crumbs: ` / <a href="/${encodeURIComponent(collection)}">${esc(collection)}</a>`,
     viewer,

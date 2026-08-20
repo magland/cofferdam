@@ -23,7 +23,34 @@ const RESERVED_NAMES = new Set([
 
 export function isValidName(name: string): boolean {
   if (RESERVED_NAMES.has(name)) return false;
-  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) && !name.includes('..');
+  return /^\.?[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) && !name.includes('..');
+}
+
+/**
+ * Whether a name is dot-prefixed. A single leading dot is allowed so that a
+ * repository can carry a name the interface reads rather than a name a project
+ * chose: `.cofferdam` holds a collection's profile README (see
+ * src/profile.ts), and the shape is left open for whatever else the forge
+ * later wants to read out of a collection.
+ *
+ * Only a repository may carry such a name. A collection or a user named with a
+ * leading dot would be a hidden directory in the vault and a hidden address in
+ * the interface, with nothing gained, so both are refused where they are
+ * created. Reading stays permissive: isValidName above accepts the dot for
+ * every kind of name, since a route that is asked for one only has to resolve
+ * it, and a vault that somehow holds one should still serve what it holds.
+ */
+export function isDotName(name: string): boolean {
+  return name.startsWith('.');
+}
+
+/**
+ * A username. A name being looked up is checked with isValidName, which
+ * accepts a leading dot; this is the stricter rule applied where a user is
+ * created, since only a repository may carry one.
+ */
+export function isValidUserName(name: string): boolean {
+  return isValidName(name) && !isDotName(name);
 }
 
 // The directories a repository accumulates beside its bare repository, by the
@@ -101,7 +128,7 @@ export function listCollections(root: string): { name: string; repoCount: number
     return [];
   }
   return entries
-    .filter((e) => e.isDirectory() && isValidName(e.name))
+    .filter((e) => e.isDirectory() && isValidName(e.name) && !isDotName(e.name))
     .map((e) => ({ name: e.name, repoCount: listRepoDirs(root, e.name).length }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }

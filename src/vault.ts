@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { withFileLock, writeFileAtomic } from './atomic';
+import { isDotName } from './scan';
 
 export const VAULT_FILE = 'vault.json';
 
@@ -257,6 +258,9 @@ function addUserTokenLocked(
   let user = vault.users[username];
   const created = !user;
   if (!user) {
+    // A leading dot is allowed in a repository's name and in nothing else; a
+    // user carrying one would be a name the interface hides for no reason.
+    if (isDotName(username)) throw new Error(`invalid username ${username}`);
     user = { tokens: [], scope: opts.scope ?? ['*'], admin: opts.admin ?? [] };
     vault.users[username] = user;
   } else if (opts.scope || opts.admin) {

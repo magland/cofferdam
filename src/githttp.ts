@@ -4,7 +4,7 @@ import * as zlib from 'zlib';
 import { CiEngine } from './ci/engine';
 import { GitRepo, execGit } from './git';
 import { createRepo } from './ops';
-import { displayName, findRepo, isValidName, reservedRepoSuffix } from './scan';
+import { displayName, findRepo, isDotName, isValidName, reservedRepoSuffix } from './scan';
 import { AuthLimiter, BUSY_RETRY_SECONDS, Gates } from './limit';
 import { AuthResult, authenticate, canPush, loadVault } from './vault';
 import { ah } from './web';
@@ -259,6 +259,12 @@ export function registerGitHttp(app: Express, root: string, gates: Gates, authLi
               .send(`repository names may not end in ${reserved}, which is reserved for the directories a repository keeps beside it\n`);
             return;
           }
+          // A push creates the collection too when it does not exist, and only
+          // a repository may carry a leading dot.
+          if (isDotName(collectionName)) {
+            res.status(400).type('text/plain').send('collection names may not begin with a dot\n');
+            return;
+          }
           repo = await createRepo(root, collectionName, repoName);
         }
         await advertise(req, res, 'git-receive-pack', repo.dir);
@@ -300,6 +306,10 @@ export function registerGitHttp(app: Express, root: string, gates: Gates, authLi
             .status(400)
             .type('text/plain')
             .send(`repository names may not end in ${reserved}, which is reserved for the directories a repository keeps beside it\n`);
+          return;
+        }
+        if (isDotName(collectionName)) {
+          res.status(400).type('text/plain').send('collection names may not begin with a dot\n');
           return;
         }
         repo = await createRepo(root, collectionName, repoName);
