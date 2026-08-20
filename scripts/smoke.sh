@@ -272,6 +272,21 @@ check "anonymous POST /new forbidden" 403 -X POST "$BASE/new"
 
 check "owner login" 302 -c "$JAR" "$BASE/login" \
   --data-urlencode username=owner --data-urlencode "token=$OWNER_TOKEN" --data-urlencode next=/
+
+# Signing in returns to a path on this vault and to nothing else. The sign-in
+# page is the one page in the interface that asks for a token, so it is the one
+# a redirect elsewhere would be worth the most from. `/\` is in the list
+# because a browser reads the backslash as the second slash of an authority.
+for HOSTILE in '//evil.com' '/\evil.com' '/	/evil.com' 'https://evil.com' 'javascript:alert(1)'; do
+  check "login refuses to return to $HOSTILE" 302 -c "$TMP/next.jar" -D "$TMP/headers" "$BASE/login" \
+    --data-urlencode username=owner --data-urlencode "token=$OWNER_TOKEN" --data-urlencode "next=$HOSTILE"
+  header_has "and sends the reader to the front page instead" 'location: /'
+  header_lacks "naming nowhere else" 'evil.com'
+done
+check "login returns to a path of this vault" 302 -c "$TMP/next.jar" -D "$TMP/headers" "$BASE/login" \
+  --data-urlencode username=owner --data-urlencode "token=$OWNER_TOKEN" --data-urlencode next=/demo/proj
+header_has "which is where it says" 'location: /demo/proj'
+
 check "home shows signed-in user" 200 -b "$JAR" "$BASE/"
 body_has "username in header" '>owner<'
 body_has "new repository button" 'New repository'
@@ -2232,7 +2247,10 @@ header_has "and the cross-origin header" 'access-control-allow-origin: \*'
 # any other site the contents of whatever the visitor can see.
 check "a forge page for comparison" 200 -D "$TMP/headers" -b "$JAR" "$BASE/pushed/created"
 header_lacks "forge pages allow no cross-origin reads" 'access-control-allow-origin'
-header_lacks "and are not sandboxed" 'content-security-policy'
+header_lacks "and are not sandboxed" 'content-security-policy: sandbox'
+# What a forge page does carry: only the forge may frame it, so a click on a
+# real control cannot be obtained through somebody else's frame.
+header_has "forge pages may be framed only by the forge" "content-security-policy: frame-ancestors 'self'"
 
 # ---- sites on their own hostname ----
 

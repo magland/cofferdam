@@ -37,6 +37,8 @@ The absence of `allow-same-origin` is the point: it places the document in an op
 
 `Access-Control-Allow-Origin: *` is there so that a page in an opaque origin can still `fetch` its own sibling files, which is what a single-page app, a wasm loader, or any data-driven site needs. Those requests carry no credentials, so allowing them gives nothing away. The header goes on site responses only, never on forge pages and never on the API.
 
+Forge pages carry a policy of their own, `Content-Security-Policy: frame-ancestors 'self'`, so only the forge may frame them. The CSRF token refuses a request forged from another origin, but it does not refuse a real click on a real control inside somebody else's frame, which is what that closes. Site responses replace the header with the sandbox above and so are not restricted this way: a published static site is ordinarily embedded wherever its author likes, and that is no business of the forge's.
+
 ## A hostname per site
 
 A sandbox is the right default because it needs no configuration and works on a bare `*.fly.dev` name. It is also blunt: a site that wants storage, or a service worker, or a cookie of its own has no way to get one. The alternative is to give each site a real origin, which is what a hostname does.

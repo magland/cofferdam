@@ -83,8 +83,24 @@ function commitMessage(req: Request, fallback: string): string {
   return description ? `${summary}\n\n${description}` : summary;
 }
 
+/**
+ * Where signing in returns to: a path on this vault, or the front page.
+ *
+ * The sign-in page is the one place in the interface that asks for a token, so
+ * it is the one place a redirect elsewhere is worth the most to somebody else.
+ * A leading `//` is refused because the browser reads it as an authority, and a
+ * leading `/\` for the same reason: the URL standard treats a backslash as a
+ * slash for http and https, `Location: /\evil.com` therefore resolves to
+ * http://evil.com, and the header carries the character through unencoded. A
+ * control character is refused too, since a browser strips tab and newline out
+ * of a URL before parsing it, which would turn `/<tab>/evil.com` into the
+ * authority the first two checks just refused.
+ */
 function safeNext(v: string): string {
-  return v.startsWith('/') && !v.startsWith('//') ? v : '/';
+  if (!v.startsWith('/')) return '/';
+  if (v[1] === '/' || v[1] === '\\') return '/';
+  if (/[\x00-\x1f\x7f]/.test(v)) return '/';
+  return v;
 }
 
 function normalizeContent(text: string): string {

@@ -53,6 +53,8 @@ A file is also fetched again when the copy in `current/` is no longer the copy t
 
 The manifest is authoritative for deletions. A path in `current/` that it does not list is removed, and so is a mirror whose repository is gone from the vault. Deleted data therefore survives in the snapshots and nowhere else, which is what makes retention worth configuring.
 
+Every path the manifest names has to be a path inside the vault, and the run stops on one that is not: a name that is absolute, or that climbs with `..`, would put a file somewhere on this machine rather than in the backup, and a vault answering that way is not one whose other answers are worth acting on. The vault holds the paths a fetch asks for to the same rule, so this is the mirror of it on the machine doing the copying.
+
 Every write into `current/` goes to a temporary file in the same directory and is renamed into place, which the snapshots depend on. See [Snapshots and hardlinks](#snapshots-and-hardlinks).
 
 ## Options

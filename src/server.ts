@@ -169,6 +169,24 @@ export function createApp(root: string) {
   // Nothing here runs unless a sites host is configured.
   registerSiteHost(app, root);
 
+  // The forge's own pages may only be framed by the forge. A CSRF token and the
+  // Origin check in src/session.ts refuse a request forged from somewhere else,
+  // but neither refuses a real click on a real page inside somebody else's
+  // frame, which is what would let a merge, a close, or a branch deletion be
+  // obtained from a signed-in reader who thought they were clicking something
+  // of the framing page's. Registered after the sites middleware, so a request
+  // on a sites hostname never reaches it.
+  //
+  // frame-ancestors alone, and not X-Frame-Options: site content served on the
+  // forge host replaces this header with its own sandbox policy (see
+  // setSiteHeaders in src/site.ts), and an X-Frame-Options it could not
+  // replace would stop a published site being embedded anywhere, which is
+  // ordinary for a static site and no business of the forge's.
+  app.use((_req, res, next) => {
+    res.setHeader('Content-Security-Policy', "frame-ancestors 'self'");
+    next();
+  });
+
   // Then, before any route that resolves a name: an address a rename left
   // behind is sent to where that name went. Only ever a name nothing answers
   // to, so nothing that exists is affected; see src/redirects.ts. After the

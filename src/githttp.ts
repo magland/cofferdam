@@ -18,10 +18,18 @@ function pkt(s: string): string {
   return (s.length + 4).toString(16).padStart(4, '0') + s;
 }
 
+// The environment a git subprocess is given. GIT_PROTOCOL is how the version
+// the client asked for reaches git, and its value arrives in a request header,
+// so it is held to the shape git itself defines (`version=2`, and the
+// colon-separated key or key=value list the protocol allows) rather than being
+// passed on as written. Anything else is dropped, which leaves git at the
+// version it would have negotiated without the header.
+const GIT_PROTOCOL_RE = /^[A-Za-z0-9_.=-]{1,64}(:[A-Za-z0-9_.=-]{1,64})*$/;
+
 function gitEnv(req: Request): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   const proto = req.get('git-protocol');
-  if (proto) env.GIT_PROTOCOL = proto;
+  if (proto && GIT_PROTOCOL_RE.test(proto)) env.GIT_PROTOCOL = proto;
   return env;
 }
 

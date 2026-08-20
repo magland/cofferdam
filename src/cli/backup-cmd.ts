@@ -275,6 +275,36 @@ async function gitOrFail(args: string[], what: string, cwd?: string): Promise<st
 
 // ---- the manifest ----
 
+/**
+ * Whether a path the vault named is one this command may write under the
+ * backup directory.
+ *
+ * Every path in a manifest becomes a path on the operator's machine, by way of
+ * path.join with the backup directory, so the manifest is input from somewhere
+ * else and is checked as such. The vault applies the same rule to the paths a
+ * fetch asks for (see vaultPath in src/api/backup.ts); without the mirror of it
+ * here, a vault that answered a manifest with `../../.bashrc` would be writing
+ * a file outside the backup, and one that answered with a repository at such a
+ * path would have this command delete a directory outside it.
+ *
+ * Refused rather than normalized, and the run stops rather than skipping the
+ * line: a vault sending one of these is not a vault whose other answers are
+ * worth acting on.
+ */
+function isVaultRelative(p: unknown): p is string {
+  if (typeof p !== 'string' || p === '' || p.length > 1024) return false;
+  if (p.includes('\\') || p.includes('\0') || p.startsWith('/')) return false;
+  return !p.split('/').some((s) => s === '' || s === '.' || s === '..');
+}
+
+/** How a refused path is reported, in one place since two kinds of line carry one. */
+function refusedPath(p: unknown): string {
+  return (
+    `The vault named a path this backup will not write: ${JSON.stringify(p)}. ` +
+    'A manifest path must be relative to the vault and must not climb out of it, so nothing was copied.'
+  );
+}
+
 interface ManifestFile {
   kind: 'file';
   path: string;
@@ -349,9 +379,12 @@ async function fetchManifest(target: RemoteTarget, exclude: string[], hash: bool
       if (Array.isArray(v.excluded)) manifest.excluded = v.excluded as string[];
     } else if (kind === 'file') {
       const f = line as unknown as ManifestFile;
+      if (!isVaultRelative(f.path)) throw new CliError(refusedPath(f.path));
       manifest.files.set(f.path, f);
     } else if (kind === 'repo') {
-      manifest.repos.push(line as unknown as ManifestRepo);
+      const r = line as unknown as ManifestRepo;
+      if (!isVaultRelative(r.path)) throw new CliError(refusedPath(r.path));
+      manifest.repos.push(r);
     } else if (kind === 'end') {
       const e = line as unknown as { files: number; bytes: number; repos: number };
       manifest.counts = { files: e.files, bytes: e.bytes, repos: e.repos };
@@ -1085,6 +1118,14 @@ async function syncCmd(inv: Invocation): Promise<void> {
     const live = new Set(manifest.repos.map((r) => r.path));
     for (const known of Object.keys(state.repos)) {
       if (live.has(known)) continue;
+      // The recorded paths come from manifests this command already refused to
+      // accept a climbing path from, so this holds for anything written by a
+      // version that had that check. A state file from before it, or one edited
+      // by hand, is the case worth refusing to delete through.
+      if (!isVaultRelative(known)) {
+        delete state.repos[known];
+        continue;
+      }
       fs.rmSync(path.join(current, known), { recursive: true, force: true });
       delete state.repos[known];
       summary.repos.removed++;

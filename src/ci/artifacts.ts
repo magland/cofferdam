@@ -107,6 +107,13 @@ export async function deploySite(
   fs.rmSync(scratch, { recursive: true, force: true });
   fs.mkdirSync(scratch, { recursive: true });
   try {
+    // Containment during extraction is tar's own: GNU tar and libarchive both
+    // strip a leading `/` and a `..` from member names, and both refuse to
+    // write through a symlink a member of the same archive created, which is
+    // what stops `link -> /etc` followed by `link/passwd`. The walk below runs
+    // after the bytes are on disk, so it removes an escaping link rather than
+    // preventing a write through one; that division is load-bearing, and a tar
+    // without those two behaviours would not be safe to point at this.
     await run('tar', ['-xf', tar, '-C', scratch, '--no-same-owner', '--no-same-permissions']);
 
     // upload-pages-artifact wraps the site in a tar of its own, so an
