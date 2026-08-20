@@ -327,9 +327,12 @@ export function runPage(
 })();
 </script>`;
     } else {
+      const rawLink = `<a class="btn raw-log-link" href="${runBase}/log/${encodeURIComponent(
+        selected.id
+      )}/raw" title="Download the log as the runner wrote it">Raw log</a>`;
       detail = `${errorBox}<div class="job-head"><b>${esc(selected.name)}</b> ${statusIcon(js)} <span class="muted small">${esc(
         duration(selected.startedAt, selected.completedAt)
-      )}</span></div>
+      )}</span>${rawLink}</div>
 ${stepBlocks(selected, logLines)}
 ${summaryBox}`;
     }

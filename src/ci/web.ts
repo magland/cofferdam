@@ -1,6 +1,7 @@
 import { Express, Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as readline from 'readline';
 import { stripAnsi } from '../ansi';
 import { findRepo, isValidName } from '../scan';
 import { Viewer, getViewer, viewerIsAdmin } from '../session';
@@ -202,6 +203,45 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
         .type('application/x-tar')
         .set('Content-Disposition', `attachment; filename="${req.params.name}.tar"`)
         .sendFile(path.resolve(file));
+    })
+  );
+
+  // The whole log as plain text, exactly as the runner wrote it: escape
+  // sequences and all, since "raw" that has been cleaned up is not raw. The
+  // step view renders; this preserves. Streamed, because a log can be larger
+  // than anything worth buffering.
+  app.get(
+    '/:collection/:repo/actions/runs/:run/log/:job/raw',
+    ah(async (req, res) => {
+      const repo = findRepo(root, req.params.collection, req.params.repo);
+      const n = parseInt(req.params.run, 10);
+      const job = repo && Number.isInteger(n) && n > 0 ? engine.jobOf(repo.collection, repo.name, n, req.params.job) : null;
+      if (!repo || !job) {
+        res.status(404).type('text').send('not found\n');
+        return;
+      }
+      const file = jobLogPath(root, repo.collection, repo.name, n, job.id);
+      if (!fs.existsSync(file)) {
+        res.status(404).type('text').send('no log\n');
+        return;
+      }
+      res
+        .type('text/plain; charset=utf-8')
+        .set('X-Content-Type-Options', 'nosniff')
+        .set('Content-Disposition', `attachment; filename="${job.id}.log"`);
+      const rl = readline.createInterface({ input: fs.createReadStream(file), crlfDelay: Infinity });
+      for await (const raw of rl) {
+        if (raw === '') continue;
+        try {
+          const p = JSON.parse(raw) as { l?: string };
+          if (typeof p.l === 'string') {
+            if (!res.write(p.l + '\n')) await new Promise((resolve) => res.once('drain', resolve));
+          }
+        } catch {
+          // skip a damaged line rather than failing the download
+        }
+      }
+      res.end();
     })
   );
 

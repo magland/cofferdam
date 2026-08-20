@@ -798,6 +798,7 @@ textarea {
 .job-item > span:first-of-type { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .job-detail { flex: 1; min-width: 0; }
 .job-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.job-head .raw-log-link { margin-left: auto; }
 /* The steps of a job: a stack of foldables divided by hairlines, with the
    first carrying the section's own rule. */
 .step { border-top: 1px solid var(--border-soft); }
