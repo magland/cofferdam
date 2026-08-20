@@ -19,6 +19,7 @@ import {
   deleteRepo,
   deleteTag,
   forkRepo,
+  RepoContext,
   opErrorStatus,
   renameRepo,
   setDefaultBranch,
@@ -136,6 +137,10 @@ export function registerWriteApi(
   lfs: LfsContext | null = null,
   engine?: CiEngine
 ): void {
+  // As in registerWebOps: one context for the operations that move or remove a
+  // repository, so both surfaces carry the same things across.
+  const repoCtx: RepoContext = { lfs: lfs?.store, runs: engine };
+
   const fire = (ctx: WriteContext, branch: string, before: string | null, after: string, actor: Actor) =>
     firePush(root, engine, { collection: ctx.repo.collection, name: ctx.repo.name }, branch, before, after, actor.username);
 
@@ -464,12 +469,7 @@ export function registerWriteApi(
       return;
     }
     try {
-      // The store is handed the move, and the engine is told to forget the old
-      // identity first, exactly as the web handler does. Without the store an
-      // LFS object in a bucket would be left at the old key, which is an
-      // object a clone of the moved repository cannot fetch.
-      engine?.forgetRepo(ctx.repo.collection, ctx.repo.name);
-      await renameRepo(root, ctx.repo.collection, ctx.repo.name, collection, name, lfs?.store);
+      await renameRepo(root, ctx.repo.collection, ctx.repo.name, collection, name, repoCtx);
       res.json({ collection, name, renamed: true });
     } catch (e) {
       sendOpError(res, e, 'could not rename the repository');
@@ -488,8 +488,7 @@ export function registerWriteApi(
       return;
     }
     try {
-      engine?.forgetRepo(ctx.repo.collection, ctx.repo.name);
-      await deleteRepo(root, ctx.repo.collection, ctx.repo.name, lfs?.store);
+      await deleteRepo(root, ctx.repo.collection, ctx.repo.name, repoCtx);
       res.json({ deleted: full });
     } catch (e) {
       sendOpError(res, e, 'could not delete the repository');

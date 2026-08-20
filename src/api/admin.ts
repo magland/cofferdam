@@ -6,7 +6,7 @@ import { Egress } from '../egress';
 import { AuthLimiter } from '../limit';
 import { LfsContext } from '../lfsstore';
 import { REPOS_DIR, collectionDir, reposDir } from '../layout';
-import { renameCollection } from '../ops';
+import { RepoContext, renameCollection } from '../ops';
 import { forgetCollectionRedirects } from '../redirects';
 import { displayName, isValidName, listRepoDirs } from '../scan';
 import { normalizeHostname } from '../siteshost';
@@ -37,6 +37,10 @@ export function registerAdminApi(
   engine?: CiEngine,
   egress?: Egress
 ): void {
+  // One context for the collection rename, as the other two surfaces build for
+  // theirs; see RepoContext in ops.ts.
+  const repoCtx: RepoContext = { lfs: lfs?.store, runs: engine };
+
   /**
    * An admin over everything, which is what a vault-wide setting takes. Not
    * merely an admin: a delegated collection administrator should not restyle the
@@ -99,10 +103,7 @@ export function registerAdminApi(
       return;
     }
     try {
-      // The engine indexes runs under each repository's old identity; drop
-      // them before the directories move out from under it.
-      for (const repo of repos) engine?.forgetRepo(name, repo);
-      await renameCollection(root, name, to, lfs?.store);
+      await renameCollection(root, name, to, repoCtx);
       res.json({ name: to, renamedFrom: name, repos: repos.length, renamed: true });
     } catch (e) {
       sendOpError(res, e, 'could not rename the collection');

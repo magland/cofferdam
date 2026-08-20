@@ -131,6 +131,10 @@ export function registerWebOps(
   engine?: CiEngine,
   egress?: Egress
 ): void {
+  // What a repository move or removal has to carry with it, built once here so
+  // that no handler has to remember either half. See RepoContext in ops.ts.
+  const repoCtx: ops.RepoContext = { lfs: lfs?.store, runs: engine };
+
   // A commit made in the browser is a push like any other as far as workflows
   // are concerned, so the same event goes to the CI engine, through the same
   // function the API write paths use.
@@ -392,10 +396,7 @@ export function registerWebOps(
         return;
       }
       try {
-        // The engine indexes runs under each repository's old identity; drop
-        // them before the directories move out from under it.
-        for (const repo of loaded.repos) engine?.forgetRepo(from, repo);
-        await ops.renameCollection(root, from, toName, lfs?.store);
+        await ops.renameCollection(root, from, toName, repoCtx);
       } catch (e) {
         const message = e instanceof OpError ? e.message : 'Could not rename the collection.';
         fail(res, e instanceof OpError ? opErrorStatus(e.kind) : 400, message, viewer, backUrl);
@@ -1113,10 +1114,7 @@ export function registerWebOps(
         return;
       }
       try {
-        // The engine indexes runs under the old identity; drop it before the
-        // directories move out from under it.
-        engine?.forgetRepo(loaded.repo.collection, loaded.repo.name);
-        await ops.renameRepo(root, loaded.repo.collection, loaded.repo.name, toCollection, toName, lfs?.store);
+        await ops.renameRepo(root, loaded.repo.collection, loaded.repo.name, toCollection, toName, repoCtx);
       } catch (e) {
         const message = e instanceof OpError ? e.message : 'Could not move the repository.';
         fail(res, e instanceof OpError ? opErrorStatus(e.kind) : 400, message, viewer, backUrl);
@@ -1145,10 +1143,7 @@ export function registerWebOps(
         fail(res, 400, `Type ${target} exactly to confirm deletion.`, viewer, backUrl);
         return;
       }
-      // Drop the repository's runs from the live index first, so nothing is
-      // dispatched for a repository whose files are about to disappear.
-      engine?.forgetRepo(loaded.repo.collection, loaded.repo.name);
-      await ops.deleteRepo(root, loaded.repo.collection, loaded.repo.name, lfs?.store);
+      await ops.deleteRepo(root, loaded.repo.collection, loaded.repo.name, repoCtx);
       res.redirect(`/${encodeURIComponent(loaded.repo.collection)}`);
     })
   );

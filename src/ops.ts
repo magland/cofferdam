@@ -630,6 +630,29 @@ function siblingDir(root: string, collection: string, name: string, suffix: stri
 }
 
 /**
+ * The state a repository has outside its own directory, for the two
+ * operations that move or remove one.
+ *
+ * Both parts are optional because both are optional in a vault: LFS objects
+ * sit in the repository's own `.lfs` directory unless a bucket is configured,
+ * and the CI engine exists only on a server that runs workflows. Neither is
+ * something a caller should have to remember, which is the point of collecting
+ * them here: renameRepo and deleteRepo took the store as an argument and left
+ * the engine to the six call sites, so the engine was a step each new route
+ * had to know to perform, and one that a rename which then failed had already
+ * performed for nothing.
+ *
+ * The run index is named by its shape rather than by importing CiEngine, so
+ * this file stays unaware of the CI layer that imports it.
+ */
+export interface RepoContext {
+  /** Where LFS objects are kept, when they are not kept beside the repository. */
+  lfs?: LfsStore | null;
+  /** The live run index, which must stop dispatching for a repository before its files move. */
+  runs?: { forgetRepo(collection: string, repo: string): void } | null;
+}
+
+/**
  * Rename a repository, or move it to another collection - the two are one
  * operation, since both are a directory rename.
  *
@@ -650,7 +673,7 @@ export async function renameRepo(
   name: string,
   toCollection: string,
   toName: string,
-  lfs?: LfsStore | null
+  ctx: RepoContext = {}
 ): Promise<void> {
   const repo = findRepo(root, collection, name);
   if (!repo) throw new OpError(`repository ${collection}/${name} not found`, 'notfound');
@@ -674,6 +697,11 @@ export async function renameRepo(
   fs.mkdirSync(destRepos, { recursive: true });
   const destRepo = path.join(destRepos, `${toName}${suffix}`);
   if (fs.existsSync(destRepo)) throw new OpError(`${toCollection}/${toName} already exists`, 'exists');
+  // Every check has passed, so from here the move is going to happen: the run
+  // index is told to forget the old identity before the directories move out
+  // from under it. After the checks rather than before, so that a rename
+  // refused for a name that is taken leaves a running job's index entry alone.
+  ctx.runs?.forgetRepo(collection, name);
   fs.renameSync(repo.dir, destRepo);
 
   // The siblings, each moved only if it is there and inside the vault.
@@ -692,7 +720,7 @@ export async function renameRepo(
   // LFS objects carry the repository in their key or their path, so the store
   // moves them itself. Unlike deletion this is not best-effort: an object left
   // behind is one a clone of the moved repository cannot fetch.
-  if (lfs) await lfs.renameRepo(collection, name, toCollection, toName);
+  if (ctx.lfs) await ctx.lfs.renameRepo(collection, name, toCollection, toName);
   // Last, and only once everything has arrived: the old address is remembered,
   // so a clone or a link that still names it is redirected here rather than
   // 404ing. Recorded after the moves for a reason - a redirect written first
@@ -721,7 +749,7 @@ export async function renameCollection(
   root: string,
   name: string,
   toName: string,
-  lfs?: LfsStore | null
+  ctx: RepoContext = {}
 ): Promise<void> {
   if (!isValidName(name) || !isValidName(toName) || isDotName(toName)) {
     throw new OpError('invalid collection name');
@@ -745,13 +773,16 @@ export async function renameCollection(
   // findable under the new name and the store still has to be told the old
   // one.
   const repos = listRepoDirs(root, name).map(displayName);
+  // As in renameRepo, and for every repository the collection holds: after the
+  // checks, before the directory moves.
+  for (const repo of repos) ctx.runs?.forgetRepo(name, repo);
   fs.renameSync(dir, dest);
   // Objects in a bucket, as for a repository move: not best-effort, since an
   // object left behind is one a clone of the moved repository cannot fetch.
   // The local backend finds nothing to move, its directories having travelled
   // with the collection already.
-  if (lfs) {
-    for (const repo of repos) await lfs.renameRepo(name, repo, toName, repo);
+  if (ctx.lfs) {
+    for (const repo of repos) await ctx.lfs.renameRepo(name, repo, toName, repo);
   }
   // As for a repository: the old name is remembered, so every address under it
   // - the collection page and every repository in it - is redirected to the new
@@ -768,7 +799,7 @@ export async function deleteRepo(
   root: string,
   collection: string,
   name: string,
-  lfs?: LfsStore | null
+  ctx: RepoContext = {}
 ): Promise<void> {
   const repo = findRepo(root, collection, name);
   if (!repo) throw new OpError(`repository ${collection}/${name} not found`, 'notfound');
@@ -776,6 +807,9 @@ export async function deleteRepo(
   if (!containedIn(rootReal, repo.dir)) {
     throw new OpError('repository directory is outside the vault; refusing to delete');
   }
+  // As in renameRepo: after the checks, before the files go, so that nothing
+  // is dispatched for a repository that is about to stop existing.
+  ctx.runs?.forgetRepo(collection, name);
   fs.rmSync(repo.dir, { recursive: true, force: true });
   // The siblings go too: the site, the workflow runs, the issues, the pull
   // requests, and the releases. Leaving any of them would orphan a history
@@ -791,9 +825,9 @@ export async function deleteRepo(
   // Stored LFS objects go too, best-effort: by this point the repository is
   // gone and the objects are unreachable garbage, so a storage failure is
   // logged rather than allowed to fail the deletion.
-  if (lfs) {
+  if (ctx.lfs) {
     try {
-      await lfs.deleteRepo(collection, name);
+      await ctx.lfs.deleteRepo(collection, name);
     } catch (e) {
       console.error(
         `LFS cleanup for ${collection}/${name} failed: ${e instanceof Error ? e.message : e}`
