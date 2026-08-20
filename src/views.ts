@@ -2,6 +2,7 @@ import { BlameLine, CommitDetail, CommitSummary, RefInfo, TreeEntry } from './gi
 import { LanguageStat } from './languages';
 import { esc, formatDay, formatSize, highlightedLines, timeTag } from './render';
 import { Viewer, viewerIsAdmin } from './session';
+import { styleSheet } from './assets';
 import { THEMES, activeTheme, darkFor } from './themes';
 import { WORDMARK } from './logo';
 import { IconName, icon } from './icons';
@@ -145,15 +146,18 @@ function jumpDialog(jump: JumpContext | null): string {
 
 export function layout(title: string, content: string, opts: PageOpts = {}): string {
   // The theme name rides along as a query parameter so a changed theme busts
-  // any cache in front of the stylesheets.
+  // any cache in front of the stylesheets, and the stylesheet carries a tag of
+  // its own contents so that an upgrade does too. Between them the sheet can
+  // then be kept for good instead of revalidated on every navigation.
   const theme = activeTheme().name;
+  const sheet = styleSheet(activeTheme()).tag;
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
-<link rel="stylesheet" href="/assets/style.css?t=${encodeURIComponent(theme)}">
+<link rel="stylesheet" href="/assets/style.css?t=${encodeURIComponent(theme)}&amp;v=${sheet}">
 <link id="hl-css" rel="stylesheet" href="/assets/hl.css?t=${encodeURIComponent(theme)}">
 <link rel="stylesheet" href="/assets/katex/katex.css">
 <link rel="icon" href="/favicon.svg?t=${encodeURIComponent(theme)}" type="image/svg+xml">

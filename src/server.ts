@@ -22,8 +22,8 @@ import { displayName, listCollections, listRepoDirs } from './scan';
 import { getViewer } from './session';
 import { registerSiteHost } from './site';
 import { isUnderSitesHost } from './siteshost';
-import { CSS } from './style';
-import { activeTheme, allThemeVarsCss, findTheme, setActiveTheme } from './themes';
+import { styleSheet } from './assets';
+import { activeTheme, findTheme, setActiveTheme } from './themes';
 import * as views from './views';
 import { registerWebOps } from './webops';
 
@@ -125,8 +125,17 @@ export function createApp(root: string) {
   // ---- static assets ----
 
   const hlCache = new Map<string, string>();
-  app.get('/assets/style.css', (_req, res) => {
-    res.type('text/css').set('Cache-Control', 'no-cache').send(allThemeVarsCss(activeTheme()) + CSS);
+  app.get('/assets/style.css', (req, res) => {
+    const sheet = styleSheet(activeTheme());
+    // A request that names the body it wants may keep it forever, because a
+    // different body would be a different tag and so a different URL. One that
+    // does not -- an old page still in a tab, or someone typing the path --
+    // gets the current sheet and no licence to hold on to it.
+    const fresh = String(req.query.v ?? '') === sheet.tag;
+    res
+      .type('text/css')
+      .set('Cache-Control', fresh ? 'public, max-age=31536000, immutable' : 'no-cache')
+      .send(sheet.body);
   });
   app.get('/assets/hl.css', (req, res) => {
     // Code colours are a whole stylesheet rather than a set of tokens, so the
@@ -143,7 +152,7 @@ export function createApp(root: string) {
       }
       hlCache.set(name, css);
     }
-    res.type('text/css').set('Cache-Control', 'no-cache').send(css);
+    res.type('text/css').set('Cache-Control', 'public, max-age=86400').send(css);
   });
   // Every repository the interface would show anyway, as a list of names, for
   // the jump box to search without a round trip per keystroke. Anonymous, as
@@ -179,7 +188,7 @@ export function createApp(root: string) {
   // it changes with the vault's appearance. Browsers that will not take an SVG
   // icon fall back to /favicon.ico, which stays empty.
   app.get('/favicon.svg', (_req, res) => {
-    res.type('image/svg+xml').set('Cache-Control', 'no-cache').send(faviconSvg());
+    res.type('image/svg+xml').set('Cache-Control', 'public, max-age=86400').send(faviconSvg());
   });
   app.get('/favicon.ico', (_req, res) => {
     res.status(204).end();
