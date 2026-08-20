@@ -1,0 +1,33 @@
+# The runner image: a cofferdam runner with a Docker daemon of its own.
+#
+# The vault's image cannot serve here. A runner executes every job in a
+# container, so it needs a daemon, and the vault image deliberately has none:
+# nothing repository-controlled ever runs on the vault's machine.
+#
+# The base is Docker's dind image rather than an ordinary distribution with
+# docker installed, because keeping a daemon working inside a container is the
+# thing that image exists to do. Node is added on top of it.
+FROM node:24-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY tsconfig.json ./
+COPY src ./src
+RUN npm run build && npm prune --omit=dev
+
+FROM docker:28-dind
+# git for the checkout each job starts with, and nodejs to run the CLI itself.
+# The jobs' own tools come from their images, not from this one.
+RUN apk add --no-cache git nodejs
+WORKDIR /app
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY package.json ./
+COPY scripts/runner-entrypoint.sh /usr/local/bin/runner-entrypoint
+RUN chmod +x /usr/local/bin/runner-entrypoint
+# Where the daemon keeps its images. Mounting a volume here is what makes a
+# runner that stops when idle cheap to start again: the job image is pulled
+# once rather than on every wake.
+VOLUME /var/lib/docker
+EXPOSE 3000
+ENTRYPOINT ["/usr/local/bin/runner-entrypoint"]

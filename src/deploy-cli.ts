@@ -18,7 +18,7 @@ import { mintToken } from './vault';
 // fly.toml goes to a temporary directory for the length of the deploy, which is
 // why there is no fly.toml in this repository to keep in sync or to explain.
 
-const IMAGE_REPO = 'ghcr.io/magland/cofferdam';
+export const IMAGE_REPO = 'ghcr.io/magland/cofferdam';
 const VOLUME_NAME = 'vault';
 const OWNER_TOKEN_SECRET = 'COFFERDAM_OWNER_TOKEN';
 const INTERNAL_PORT = 3000;
@@ -97,7 +97,7 @@ function onPath(name: string): string | null {
 // The optional stdin is how a secret is handed over. An argument would be
 // readable in `ps` by every other user on this machine for as long as the child
 // runs, and a token is worth more than that.
-function fly(args: string[], stdin?: string): Promise<FlyResult> {
+export function fly(args: string[], stdin?: string): Promise<FlyResult> {
   return new Promise((resolve, reject) => {
     const child = execFile(flyBin(), args, { maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
       const code = (err as NodeJS.ErrnoException | null)?.code;
@@ -129,7 +129,7 @@ async function flyJson<T>(args: string[]): Promise<T | null> {
 // The commands whose progress the user should watch: deploying, creating a
 // volume, provisioning a bucket. Their output is fly's to format, and hiding a
 // three-minute deploy behind a spinner of our own would only lose detail.
-function flyStream(args: string[], cwd?: string): Promise<number> {
+export function flyStream(args: string[], cwd?: string): Promise<number> {
   return new Promise((resolve, reject) => {
     const child = spawn(flyBin(), args, { stdio: 'inherit', cwd });
     child.on('error', (e) => {
@@ -139,7 +139,7 @@ function flyStream(args: string[], cwd?: string): Promise<number> {
   });
 }
 
-function die(message: string): never {
+export function die(message: string): never {
   console.error(message);
   process.exit(1);
 }
@@ -209,7 +209,7 @@ function rejectFlyFlags(a: DeployArgs, usage: string, allowYes: boolean): void {
 // performance-2x. The generated config sets cpu_kind and cpus separately, since
 // spelling those two out avoids having to know which shorthands Fly accepts
 // today, so the shorthand is taken apart here.
-function parseVmSize(size: string): { cpuKind: string; cpus: number } {
+export function parseVmSize(size: string): { cpuKind: string; cpus: number } {
   const m = /^(shared|performance)(?:-cpu)?-(\d+)x$/.exec(size.trim());
   if (!m) {
     die(
@@ -221,7 +221,7 @@ function parseVmSize(size: string): { cpuKind: string; cpus: number } {
   return { cpuKind: m[1], cpus: parseInt(m[2], 10) };
 }
 
-function normalizeMemory(memory: string): string {
+export function normalizeMemory(memory: string): string {
   const m = /^(\d+)\s*(mb|gb)?$/i.exec(memory.trim());
   if (!m) die(`Not a memory size: ${memory}\nExpected something like 512mb, 1gb, or 2048.`);
   const n = parseInt(m[1], 10);
@@ -232,7 +232,7 @@ function normalizeMemory(memory: string): string {
 }
 
 /** The version of this CLI, which is the image tag deployed unless --image says otherwise. */
-function ownVersion(): string {
+export function ownVersion(): string {
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')) as {
       version?: unknown;
@@ -253,7 +253,7 @@ function ownVersion(): string {
  * installed cofferdam has no Dockerfile and no src to build from, and that is
  * worth saying rather than letting docker fail on a missing file.
  */
-function sourceRoot(): string {
+export function sourceRoot(): string {
   const root = path.resolve(__dirname, '..');
   if (!fs.existsSync(path.join(root, 'Dockerfile')) || !fs.existsSync(path.join(root, 'src'))) {
     die(
@@ -268,14 +268,14 @@ function sourceRoot(): string {
   return root;
 }
 
-async function requireFly(): Promise<void> {
+export async function requireFly(): Promise<void> {
   const who = await fly(['auth', 'whoami']);
   if (who.code !== 0) {
     die('Not logged in to Fly. Run:\n\n  fly auth login\n');
   }
 }
 
-interface VolumeInfo {
+export interface VolumeInfo {
   id: string;
   name: string;
   region: string;
@@ -283,24 +283,28 @@ interface VolumeInfo {
   state?: string;
 }
 
-interface MachineInfo {
+export interface MachineInfo {
   id: string;
   state?: string;
   region?: string;
   config?: { image?: string; guest?: { cpu_kind?: string; cpus?: number; memory_mb?: number } };
 }
 
-async function appExists(app: string): Promise<boolean> {
+export async function appExists(app: string): Promise<boolean> {
   const r = await fly(['status', '-a', app]);
   return r.code === 0;
 }
 
-async function vaultVolume(app: string): Promise<VolumeInfo | null> {
+export async function namedVolume(app: string, name: string): Promise<VolumeInfo | null> {
   const vols = (await flyJson<VolumeInfo[]>(['volumes', 'list', '-a', app])) ?? [];
-  return vols.find((v) => v.name === VOLUME_NAME) ?? null;
+  return vols.find((v) => v.name === name) ?? null;
 }
 
-async function machines(app: string): Promise<MachineInfo[]> {
+async function vaultVolume(app: string): Promise<VolumeInfo | null> {
+  return namedVolume(app, VOLUME_NAME);
+}
+
+export async function machines(app: string): Promise<MachineInfo[]> {
   return (await flyJson<MachineInfo[]>(['machines', 'list', '-a', app])) ?? [];
 }
 
@@ -316,7 +320,7 @@ async function certHostnames(app: string): Promise<string[]> {
   return certs.map((c) => c.hostname ?? '').filter((h) => h !== '' && !h.startsWith('*.'));
 }
 
-async function secretNames(app: string): Promise<string[]> {
+export async function secretNames(app: string): Promise<string[]> {
   const secrets = (await flyJson<{ Name?: string; name?: string }[]>(['secrets', 'list', '-a', app])) ?? [];
   return secrets.map((s) => s.Name ?? s.name ?? '').filter(Boolean);
 }
@@ -396,7 +400,7 @@ function writeTempConfig(app: string, s: Settings): string {
   return file;
 }
 
-function appUrl(app: string): string {
+export function appUrl(app: string): string {
   return `https://${app}.fly.dev`;
 }
 
@@ -812,7 +816,7 @@ export async function deployShowCmd(args: string[], usage: () => never): Promise
   console.log(`  fly logs -a ${app}`);
 }
 
-function promptLine(prompt: string): Promise<string> {
+export function promptLine(prompt: string): Promise<string> {
   return new Promise((resolve, reject) => {
     if (!process.stdin.isTTY) {
       reject(new Error('Nothing to ask on: not a terminal. Pass --yes to confirm.'));

@@ -57,7 +57,7 @@ release   list view create edit delete
 workflow  list run
 run       list view watch cancel rerun download
 user      add grant list view delete token list token revoke
-runner    add run list remove
+runner    add run list wake remove
 config    view set
 collection add list delete
 backup    <dir>             pull a whole vault onto this machine; list verify prune

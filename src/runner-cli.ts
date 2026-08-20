@@ -4,6 +4,7 @@ import { Command } from './cli/parse';
 import { TARGET_OPTIONS, targetFrom } from './cli/target';
 import { loadLogin } from './credentials';
 import { DEFAULT_IMAGES, Runner, RunnerConfig, configPath, loadRunnerConfig, saveRunnerConfig } from './runner/client';
+import { newWakeSecret } from './ci/wake';
 import { globMatch } from './vault';
 
 // The `cofferdam runner ...` subcommands. Registration talks to the server with
@@ -24,6 +25,29 @@ interface RunnerArgs {
   actionsUrl: string | null;
   actionCache: boolean;
   save: boolean;
+  idleSeconds: number | null;
+  wakePort: number | null;
+  wakeSecret: string | null;
+  wakeUrl: string | null;
+  clear: boolean;
+}
+
+/**
+ * "5m", "30s", "300" -> seconds.
+ *
+ * Written out because the one place this is used is a timeout an operator
+ * chooses in minutes and a program wants in seconds, and "--idle 300" for
+ * five minutes is a needless piece of arithmetic to ask of a reader.
+ */
+function parseDuration(text: string): number {
+  const m = /^(\d+)\s*(s|m|h)?$/i.exec(text.trim());
+  if (!m) {
+    console.error(`--idle takes a duration like 5m, 90s, or 1h, got: ${text}`);
+    process.exit(1);
+  }
+  const n = parseInt(m[1], 10);
+  const unit = (m[2] ?? 's').toLowerCase();
+  return unit === 'h' ? n * 3600 : unit === 'm' ? n * 60 : n;
 }
 
 function parseArgs(args: string[], usage: () => never): RunnerArgs {
@@ -41,6 +65,11 @@ function parseArgs(args: string[], usage: () => never): RunnerArgs {
     actionsUrl: null,
     actionCache: true,
     save: false,
+    idleSeconds: null,
+    wakePort: null,
+    wakeSecret: null,
+    wakeUrl: null,
+    clear: false,
   };
   const list = (v: string): string[] => v.split(/[\s,]+/).filter((s) => s.length > 0);
   for (let i = 0; i < args.length; i++) {
@@ -56,6 +85,17 @@ function parseArgs(args: string[], usage: () => never): RunnerArgs {
     else if (a === '--actions-url') out.actionsUrl = args[++i];
     else if (a === '--no-action-cache') out.actionCache = false;
     else if (a === '--network') out.network = args[++i];
+    else if (a === '--idle') out.idleSeconds = parseDuration(args[++i] ?? '');
+    else if (a === '--wake-port') {
+      const port = parseInt(args[++i] ?? '', 10);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        console.error('--wake-port takes a port number, e.g. --wake-port 3000');
+        process.exit(1);
+      }
+      out.wakePort = port;
+    } else if (a === '--wake-secret') out.wakeSecret = args[++i];
+    else if (a === '--wake-url') out.wakeUrl = args[++i];
+    else if (a === '--clear') out.clear = true;
     else if (a === '--save') out.save = true;
     else if (a === '--image') {
       // --image ubuntu-latest=my/image:tag
@@ -96,10 +136,20 @@ export async function runnerAddCmd(args: string[], usage: () => never): Promise<
   }
   const target = await remoteTarget(a);
   const labels = a.labels.length ? a.labels : ['ubuntu-latest'];
-  const data = await api(target, 'POST', '/api/runners', { name: a.name, labels, allow: a.allow });
+  // A wake address is optional, and its secret is generated here when one is
+  // not supplied: it is a credential nobody has to remember, since the vault
+  // sends it and the runner is given it as an environment variable.
+  const wake = a.wakeUrl ? { url: a.wakeUrl, secret: a.wakeSecret ?? newWakeSecret() } : null;
+  const data = await api(target, 'POST', '/api/runners', {
+    name: a.name,
+    labels,
+    allow: a.allow,
+    ...(wake ? { wakeUrl: wake.url, wakeSecret: wake.secret } : {}),
+  });
   console.log(`Registered runner ${data.name}`);
   console.log(`  labels:  ${(data.labels as string[]).join(', ')}`);
   console.log(`  serving: ${(data.allow as string[]).join(', ')}`);
+  if (wake) console.log(`  wake:    ${wake.url}`);
   console.log('');
   console.log('Runner token (shown once; only its hash is stored):');
   console.log('');
@@ -119,7 +169,61 @@ export async function runnerAddCmd(args: string[], usage: () => never): Promise<
     console.log('');
     console.log(`  cofferdam runner run --host ${target.host} --runner-token ${data.token}`);
   }
+  if (wake) {
+    console.log('');
+    console.log('This runner has a wake address, so the vault will start it when a job is');
+    console.log('waiting and nothing is polling. Start it with the matching secret, and with an');
+    console.log('idle timeout, or there will be nothing to wake:');
+    console.log('');
+    console.log(`  COFFERDAM_WAKE_SECRET=${wake.secret} \\`);
+    console.log(`    cofferdam runner run --idle 5m --wake-port 3000`);
+  }
   console.log('');
+}
+
+/**
+ * `cofferdam runner wake <name>`: send the wake request, or change where it goes.
+ *
+ * Sending it is the useful default, because the question an operator has is
+ * almost always "does this actually start" rather than "what is stored". The
+ * vault does the sending, since the vault is the only party holding the
+ * secret; what comes back is how long it took to answer, which on a machine
+ * that has to boot is the number worth knowing.
+ */
+export async function runnerWakeCmd(args: string[], usage: () => never): Promise<void> {
+  const a = parseArgs(args, usage);
+  if (!a.name) {
+    console.error('Which runner? Usage: cofferdam runner wake <name> [--url <url>] [--clear]');
+    process.exit(1);
+  }
+  if (a.clear && a.wakeUrl) {
+    console.error('--clear removes the wake address and --url sets one. Pass one or the other.');
+    process.exit(1);
+  }
+  const target = await remoteTarget(a);
+  const path = `/api/runners/${encodeURIComponent(a.name)}/wake`;
+  if (a.clear) {
+    await api(target, 'PUT', path, {});
+    console.log(`Runner ${a.name} has no wake address now, so nothing will start it.`);
+    return;
+  }
+  if (a.wakeUrl) {
+    const secret = a.wakeSecret ?? newWakeSecret();
+    await api(target, 'PUT', path, { wakeUrl: a.wakeUrl, wakeSecret: secret });
+    console.log(`Runner ${a.name} will be woken at ${a.wakeUrl}`);
+    if (!a.wakeSecret) {
+      console.log('');
+      console.log('The secret it must present, generated now and shown once here because the');
+      console.log('runner has to be started with the same one:');
+      console.log('');
+      console.log(`  ${secret}`);
+      console.log('');
+      console.log('  COFFERDAM_WAKE_SECRET=<that> cofferdam runner run --idle 5m --wake-port 3000');
+    }
+    return;
+  }
+  const data = await api(target, 'POST', path, {});
+  console.log(`Woke ${a.name} at ${String(data.wakeUrl)} in ${String(data.seconds)}s.`);
 }
 
 interface RunnerRow extends Record<string, unknown> {
@@ -130,6 +234,7 @@ interface RunnerRow extends Record<string, unknown> {
   createdAt: string;
   lastSeen?: string | null;
   running: { collection: string; repo: string; run: number; job: string } | null;
+  wakeUrl?: string | null;
 }
 
 interface QueuedJob {
@@ -208,7 +313,11 @@ is the usual reason a run sits at queued forever.`,
               : ''
             : r.running
               ? `running ${jobLabel(r.running)}`
-              : `idle, seen ${ago(r.lastSeen ?? null)}`,
+              : // A runner with a wake address is meant to be absent between
+                // jobs, so reporting it as idle since an hour ago without that
+                // context reads as a fault rather than as the arrangement
+                // working.
+                `idle, seen ${ago(r.lastSeen ?? null)}${r.wakeUrl ? ', woken on demand' : ''}`,
         ])
       );
     }
@@ -265,7 +374,28 @@ export async function runnerRunCmd(args: string[], usage: () => never): Promise<
     cacheDir: a.cacheDir ?? saved?.cacheDir,
     actionsUrl: a.actionsUrl ?? saved?.actionsUrl,
     actionCache: a.actionCache && (saved?.actionCache ?? true),
+    idleSeconds: a.idleSeconds ?? saved?.idleSeconds,
+    wakePort: a.wakePort ?? saved?.wakePort,
+    // From the environment by preference, like the runner token above: this is
+    // the credential a wake request must present, and a secret in argv is
+    // readable by every other user on the machine.
+    wakeSecret: a.wakeSecret ?? process.env.COFFERDAM_WAKE_SECRET ?? saved?.wakeSecret,
   };
+  if (config.wakePort && !config.wakeSecret) {
+    console.error(
+      'A wake port needs a secret to check against: pass --wake-secret, or set COFFERDAM_WAKE_SECRET.\n' +
+        'Without one, anything that can reach this port could start this runner.'
+    );
+    process.exit(1);
+  }
+  if (config.idleSeconds && !config.wakePort) {
+    // Not an error: a runner started by cron, or by hand for one run, is meant
+    // to stop and stay stopped. But the usual reason to pass --idle is the
+    // other arrangement, and a runner that stops with nothing able to start it
+    // looks exactly like a runner that has failed.
+    console.log('Note: this runner will stop when idle, and has no wake port, so nothing can start it.');
+    console.log('      Add --wake-port to let the vault do it: cofferdam runner wake --help');
+  }
   if (a.save) {
     saveRunnerConfig(config);
     console.log(`Saved to ${configPath()}`);

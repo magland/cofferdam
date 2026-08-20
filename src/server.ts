@@ -6,6 +6,7 @@ import { registerApi } from './api';
 import { registerBrowse } from './browse';
 import { registerCiApi } from './ci/api';
 import { CiEngine } from './ci/engine';
+import { startWakeDispatcher } from './ci/wake';
 import { registerCiWeb } from './ci/web';
 import { loadConfig } from './config';
 import { createEgress, egressMessage } from './egress';
@@ -275,6 +276,12 @@ export function createApp(root: string) {
   // The CI engine plans and schedules workflow runs; jobs execute on runners
   // elsewhere (cofferdam runner run), never in this process.
   const engine = new CiEngine(root, () => loadConfig(root).ci);
+
+  // A runner that stops when it has nothing to do cannot be told that it has
+  // something to do, so the vault starts it: this watches for a queued job
+  // whose runner is not connected and pokes that runner's wake address.
+  // Runners without one are unaffected, which is all of them by default.
+  startWakeDispatcher(root, engine);
 
   // Registration order matters: the API and the UI-owned top-level paths
   // (/login, /new, /admin, ...) come before the generic /:collection and /:collection/:repo

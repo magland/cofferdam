@@ -204,6 +204,58 @@ primary_region = "ewr"
 
 Note `--ha=false`, and `min_machines_running = 0` with auto-start: a vault is a directory on a single volume, so this app runs as exactly one machine. Two machines would mean two volumes and two vaults that silently diverge. For the same reason, a busier vault wants a bigger machine rather than more of them. The machine stops when idle and starts again on the next request, which costs a few seconds on the first request after a quiet spell.
 
+## A runner beside it
+
+Workflow jobs never execute on the vault's machine, so a vault deployed as above runs no CI until a runner is started somewhere. That somewhere can be a second Fly app:
+
+```bash
+cofferdam deploy fly runner my-runner --allow 'mycollection/*'
+```
+
+The command registers the runner with the vault you are logged in to, creates the app and a 20GB volume for the images jobs run in, hands the machine the vault URL and its runner token as Fly secrets, and tells the vault where to send a request when a job is waiting.
+
+What makes this affordable is that the runner does not stay up. It exits when no job has arrived for five minutes, which stops its machine; the vault starts it again by requesting its wake address, and Fly's proxy delivers that request by starting the machine. Between runs the app costs its volume alone, and a stopped machine reports as `stopped` because that is the resting state rather than a fault. The first job after a stop waits about half a minute for the boot and for the Docker daemon inside the machine to come up.
+
+```bash
+cofferdam deploy fly runner show my-runner       # what Fly has, and which runner it serves
+cofferdam runner wake my-runner                  # start it now, and time how long that takes
+cofferdam deploy fly runner destroy my-runner    # the app, and the registration with it
+```
+
+The equivalent by hand, if you would rather run it yourself:
+
+```bash
+cofferdam runner add my-runner --allow 'mycollection/*' \
+  --wake-url https://my-runner.fly.dev/wake
+fly apps create my-runner
+fly volumes create docker --app my-runner --region ewr --size 20 --yes
+fly secrets set COFFERDAM_HOST=https://my-vault-name.fly.dev \
+  COFFERDAM_RUNNER_TOKEN=cofferdam_runner_... \
+  COFFERDAM_WAKE_SECRET=... --app my-runner --stage
+fly deploy --app my-runner --config fly.toml --image ghcr.io/magland/cofferdam-runner:0.2.0 --ha=false
+```
+
+with a config whose two decisive lines are the ones the vault's own does not have:
+
+```toml
+[mounts]
+  source = "docker"
+  destination = "/var/lib/docker"
+
+[[restart]]
+  policy = "never"
+
+[http_service]
+  internal_port = 3000
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 0
+```
+
+`auto_stop_machines` is off because Fly stops a machine that has had no inbound traffic, and a runner's traffic is all outbound: left on, it would stop a machine in the middle of a job. The runner stops itself instead, by exiting, which `policy = "never"` turns into a stopped machine rather than a restarted one. Mounting the volume at `/var/lib/docker` is what keeps a cold start cheap, since the image a job runs in is pulled once rather than on every wake.
+
+A runner executes whatever the repositories in its `--allow` globs contain, on the machine deployed here. See [Workflows](workflows.md#a-runner-that-stops-when-it-is-idle) for what that means and how the waking works.
+
 ## A domain of your own
 
 A vault on `my-vault-name.fly.dev` is a real HTTPS URL and there is nothing wrong with keeping it. Moving to a name you own buys two things. The vault's address stops naming the host it happens to run on, so it can move later without breaking everyone's remotes. And static sites can be given a hostname each, instead of sharing the vault's under a sandbox that costs them cookies, storage, and service workers.

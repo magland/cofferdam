@@ -7,6 +7,7 @@ import { ActionStore, defaultActionCacheDir } from './actions';
 import { dockerAvailable } from './docker';
 import { Externals, defaultExternalsDir } from './externals';
 import { JobResult, defaultWorkDir, runJob } from './job';
+import { startWakeListener } from './wake';
 
 // `cofferdam runner run`: acquire a job, execute it, report back, repeat. The
 // transport is plain HTTP with a long poll, so it works through any proxy
@@ -26,6 +27,22 @@ export interface RunnerConfig {
   cacheDir?: string;
   /** Reuse downloaded actions between jobs. Defaults to true. */
   actionCache?: boolean;
+  /**
+   * Stop after this many seconds with no job, rather than polling forever.
+   *
+   * This is what makes a runner that costs money while it is up affordable:
+   * the process exits 0, the machine it is on stops, and something else starts
+   * it again when there is work. A runner that is meant to sit and wait leaves
+   * this unset, which is the default.
+   */
+  idleSeconds?: number;
+  /**
+   * Answer wake requests on this port, so that whatever stopped this runner
+   * can start it again. Only useful together with idleSeconds.
+   */
+  wakePort?: number;
+  /** The secret a wake request must present. Required when wakePort is set. */
+  wakeSecret?: string;
 }
 
 export const DEFAULT_IMAGES: Record<string, string> = {
@@ -176,6 +193,12 @@ export class Runner {
   private images: Record<string, string>;
   private workDir: string;
   private network?: string;
+  private idleSeconds: number | null;
+  private wake: { port: number; secret: string } | null;
+  // When this runner last had something to do. A wake request counts, so that
+  // a runner started for a job that is a moment behind the request does not
+  // time out before the job arrives.
+  private idleSince = Date.now();
   private stopping = false;
   // The acquire poll the loop is sitting in, so that stopping can abort it. A
   // runner between jobs is inside a request the server holds open for twenty-five
@@ -196,6 +219,8 @@ export class Runner {
     this.images = { ...DEFAULT_IMAGES, ...(config.images ?? {}) };
     this.workDir = config.workDir ?? defaultWorkDir();
     this.network = config.network;
+    this.idleSeconds = config.idleSeconds && config.idleSeconds > 0 ? config.idleSeconds : null;
+    this.wake = config.wakePort && config.wakeSecret ? { port: config.wakePort, secret: config.wakeSecret } : null;
     const actionCache = config.cacheDir ? path.join(config.cacheDir, 'actions') : defaultActionCacheDir();
     const externalsCache = config.cacheDir ? path.join(config.cacheDir, 'externals') : defaultExternalsDir();
     this.actions = new ActionStore(actionCache, config.actionsUrl, config.actionCache);
@@ -279,28 +304,64 @@ export class Runner {
       );
     }
     this.name = identity.name;
+    // Listening before the banner, because a runner that cannot be woken
+    // should say so at the top rather than after claiming to be ready. A
+    // failure to bind throws out of here: a runner meant to stop when idle
+    // and unable to be started again is worse than one that never started.
+    const listener = this.wake
+      ? await startWakeListener({
+          port: this.wake.port,
+          secret: this.wake.secret,
+          onWake: () => {
+            this.idleSince = Date.now();
+          },
+        })
+      : null;
     console.log(`cofferdam runner ${identity.name} ready`);
     console.log(`  server:  ${this.host}`);
     console.log(`  docker:  ${docker}`);
     console.log(`  workdir: ${this.workDir}`);
     console.log(`  labels:  ${labels.join(', ')}`);
     console.log(`  serving: ${identity.allow.join(', ')}`);
+    if (this.idleSeconds !== null) console.log(`  idle:    stopping after ${this.idleSeconds}s with no job`);
+    if (listener) console.log(`  wake:    listening on port ${listener.port}`);
     console.log('Waiting for jobs.');
 
     let backoff = 1000;
-    while (!this.stopping) {
-      let spec: JobSpec | null = null;
-      try {
-        spec = await this.acquire(labels);
-        backoff = 1000;
-      } catch (e) {
-        console.error(`  ${e instanceof Error ? e.message : e}; retrying in ${Math.round(backoff / 1000)}s`);
-        await new Promise((r) => setTimeout(r, backoff));
-        backoff = Math.min(backoff * 2, 60000);
-        continue;
+    // Idle is measured from the end of the last job, not from the last poll:
+    // a runner between jobs polls every twenty-five seconds forever, so a
+    // timer reset by polling would never fire.
+    this.idleSince = Date.now();
+    try {
+      while (!this.stopping) {
+        let spec: JobSpec | null = null;
+        try {
+          spec = await this.acquire(labels);
+          backoff = 1000;
+        } catch (e) {
+          console.error(`  ${e instanceof Error ? e.message : e}; retrying in ${Math.round(backoff / 1000)}s`);
+          await new Promise((r) => setTimeout(r, backoff));
+          backoff = Math.min(backoff * 2, 60000);
+          continue;
+        }
+        if (!spec) {
+          if (this.idleSeconds !== null && Date.now() - this.idleSince >= this.idleSeconds * 1000) {
+            console.log(`No job for ${this.idleSeconds}s; stopping.`);
+            return;
+          }
+          continue;
+        }
+        await this.execute(spec);
+        this.idleSince = Date.now();
       }
-      if (!spec) continue;
-      await this.execute(spec);
+    } finally {
+      // Closed before this returns, and so before the process exits, which
+      // settles the race between stopping and being woken: a wake request
+      // that arrives after the decision to stop finds nothing listening and
+      // fails, and a failed wake is retried against a runner that by then has
+      // stopped and can be started again. Answering it and exiting anyway
+      // would leave the sender believing the runner was up.
+      await listener?.close();
     }
   }
 

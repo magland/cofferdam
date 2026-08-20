@@ -106,6 +106,51 @@ Actions named by `uses:` are downloaded from `https://github.com` and cached und
 
 If the runner dies mid-job, the server notices the lease expire and requeues the job; after three attempts it fails it with a message naming the runner, rather than retrying forever. A failure in the runner itself rather than in the workflow, such as a work directory that has been removed underneath it, is logged against the run naming the runner, the machine it is on, and the directory it was working in, since none of that is visible to whoever is reading the run.
 
+### A runner that stops when it is idle
+
+A runner left running costs whatever its machine costs, all day, to execute a few minutes of work. That is the right trade for a machine you own and the wrong one for a machine billed by the minute, so a runner can be told to stop instead:
+
+```bash
+cofferdam runner run --idle 5m --wake-port 3000
+```
+
+With `--idle`, the runner exits when no job has arrived for that long, measured from the end of the last job rather than from the last poll. Whatever supervises it then stops paying for it: a Fly machine whose process exits is stopped, a systemd unit with `Restart=no` stays down.
+
+The difficulty is what happens next. A runner reaches the vault and never the other way round, which is what lets one sit behind NAT with nothing open, and it also means a runner that has stopped cannot be told that work has arrived. So a runner may carry a *wake address*, and the vault sends a request to it when a job is waiting:
+
+```bash
+cofferdam runner wake myrunner --wake-url https://my-runner.fly.dev/wake
+```
+
+The request carries a shared secret and nothing else, and expects nothing back. What acts on it is whatever sits in front of the runner: Fly's proxy starts a stopped machine in order to deliver a request to it, and a systemd socket unit starts a service the same way. The runner's own `--wake-port` listener answers it, and refuses one that does not carry the secret, since starting a machine costs its owner money.
+
+The vault sends a wake at most once a minute per runner, however many jobs are waiting, and only when that runner has not been heard from and one of the queued jobs matches its labels and its allow globs. It keeps trying for as long as the job sits there, so a wake lost to a network blip, or one that arrives in the second the runner was exiting, costs a minute rather than a run.
+
+Two things follow from this arrangement that are worth saying plainly. A runner in the stopped state is not a fault: it is the arrangement working, and `cofferdam runner list` says "woken on demand" rather than reporting it as absent. And the first job after a stop waits for a boot, which on a Fly machine with a Docker daemon to start is around half a minute; jobs that follow it do not. `cofferdam runner wake <name>` sends the request by hand and reports how long the runner took to answer, which is the way to test an address without queuing a job.
+
+The wake secret is stored in `runners.json` as the vault sends it, not as a hash. It is the opposite of a runner token: a credential the vault presents to somebody else rather than one it checks, and it buys nothing but the right to start a machine that will then ask for work in the ordinary way.
+
+### A runner on Fly.io
+
+`cofferdam deploy fly runner` puts all of the above on Fly in one command, beside a vault that is already there or anywhere else:
+
+```bash
+cofferdam deploy fly runner my-runner --allow 'mycollection/*'
+```
+
+It registers the runner with the vault you are logged in to, creates the app and a volume, hands the machine the vault URL and its token as Fly secrets, points the vault's wake request at the app, and deploys an image with a Docker daemon inside it. Afterwards the machine runs jobs and then stops, and the vault starts it again; between runs the app costs its volume alone, which is about three dollars a month for the default 20GB.
+
+The volume is mounted at `/var/lib/docker`, which is what makes stopping affordable: an image pulled for a job stays pulled, so a cold start is a boot rather than a download.
+
+Defaults are `shared-cpu-2x` with 2GB, a 20GB volume, and `--idle 5m`; `--vm-size`, `--vm-memory`, `--volume`, and `--idle` change them, and a redeploy keeps whatever the live app has for anything you do not name, so one flag changes one thing. `--allow` is required the first time and cannot be changed by a later deploy: changing what a runner serves means removing the registration and making it again, since it is the security boundary rather than a setting.
+
+```bash
+cofferdam deploy fly runner show my-runner       # what Fly has, and which runner it serves
+cofferdam deploy fly runner destroy my-runner    # the app, and the registration with it
+```
+
+A runner deployed this way is a runner like any other: it executes whatever the repositories in its allow list contain, now on a machine in your Fly organization rather than on your laptop.
+
 ### Is a runner actually there?
 
 A run that sits at `queued` has two usual causes, and `cofferdam runner list` reports both:

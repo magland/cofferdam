@@ -15,10 +15,13 @@ import {
   authenticateRunner,
   loadRunners,
   noteRunnerSeen,
+  regenerateRunnerToken,
   registerRunner,
   removeRunner,
   runnerLastSeen,
+  setRunnerWake,
 } from './runners';
+import { sendWake, wakeOf } from './wake';
 
 // The runner-facing API and the admin API for runner registration.
 //
@@ -132,10 +135,42 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
         // a run that has not started actually wants to know.
         lastSeen: runnerLastSeen(name),
         running: load.running[name] ?? null,
+        // The address, never the secret: a caller deciding whether a runner
+        // can be started needs to know that it can be, not what to send.
+        wakeUrl: r.wakeUrl ?? null,
       })),
       queued: load.queued,
     });
   });
+
+  /**
+   * The wake address in a request body, or a message saying what is wrong.
+   *
+   * Both halves or neither: an address with no secret is one the vault cannot
+   * authenticate itself to, and a secret with no address is nowhere to send
+   * it. The URL is checked for being a URL and for being HTTP, which is as
+   * far as this can go: where it points is the administrator's business, and
+   * they are already trusted with a runner that executes repository code.
+   */
+  function wakeFrom(body: Record<string, unknown>): { wake: { url: string; secret: string } | null } | { error: string } {
+    const url = body.wakeUrl;
+    const secret = body.wakeSecret;
+    if (url === undefined && secret === undefined) return { wake: null };
+    if (typeof url !== 'string' || typeof secret !== 'string' || !url || !secret) {
+      return { error: '"wakeUrl" and "wakeSecret" must be given together, as non-empty strings' };
+    }
+    if (secret.length > 500) return { error: '"wakeSecret" is too long' };
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return { error: `"wakeUrl" is not a URL: ${url}` };
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return { error: '"wakeUrl" must be an http or https URL' };
+    }
+    return { wake: { url, secret } };
+  }
 
   app.post('/api/runners', json, (req, res) => {
     const auth = requireAdmin(req, res);
@@ -174,12 +209,114 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
       apiError(res, 409, `a runner named ${name} is already registered; remove it first`);
       return;
     }
+    const wake = wakeFrom(body);
+    if ('error' in wake) {
+      apiError(res, 400, wake.error);
+      return;
+    }
     const { token, runner } = registerRunner(root, name, {
       labels: labels.length ? labels : ['ubuntu-latest'],
       allow,
       createdBy: auth.username,
+      wake: wake.wake,
     });
-    res.json({ name, token, labels: runner.labels, allow: runner.allow });
+    res.json({ name, token, labels: runner.labels, allow: runner.allow, wakeUrl: runner.wakeUrl ?? null });
+  });
+
+  /**
+   * Issue a new token for a runner, invalidating the one it had.
+   *
+   * The web interface has had this since runners did, and the API not having
+   * it meant that the one way to give a runner a token nobody holds any more
+   * was a browser. `cofferdam deploy fly runner` needs exactly that: a runner
+   * registered by an earlier deploy has a token that only the machine knows,
+   * and a machine being rebuilt has to be given one it can hold.
+   */
+  app.post('/api/runners/:name/token', json, (req, res) => {
+    const auth = requireAdmin(req, res);
+    if (!auth) return;
+    const name = req.params.name;
+    const existing = loadRunners(root).runners[name];
+    if (!existing) {
+      apiError(res, 404, `no runner named ${name}`);
+      return;
+    }
+    if (!canAdmin(auth, existing.allow)) {
+      apiError(res, 403, `your admin scope does not cover: ${existing.allow.join(', ')}`);
+      return;
+    }
+    const issued = regenerateRunnerToken(root, name);
+    if (!issued) {
+      apiError(res, 404, `no runner named ${name}`);
+      return;
+    }
+    res.json({ name, token: issued.token, labels: issued.runner.labels, allow: issued.runner.allow });
+  });
+
+  /**
+   * Point a runner's wake address somewhere, or clear it with an empty body.
+   *
+   * Separate from registration because the app that will run a runner usually
+   * does not exist until after the runner is registered: `cofferdam deploy fly
+   * runner` needs the token to put in the machine's secrets before it can know
+   * the URL that starts the machine.
+   */
+  app.put('/api/runners/:name/wake', json, (req, res) => {
+    const auth = requireAdmin(req, res);
+    if (!auth) return;
+    const name = req.params.name;
+    const existing = loadRunners(root).runners[name];
+    if (!existing) {
+      apiError(res, 404, `no runner named ${name}`);
+      return;
+    }
+    if (!canAdmin(auth, existing.allow)) {
+      apiError(res, 403, `your admin scope does not cover: ${existing.allow.join(', ')}`);
+      return;
+    }
+    const wake = wakeFrom((req.body ?? {}) as Record<string, unknown>);
+    if ('error' in wake) {
+      apiError(res, 400, wake.error);
+      return;
+    }
+    const runner = setRunnerWake(root, name, wake.wake);
+    res.json({ name, wakeUrl: runner?.wakeUrl ?? null });
+  });
+
+  /**
+   * Send this runner's wake request now, and report what came back.
+   *
+   * The vault sends it rather than the caller because the vault is the only
+   * party that has the secret; and it is worth being able to ask for, since
+   * the alternative way to test a wake address is to queue a job and watch
+   * whether anything happens.
+   */
+  app.post('/api/runners/:name/wake', json, async (req, res) => {
+    const auth = requireAdmin(req, res);
+    if (!auth) return;
+    const name = req.params.name;
+    const existing = loadRunners(root).runners[name];
+    if (!existing) {
+      apiError(res, 404, `no runner named ${name}`);
+      return;
+    }
+    if (!canAdmin(auth, existing.allow)) {
+      apiError(res, 403, `your admin scope does not cover: ${existing.allow.join(', ')}`);
+      return;
+    }
+    const wake = wakeOf(existing);
+    if (!wake) {
+      apiError(res, 400, `runner ${name} has no wake address, so there is nothing to start it`);
+      return;
+    }
+    const started = Date.now();
+    try {
+      await sendWake(wake);
+    } catch (e) {
+      apiError(res, 502, `${wake.url} did not answer: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    res.json({ name, wakeUrl: wake.url, woke: true, seconds: Math.round((Date.now() - started) / 1000) });
   });
 
   app.delete('/api/runners/:name', (req, res) => {

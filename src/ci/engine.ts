@@ -249,6 +249,20 @@ export class CiEngine {
     this.emitter.emit('wake');
   }
 
+  /**
+   * Call `fn` whenever the set of runnable jobs may have grown.
+   *
+   * This is the same signal a waiting runner is woken by, offered to a caller
+   * that is not a runner: the dispatcher which starts runners that are not
+   * connected needs to hear about a job the moment it is queued, and polling
+   * for that would be a poor substitute for an event the engine already
+   * emits. Returns the way to stop listening.
+   */
+  onQueueChanged(fn: () => void): () => void {
+    this.emitter.on('wake', fn);
+    return () => this.emitter.removeListener('wake', fn);
+  }
+
   // ---- event intake ----
 
   async handlePush(repo: GitRepo, ev: PushEvent): Promise<void> {

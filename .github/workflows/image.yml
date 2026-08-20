@@ -61,6 +61,7 @@ jobs:
     # at by the time the deploy starts.
     outputs:
       image: ${{ steps.tags.outputs.ref }}
+      runner-image: ${{ steps.tags.outputs.runner-ref }}
     steps:
       # On a workflow_run event the default ref is the head of the default
       # branch, which need not be the commit ci tested. Build that commit.
@@ -82,13 +83,21 @@ jobs:
         id: tags
         run: |
           image=ghcr.io/${{ github.repository_owner }}/cofferdam
+          # The runner is a second image from the same commit and carries the
+          # same tags, because a runner and the vault it serves speak one
+          # protocol and are released together.
+          runner=$image-runner
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             version="${GITHUB_REF_NAME#v}"
             echo "tags=$image:$version,$image:latest" >> "$GITHUB_OUTPUT"
             echo "ref=$image:$version" >> "$GITHUB_OUTPUT"
+            echo "runner-tags=$runner:$version,$runner:latest" >> "$GITHUB_OUTPUT"
+            echo "runner-ref=$runner:$version" >> "$GITHUB_OUTPUT"
           else
             echo "tags=$image:main" >> "$GITHUB_OUTPUT"
             echo "ref=$image:main" >> "$GITHUB_OUTPUT"
+            echo "runner-tags=$runner:main" >> "$GITHUB_OUTPUT"
+            echo "runner-ref=$runner:main" >> "$GITHUB_OUTPUT"
           fi
 
       # The tag must match the version in package.json, since that version is
@@ -111,6 +120,44 @@ jobs:
           tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.runner
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.tags.outputs.runner-tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The runner image's one hard requirement is a Docker daemon that comes
+      # up inside it, which is the part most likely to break under a base image
+      # bump and the part no unit test can reach. The runner is then expected
+      # to refuse for want of a token: it only gets that far after the
+      # entrypoint has satisfied itself that the daemon is usable.
+      - name: Run the runner image and check its Docker daemon comes up
+        run: |
+          tag=$(echo "${{ steps.tags.outputs.runner-tags }}" | cut -d, -f1)
+          docker run -d --privileged --name runnercheck \
+            -e COFFERDAM_HOST=http://127.0.0.1:1 "$tag"
+          for _ in $(seq 1 90); do
+            docker logs runnercheck 2>&1 | grep -q 'No runner credentials' && break
+            sleep 1
+          done
+          logs=$(docker logs runnercheck 2>&1)
+          docker rm -f runnercheck >/dev/null
+          echo "$logs"
+          case "$logs" in
+            *'The Docker daemon did not come up'*)
+              echo "the runner image could not start its own Docker daemon"
+              exit 1
+              ;;
+          esac
+          echo "$logs" | grep -q 'No runner credentials' || {
+            echo "the runner never reached the point of asking for a token"
+            exit 1
+          }
 
       # An image that cannot serve a vault is worse than no image, and this is
       # the last point where that is cheap to find out.

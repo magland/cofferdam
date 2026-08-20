@@ -30,7 +30,12 @@ import { Cli, Command, Invocation, OptionSpec, dispatch, registryJson } from './
 import { TARGET_OPTIONS, targetFrom } from './cli/target';
 import { collectionAddCmd, collectionListCmd, importCmd } from './import-cli';
 import { deployDestroyCmd, deployFlyCmd, deployShowCmd } from './deploy-cli';
-import { runnerAddCmd, runnerListCommand, runnerRemoveCmd, runnerRunCmd } from './runner-cli';
+import {
+  deployFlyRunnerCmd,
+  deployFlyRunnerDestroyCmd,
+  deployFlyRunnerShowCmd,
+} from './deploy-runner-cli';
+import { runnerAddCmd, runnerListCommand, runnerRemoveCmd, runnerRunCmd, runnerWakeCmd } from './runner-cli';
 import { seedTrustProxy } from './config';
 import { isValidUserName } from './scan';
 import { DEFAULT_THEME, themeNames } from './themes';
@@ -573,6 +578,44 @@ See also: cofferdam deploy fly show <app>, cofferdam deploy fly destroy <app>.
 `,
     deployFlyCmd
   ),
+  raw(
+    ['deploy', 'fly', 'runner'],
+    'Put a workflow runner on Fly.io, which stops when idle',
+    `Usage: cofferdam deploy fly runner <app> [--allow <glob>...] [--labels <l,...>]
+                                   [--idle <5m>] [--region <r>] [--volume <gb>]
+                                   [--vm-size <s>] [--vm-memory <m>] [--org <o>]
+                                   [--image <ref> | --from-source [--local-build]]
+
+Needs flyctl, and a login to the vault this runner will serve. Registers the
+runner (named after the app unless --name says otherwise), creates the app and a
+volume for the images jobs run in, hands the machine the vault URL and its token
+as Fly secrets, and tells the vault where to send a wake request.
+
+The machine stops when no job has arrived for --idle, and the vault starts it
+again when one is queued, so a stopped machine is the resting state rather than
+a fault. The first job after a stop waits about half a minute for the boot. What
+it costs while stopped is the volume alone.
+
+--allow is required the first time and says which repositories this runner may
+take jobs for; it executes whatever their workflows contain, on this machine.
+Run the same command again to deploy a new version.
+
+See also: cofferdam deploy fly runner show <app>, destroy <app>, cofferdam runner list.
+`,
+    deployFlyRunnerCmd
+  ),
+  raw(
+    ['deploy', 'fly', 'runner', 'show'],
+    'What Fly has for this runner app, and which runner it serves',
+    '',
+    deployFlyRunnerShowCmd
+  ),
+  raw(
+    ['deploy', 'fly', 'runner', 'destroy'],
+    'Destroy the runner app, and offer to remove its registration',
+    'No undo, though a runner keeps nothing that matters. Pass --yes to skip the confirmation.',
+    deployFlyRunnerDestroyCmd
+  ),
   raw(['deploy', 'fly', 'show'], 'What Fly has for this app, and whether the vault answers', '', deployShowCmd),
   raw(
     ['deploy', 'fly', 'destroy'],
@@ -602,10 +645,31 @@ changes that) and cached under ~/.cache/cofferdam (--cache-dir changes that),
 keyed by the commit the ref resolves to, so a moved branch or tag is picked up
 on the next run; --no-action-cache downloads every time. --work-dir sets where
 job workspaces are made, --network which Docker network the container joins,
-and COFFERDAM_RUNNER_TOKEN supplies the token instead of --runner-token.`,
+and COFFERDAM_RUNNER_TOKEN supplies the token instead of --runner-token.
+
+--idle <5m> stops the runner when no job has arrived for that long, which is
+what makes a runner that costs money while it is up affordable: it exits, and
+whatever hosts it stops. Something then has to start it again, so --wake-port
+listens for the vault's wake request and --wake-secret (or COFFERDAM_WAKE_SECRET)
+is what that request must present. See cofferdam runner wake.`,
     runnerRunCmd
   ),
   runnerListCommand,
+  raw(
+    ['runner', 'wake'],
+    'Start a runner that stops when idle, or say where to reach it',
+    `Usage: cofferdam runner wake <name> [--url <url> [--wake-secret <s>]] [--clear]
+
+With no flags this sends the wake request now and reports how long the runner
+took to answer, which is the way to test one without queuing a job. --url says
+where to send it, generating the secret unless --wake-secret gives one; --clear
+removes the address, after which nothing starts this runner.
+
+The vault sends this by itself whenever a job is queued that a runner could take
+and that runner has not been heard from, at most once a minute per runner
+however many jobs are waiting.`,
+    runnerWakeCmd
+  ),
   raw(['runner', 'remove'], 'Remove a registered runner', '', runnerRemoveCmd),
   ...repoCommands,
   ...issueCommands,
