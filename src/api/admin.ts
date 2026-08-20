@@ -6,6 +6,7 @@ import { AuthLimiter } from '../limit';
 import { LfsContext } from '../lfsstore';
 import { REPOS_DIR, collectionDir, reposDir } from '../layout';
 import { renameCollection } from '../ops';
+import { forgetCollectionRedirects } from '../redirects';
 import { displayName, isValidName, listRepoDirs } from '../scan';
 import { normalizeHostname } from '../siteshost';
 import { DEFAULT_THEME, findTheme, themeNames } from '../themes';
@@ -152,6 +153,10 @@ export function registerAdminApi(
       apiError(res, 409, `could not remove ${name}: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
+    // Any redirect that led here goes with it. A collection created later
+    // under this name would otherwise inherit the traffic a former name of
+    // this one still sends.
+    forgetCollectionRedirects(root, name);
     res.json({ deleted: name });
   });
 

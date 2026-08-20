@@ -124,10 +124,11 @@ locking yourself out is your business, and vault.json remains hand-editable.`,
     path: ['collection', 'rename'],
     summary: 'Rename a collection, with every repository in it',
     description: `Everything the collection holds moves with it: the repositories, their issues,
-pull requests, releases, sites, run histories, and LFS objects. Two things do
-not. Clones and remotes pointing at the old address stop working until their
-remote is changed, and token scopes naming the old collection cover nothing
-afterwards and have to be granted again under the new name.
+pull requests, releases, sites, run histories, and LFS objects. Requests for
+the old address are redirected to the new one, so links and existing clones
+keep working, until something else is created under that name. Token scopes
+naming the old collection are the exception: they cover nothing afterwards and
+have to be granted again under the new name.
 
 Takes admin scope over every repository in the collection, and push scope over
 each of them at the new name. No --yes: a rename is undone by renaming back.`,

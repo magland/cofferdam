@@ -20,6 +20,7 @@ import { createLfsStore } from './lfsstore';
 import { COLLECTIONS_DIR, REPOS_DIR } from './layout';
 import { faviconSvg } from './logo';
 import { migrateLayout } from './migrate';
+import { registerRedirects } from './redirects';
 import { displayName, listCollections, listRepoDirs } from './scan';
 import { getViewer } from './session';
 import { registerSiteHost } from './site';
@@ -135,6 +136,13 @@ export function createApp(root: string) {
   // forge's stylesheet instead of its own, and /favicon.svg the forge's icon.
   // Nothing here runs unless a sites host is configured.
   registerSiteHost(app, root);
+
+  // Then, before any route that resolves a name: an address a rename left
+  // behind is sent to where that name went. Only ever a name nothing answers
+  // to, so nothing that exists is affected; see src/redirects.ts. After the
+  // sites middleware, because a path on a sites hostname is a path inside a
+  // site and means nothing to the forge's own routes.
+  registerRedirects(app, root);
 
   // ---- static assets ----
 

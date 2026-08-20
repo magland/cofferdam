@@ -10,6 +10,7 @@ A vault is a plain directory. Its collections are in `collections/`, and a colle
   config.json                   (vault settings: theme, sites host, CI retention, limits)
   .secret                       (session-cookie signing key; created on first need)
   runners.json                  (registered workflow runners; created when you add one)
+  redirects.json                (where renamed things used to be; created on the first rename)
   collections/
     alice/
       repos/
@@ -62,4 +63,33 @@ A repository is renamed, or moved to another collection, from its own Settings p
 
 Both are also operations of the CLI and the JSON API, as everything in the web interface is: `cofferdam repo rename`, `cofferdam collection rename`, and the `POST /api/repos/:c/:r/rename` and `POST /api/collections/:name/rename` routes behind them. Neither takes a `--yes` or a confirmation, for the reason above.
 
-Everything a repository or a collection has accumulated moves with it, including sites, workflow runs, issues, pull requests, releases, and Git LFS objects. Two things do not. Clones and remotes pointing at the old address stop working until their remote is changed, which is inherent: the address is the name. And token scopes in `vault.json` still name the old collection, so a scope that covered `oldname/*` covers nothing after the rename and has to be granted again under the new name; the page says so before the rename is made. Rewriting scopes automatically was considered and not done, since a glob is a statement about what a user may reach rather than a pointer to a directory, and quietly widening one is worse than leaving it to be granted deliberately.
+Everything a repository or a collection has accumulated moves with it, including sites, workflow runs, issues, pull requests, releases, and Git LFS objects. One thing does not: token scopes in `vault.json` still name the old collection, so a scope that covered `oldname/*` covers nothing after the rename and has to be granted again under the new name; the page says so before the rename is made. Rewriting scopes automatically was considered and not done, since a glob is a statement about what a user may reach rather than a pointer to a directory, and quietly widening one is worse than leaving it to be granted deliberately.
+
+### The old address
+
+A rename changes every address the thing had, so the vault remembers the old one and redirects to the new. This covers the web pages, git over HTTP, the Git LFS endpoints, and the JSON API, since a redirect that only moved the browser would leave a clone, a `git fetch`, and a program using the API failing on an address a link follows happily:
+
+```
+$ curl -sI http://vault.example/demo/proj | head -2
+HTTP/1.1 301 Moved Permanently
+Location: /demo/renamed
+```
+
+The path under the name is carried across untouched, so `/demo/proj/blob/main/README.md` becomes `/demo/renamed/blob/main/README.md`, and a clone of the old URL follows the redirect and records the new one. Renaming a collection redirects every address under it, the collection page and each repository in it alike. When a sites hostname is configured, a site's own hostname is redirected too: `proj--demo.<sites host>` sends visitors to `renamed--demo.<sites host>`.
+
+A push follows the redirect too, so a clone made before the rename keeps pushing without its remote being changed. That settles what a push to a redirected name does not do: it does not create a repository there, as a push to an unused name would. Creating a repository under a name that is being redirected is done deliberately, from **New repository** or `POST /api/repos`, and from that moment the name is its own again.
+
+The redirect is consulted only when the old name is free, which is the whole of the rule that bounds it. Create a repository called `proj` in `demo` after the rename and it owns that name outright; the redirect goes quiet from that moment, with nothing to switch off. Renames chain, so a repository renamed twice is reachable from either of its former names. A deletion takes the redirects that pointed at what it removed, so a name is never redirected to a repository that merely inherited its name.
+
+What is remembered is in `redirects.json` at the vault root, keyed by name:
+
+```json
+{
+  "repos": { "demo/proj": "demo/renamed" },
+  "collections": { "oldname": "newname" }
+}
+```
+
+The file is pruned on each rename: an entry whose old name is in use again, or whose chain no longer leads anywhere, is dropped, since a lookup already ignores it. A vault that has never renamed anything has no such file, and the redirect costs it one `stat` per request.
+
+Two limits are worth stating. Redirects are keyed by name rather than by any identity a repository carries, which is why deletion has to clean up after itself as described above. And a redirect is served with `Cache-Control: no-store` despite being a 301: a browser that cached it for a year would keep following it past the day someone created a repository under the old name, which is exactly when it has to stop.

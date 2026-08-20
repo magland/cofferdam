@@ -31,7 +31,7 @@ import { apiError, requireApiAuth } from './auth';
 // promise.
 
 /** The state files at the vault root. Nothing else there belongs to a vault. */
-const ROOT_FILES = ['vault.json', 'config.json', 'runners.json', '.secret'];
+const ROOT_FILES = ['vault.json', 'config.json', 'runners.json', 'redirects.json', '.secret'];
 
 /** Which of those `--no-secrets` leaves out. config.json holds no credential. */
 const SECRET_FILES = new Set(['vault.json', 'runners.json', '.secret']);
