@@ -1,28 +1,26 @@
 # cofferdam
 
-cofferdam is a self-hosted git forge with the shape of GitHub: repository browsing, in-browser editing, issues, pull requests, releases, GitHub Actions workflows, static sites, and Git LFS, over anonymous `git clone` and token-authenticated `git push`. It is one Node process that needs nothing installed beside it but git, and it runs the same on a laptop, a home server, a VPS, or a container platform. Reading is anonymous; every write is authorized by a token you minted, and the users who hold those tokens are created by an administrator of the vault rather than registering themselves.
+A self-hosted git forge, GitHub-shaped: repository browsing, in-browser editing, issues, pull requests, releases, Actions-style workflows, static sites, and Git LFS. One Node process, no database, nothing installed beside it but git.
 
-Repositories are grouped into *collections*, and one installation, holding any number of collections, is a *vault*. A vault is a single directory that you point the server at, so an installation is created by choosing a directory and backed up by copying it. A vault is self-contained: users, permissions, and issue and pull request numbers are local to it, and it knows nothing of any other vault.
+Reading is anonymous. Every write is authorized by a token, and users are created by an administrator rather than registering themselves.
 
-## Getting started
-
-There are three points at which cofferdam becomes useful, and each is a small step from the one before. [Getting started](docs/getting-started.md) walks all three.
-
-**1. A vault on your own machine.** Two commands, no account anywhere, and nothing written outside the directory you name:
+## Try it locally
 
 ```bash
 mkdir myvault
 npx @magland/cofferdam serve myvault
 ```
 
-Finding no `vault.json`, the server initializes one and prints an owner token once; save it, since only its hash is stored. Open http://127.0.0.1:3000, sign in at `/login` as `owner` with that token, and push something in. The push creates the repository, and the collection holding it:
+The server initializes the vault and prints an owner token once (only its hash is stored). Open http://127.0.0.1:3000, sign in at `/login` as `owner`, then push a repository in - the push creates it:
 
 ```bash
 cd ~/some/project
-git push http://127.0.0.1:3000/alice/myproject main   # username 'owner', password the token
+git push http://127.0.0.1:3000/alice/myproject main   # user 'owner', password the token
 ```
 
-**2. A vault on the internet.** The same server with a persistent disk and TLS in front. With a [Fly.io](https://fly.io) account and flyctl installed, one command creates the app, the volume, and the machine, and prints the owner token:
+## Put it on the internet
+
+With a [Fly.io](https://fly.io) account and flyctl installed, one command creates the app, the volume, and the machine:
 
 ```bash
 npm install -g @magland/cofferdam
@@ -31,95 +29,75 @@ cofferdam login https://my-vault-name.fly.dev
 cofferdam user add alice --scope 'alice/*'
 ```
 
-That is a vault anyone can read, only your users can write, and you can send someone a link to. The same command deploys updates. See [Deploying a vault](docs/deploying.md) for the flags, the costs, and for hosting the container yourself instead.
-
-**3. A domain of your own.** Worth doing once the vault is something you mean to keep: the URL stops naming the host it happens to run on, and each repository's static site can be given a hostname of its own instead of sharing the vault's under a sandbox. That part is DNS records and certificates, in [A domain of your own](docs/deploying.md#a-domain-of-your-own).
+The same command deploys updates. See [Deploying a vault](docs/deploying.md) for Docker, self-hosting, costs, and giving the vault a domain of your own.
 
 ## What it does
 
-- **Browsing.** Files and directories at any branch or tag, syntax highlighting, markdown rendered with GitHub's feature set including KaTeX math, commit history, diffs, blame, comparison of two revisions, literal search, a file finder, contributors, a language breakdown, and source archives. All of it anonymous.
-- **Editing in the browser.** Create and edit files, upload binaries, manage branches and tags, create repositories and collections, fork within a vault, and administer users. Every control is gated by what the signed-in token may do, and one a user cannot use is not shown.
-- **Issues and pull requests,** stored as markdown files in the vault. A pull request is merged as a merge commit or a squash, computed in the bare repository and refused on conflicts.
-- **Releases** attached to a tag, with the source archives as their downloads, and Atom feeds for releases and for any history.
-- **Workflows.** GitHub Actions workflows, planned by the server and executed by a runner you start elsewhere with Docker.
-- **Sites.** A static site per repository, published by a workflow or by copying files in. Sandboxed by default so a site's script cannot act as a signed-in visitor, and optionally given a hostname of its own.
-- **Git.** Anonymous `git clone` over smart HTTP, token-authenticated `git push` including push-to-create, and Git LFS with objects in an S3-compatible bucket or inside the vault.
-- **A CLI and a JSON API** covering everything the web interface can do: repositories, files and commits, issues, pull requests, releases, workflow runs, users, and the vault's own settings, with a generic `cofferdam api` for anything a typed command has not reached. Meant to be usable by a program: `--json` everywhere, distinct exit codes, and nothing that prompts.
+- **Browsing:** files at any ref, syntax highlighting, markdown with KaTeX, history, diffs, blame, compare, search, contributors, archives. Anonymous.
+- **Editing in the browser:** files, uploads, branches, tags, repositories, collections, forks, users. Controls a token cannot use are not shown.
+- **Issues and pull requests,** stored as markdown in the vault. Merge or squash, refused on conflicts.
+- **Releases** tied to a tag, with Atom feeds.
+- **Workflows:** GitHub Actions workflows, planned by the server and run by a Docker runner you start elsewhere.
+- **Sites:** a static site per repository, sandboxed by default, optionally on its own hostname.
+- **Git:** anonymous clone over smart HTTP, token-authenticated push including push-to-create, and LFS to S3 or to the vault.
+- **CLI and JSON API** covering everything the web UI does, plus a generic `cofferdam api`. Built for scripts: `--json` everywhere, distinct exit codes, no prompts.
 
-The frontend has no build step and no client framework: the server renders plain HTML, with small amounts of vanilla JavaScript where a control needs it.
+The frontend has no build step and no client framework: plain server-rendered HTML with a little vanilla JavaScript.
 
 ## The vault
 
-A vault is a plain directory. Its collections are in `collections/`, and a collection's repositories are in that collection's `repos/`; everything else a repository accumulates sits beside it there, under a suffixed name:
+A vault is one directory. Repositories are grouped into *collections*; a vault holds any number of them and knows nothing of any other vault.
 
 ```
 <vault>/
-  vault.json                  (users and hashed tokens; created on first start)
-  config.json                 (vault settings: theme, sites host, CI retention, limits)
-  .secret                     (session-cookie signing key; created on first need)
-  runners.json                (registered workflow runners; created when you add one)
+  vault.json                  users and hashed tokens
+  config.json                 vault settings
   collections/
     alice/
       repos/
-        webapp.git/           (bare repository)
-        webapp.site/          (its static site)
-        webapp.issues/        (its issues, one directory each)
-        webapp.pulls/         (its pull requests)
-        webapp.releases/      (its release notes, one file per tag)
-        webapp.runs/          (its workflow runs and logs)
-        webapp.lfs/           (its Git LFS objects, when no bucket is configured)
+        webapp.git/           bare repository
+        webapp.site/          its static site
+        webapp.issues/        .pulls/ .releases/ .runs/ .lfs/
 ```
 
-Two levels of the tree hold only things somebody named: the vault's own files sit beside its collections rather than among them, so a file added to the vault later takes no name away from a vault that already exists. A vault written before this layout, with its collections in the root, is moved to it on the first start of a server that knows it - renames only, and nothing to ask for.
-
-There is no database and no state outside this directory, so backing up a vault is `cp -a` and moving one to another machine is `rsync`, where you have a shell. Where you do not, `cofferdam backup <dir>` pulls the same copy over HTTP, incrementally, into a directory that is itself a servable vault. The server reads what is on disk on every request, so each part of a vault can be read, written, and grepped with ordinary tools while it runs. [The vault](docs/vault.md) describes the layout in full, and [Backing up a vault](docs/backup.md) the copies.
+No database, no state outside the directory. Backup is `cp -a`, migration is `rsync`, and `cofferdam backup <dir>` pulls the same copy over HTTP where you have no shell. The server reads disk on every request, so a running vault can be read and grepped with ordinary tools.
 
 ## Documentation
 
-- [Getting started](docs/getting-started.md): a local vault, a vault on the internet, and a domain of your own
-- [The vault](docs/vault.md): the layout on disk, and how signing in relates to the tokens git uses
-- [The command line](docs/cli.md): the `cofferdam` command, `cofferdam login`, pushing, importing, and the commands over repositories, issues, pull requests, releases, and runs
-- [Deploying a vault](docs/deploying.md): `cofferdam deploy fly`, updating on a schedule, a domain of your own, Docker, and automatic HTTPS with Caddy
-- [Workflows](docs/workflows.md): what runs today, runners, artifacts, and the divergences from GitHub
-- [Backing up a vault](docs/backup.md): `cofferdam backup`, snapshots and retention, and what a backup does not promise
-- [Git LFS](docs/lfs.md): storage backends, bucket configuration, and limitations
-- [The JSON API](docs/api.md): every route, its body, its response, and what it requires of the caller
-- [cofferdam for an agent](docs/agents.md): short enough to paste into a context window, including an honest list of what is not there
-- [Issues and pull requests](docs/issues-and-pull-requests.md), [Sites](docs/sites.md), [Themes](docs/themes.md)
+- [Getting started](docs/getting-started.md) - a local vault, a public one, and a domain of your own
+- [The command line](docs/cli.md) - the `cofferdam` command and its subcommands
+- [The vault](docs/vault.md) - the on-disk layout, tokens, and sessions
+- [Deploying a vault](docs/deploying.md) | [Backing up a vault](docs/backup.md)
+- [Workflows](docs/workflows.md) | [Sites](docs/sites.md) | [Git LFS](docs/lfs.md) | [Themes](docs/themes.md) | [Issues and pull requests](docs/issues-and-pull-requests.md)
+- [The JSON API](docs/api.md) - every route, body, and response
+- [cofferdam for an agent](docs/agents.md) - short enough to paste into a context window
 
 ## Using a vault from Claude Code
 
-[cofferdam-skill](https://github.com/magland/cofferdam-skill) is a Claude Code skill that teaches an agent this CLI the way one already knows `gh`: the vault and token precedence, `--json` and the exit codes worth branching on, reading and writing a file with `--expected-sha`, the branch-then-pull-request path, diagnosing a workflow run, and the list of capabilities cofferdam does not have. Installing it as a plugin, from Claude Code:
+[cofferdam-skill](https://github.com/magland/cofferdam-skill) teaches an agent this CLI the way it already knows `gh`.
 
 ```
 /plugin marketplace add magland/cofferdam-skill
 /plugin install cofferdam@cofferdam-skill
 ```
 
-Or as a personal skill, available in every session, with no plugin machinery:
-
-```bash
-git clone https://github.com/magland/cofferdam-skill /tmp/cofferdam-skill
-cp -r /tmp/cofferdam-skill/skills/cofferdam ~/.claude/skills/cofferdam
-```
-
-Either way the agent needs the `cofferdam` command on its PATH and a vault to talk to, which is `COFFERDAM_HOST` and `COFFERDAM_TOKEN` in the environment, or a `cofferdam login` already done. For an agent that reads a page rather than installing anything, [cofferdam for an agent](docs/agents.md) is the short version.
+The agent needs `cofferdam` on its PATH and either `COFFERDAM_HOST`/`COFFERDAM_TOKEN` or a completed `cofferdam login`.
 
 ## Development
 
 ```bash
 npm install
-npm run example    # creates example-root/ with sample collections, repositories, and a dev user
+npm run example    # creates example-root/ with sample data and a dev user
 npm run dev        # serves example-root/ at http://127.0.0.1:3000
-npm run smoke      # end to end: browsing, sessions, UI operations, the API, git over HTTP
+npm run smoke      # end to end; npm run smoke:slow adds containerized workflow jobs
 ```
 
-The example vault includes a user `dev` with the fixed token `cofferdam_example_dev_token` (full push and admin scope, example vault only) and a read-only `reader` with `cofferdam_example_reader_token`. The smoke test leaves out one thing, executing workflow jobs in containers, which needs Docker and takes minutes where the rest takes seconds; `npm run smoke:slow` includes it.
+The example vault has user `dev` with token `cofferdam_example_dev_token` (full scope, example vault only) and read-only `reader` with `cofferdam_example_reader_token`.
 
 ## Roadmap
 
-- Secrets, and a scoped token for the run, so a workflow can push back to its own repository and call the vault's API
-- `actions/cache`, so dependency installs stop being repeated on every run
+- Secrets, and a scoped token so a workflow can push to its own repository and call the API
+- `actions/cache`
 - Docker actions, `container:` jobs, and service containers
 
 ## License
