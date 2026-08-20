@@ -2,10 +2,10 @@ import { avatar } from './avatar';
 import { EgressSnapshot } from './egress';
 import { IconName, icon } from './icons';
 import { MARK } from './logo';
-import { esc, formatSize } from './render';
+import { esc, formatSize, timeTag } from './render';
 import { Viewer } from './session';
 import { Theme } from './themes';
-import { UserRecord, canAdmin } from './vault';
+import { UserRecord, canAdmin, tokenId } from './vault';
 import { PageOpts, RepoCtx, copyButton, copyRow, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from './views';
 
 // Form pages for the UI operations. Every mutating form embeds the session's
@@ -468,9 +468,10 @@ ${csrfField(viewer)}
 <button type="submit" class="btn">Mint token</button>
 </form>
 </div></details>`;
-      return `<tr><td class="with-avatar">${avatar(name, 24)}<b>${esc(name)}</b></td><td class="mono small">${esc(user.scope.join(' ') || '(none)')}</td><td class="mono small">${esc(
+      const userUrl = `/admin/users/${encodeURIComponent(name)}`;
+      return `<tr><td class="with-avatar">${avatar(name, 24)}<a href="${userUrl}"><b>${esc(name)}</b></a></td><td class="mono small">${esc(user.scope.join(' ') || '(none)')}</td><td class="mono small">${esc(
         user.admin.join(' ')
-      )}</td><td class="right muted small">${user.tokens.length} token${user.tokens.length === 1 ? '' : 's'}</td><td>${actions}</td></tr>`;
+      )}</td><td class="right muted small"><a href="${userUrl}">${user.tokens.length} token${user.tokens.length === 1 ? '' : 's'}</a></td><td>${actions}</td></tr>`;
     })
     .join('');
   const content = `<h1>Users</h1>
@@ -490,6 +491,93 @@ ${csrfField(viewer)}
 <p class="muted small">Your admin scope must cover every glob you assign. The new token is shown once on the next page.</p>
 </div>`;
   return adminShell(viewer, 'users', 'Users', '/admin/users', content);
+}
+
+/**
+ * One user: their scopes, each token they hold, and the way to take either
+ * away. The tokens are the point of the page. Every write to a vault is
+ * authorized by a bearer token, so a leaked one needs an off switch that does
+ * not involve editing vault.json by hand, and this is it: revocation reads
+ * live on the next request, for git and for the web session alike, since both
+ * resolve the token against vault.json every time.
+ */
+export function adminUserPage(
+  viewer: Viewer,
+  name: string,
+  user: UserRecord,
+  msg?: string,
+  error?: string
+): string {
+  const self = name === viewer.auth.username;
+  const base = `/admin/users/${encodeURIComponent(name)}`;
+  const tokenRows = user.tokens
+    .map((t) => {
+      const id = tokenId(t);
+      const current = self && tokenId(viewer.auth.token) === id;
+      const revoke = `<form method="post" action="${base}/tokens/${encodeURIComponent(id)}/revoke" class="inline-form">
+${csrfField(viewer)}
+<button type="submit" class="btn btn-danger-outline">Revoke</button>
+</form>`;
+      return `<tr><td class="mono">${esc(id)}${current ? ' <span class="counter">this session</span>' : ''}</td><td class="muted small">${
+        t.created ? timeTag(t.created, '') : '<span class="muted">before minting was dated</span>'
+      }</td><td class="mono small">${esc(t.scope?.join(' ') ?? '')}${t.scope ? '' : '<span class="muted">the user’s scope</span>'}</td><td class="right">${revoke}</td></tr>`;
+    })
+    .join('');
+  const tokens =
+    user.tokens.length > 0
+      ? `<table class="listing"><tbody><tr><th>Token</th><th>Minted</th><th>Scope</th><th class="right"></th></tr>${tokenRows}</tbody></table>
+<p class="muted small">Only a SHA-256 hash of each token is stored, so there is nothing to show beyond its id. Revocation
+is immediate: the next push and the next page load are both refused. Revoking the token this session was signed in with
+signs you out.</p>`
+      : `<div class="empty-state">No tokens. This user cannot push or sign in until one is minted.</div>`;
+  const mint = `<div class="form-box">
+<h2>Mint a token</h2>
+<form method="post" action="${base}/token">
+${csrfField(viewer)}
+<input type="hidden" name="next" value="${esc(base)}">
+<div class="field"><label for="tokenScope">Token scope <span class="muted">(optional)</span></label>
+<input type="text" id="tokenScope" name="tokenScope" placeholder="e.g. mycollection/*">
+<p class="muted small">Globs that narrow this one token below the user's own scope. A token with a scope of its own
+carries no admin rights. Leave empty for a token as broad as the user.</p></div>
+<button type="submit" class="btn btn-primary">Mint token</button>
+</form>
+<p class="muted small">Minting does not revoke anything: the user's other tokens keep working until each is revoked here.</p>
+</div>`;
+  const grant = `<div class="form-box">
+<h2>Grant scope</h2>
+<form method="post" action="${base}/grant">
+${csrfField(viewer)}
+<input type="hidden" name="next" value="${esc(base)}">
+<div class="field"><label for="scope">Push scope globs</label><input type="text" id="scope" name="scope" placeholder="e.g. mycollection/*"></div>
+<div class="field"><label for="admin">Admin scope globs</label><input type="text" id="admin" name="admin" placeholder="e.g. mycollection/*"></div>
+<button type="submit" class="btn">Grant</button>
+</form>
+<p class="muted small">Grants add to what the user has; taking scope away is an edit to <span class="mono">vault.json</span>.</p>
+</div>`;
+  const danger = self
+    ? `<p class="muted small">A user cannot delete themselves; another administrator can, or edit <span class="mono">vault.json</span> by hand.</p>`
+    : `<div class="danger-zone">
+<h3>Danger zone</h3>
+<p>Deleting a user revokes every token they hold, immediately. Nothing they pushed is touched: commits, issues, and
+comments keep their name.</p>
+<form method="post" action="${base}/delete">
+${csrfField(viewer)}
+<div class="field"><label for="confirm">Type <b class="mono">${esc(name)}</b> to confirm</label><input type="text" id="confirm" name="confirm" autocomplete="off"></div>
+<button type="submit" class="btn btn-danger">${icon('trash')}<span>Delete this user</span></button>
+</form>
+</div>`;
+  const content = `<div class="page-head"><div class="with-avatar">${avatar(name, 32)}<h1>${esc(name)}</h1></div></div>
+${flashBanner(msg)}
+${errorBanner(error)}
+<p><span class="muted">Push scope</span> <span class="mono">${esc(user.scope.join(' ') || '(none)')}</span>
+${user.admin.length ? `&ensp;<span class="muted">Admin scope</span> <span class="mono">${esc(user.admin.join(' '))}</span>` : ''}</p>
+<h2>Tokens</h2>
+${tokens}
+${mint}
+${grant}
+${danger}
+<p><a href="/admin/users">&larr; All users</a></p>`;
+  return adminShell(viewer, 'users', `${name} - Users`, base, content);
 }
 
 /**

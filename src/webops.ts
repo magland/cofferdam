@@ -33,6 +33,7 @@ import {
   viewerIsAdmin,
 } from './session';
 import {
+  UserRecord,
   authenticate,
   canAdmin,
   canAdminCollection,
@@ -41,6 +42,9 @@ import {
   loadVault,
   addUserToken,
   grantScope,
+  removeUser,
+  revokeToken,
+  tokenId,
 } from './vault';
 import { encPath, repoUrl } from './views';
 import {
@@ -1313,11 +1317,103 @@ export function registerWebOps(
     res.type('html').send(forms.tokenPage(viewer, username, result.token, true));
   });
 
+  /**
+   * One user, with their tokens laid out and revocable. Reading and revoking
+   * take the same authorization the JSON API asks: admin scope covering what
+   * the user can reach, or being that user (which within /admin means an
+   * administrator looking at themselves).
+   */
+  function loadUserForAdmin(
+    req: Request,
+    res: Response,
+    viewer: Viewer,
+    backUrl: string
+  ): { name: string; user: UserRecord } | null {
+    const name = req.params.name;
+    if (!isValidName(name)) {
+      fail(res, 400, 'Invalid username.', viewer, backUrl);
+      return null;
+    }
+    const state = loadVault(root);
+    if (state.status !== 'ok') {
+      fail(res, 500, 'The vault is not available.', viewer, backUrl);
+      return null;
+    }
+    const user = state.vault.users[name];
+    if (!user) {
+      fail(res, 404, `No user ${name}.`, viewer, backUrl);
+      return null;
+    }
+    if (name !== viewer.auth.username && !canAdmin(viewer.auth, [...user.scope, ...user.admin])) {
+      fail(res, 403, `Your admin scope does not cover user ${name}.`, viewer, backUrl);
+      return null;
+    }
+    return { name, user };
+  }
+
+  app.get('/admin/users/:name', (req, res) => {
+    const viewer = requireAdminPage(req, res);
+    if (!viewer) return;
+    const found = loadUserForAdmin(req, res, viewer, '/admin/users');
+    if (!found) return;
+    const msg = typeof req.query.msg === 'string' ? req.query.msg : undefined;
+    res.type('html').send(forms.adminUserPage(viewer, found.name, found.user, msg));
+  });
+
+  app.post('/admin/users/:name/tokens/:id/revoke', form, (req, res) => {
+    const viewer = requireAdminPost(req, res);
+    if (!viewer) return;
+    const backUrl = `/admin/users/${encodeURIComponent(req.params.name)}`;
+    const found = loadUserForAdmin(req, res, viewer, backUrl);
+    if (!found) return;
+    const wasThisSession = found.name === viewer.auth.username && tokenId(viewer.auth.token) === req.params.id;
+    let result;
+    try {
+      result = revokeToken(root, found.name, req.params.id);
+    } catch (e) {
+      fail(res, 500, e instanceof Error ? e.message : String(e), viewer, backUrl);
+      return;
+    }
+    if (!result.revoked) {
+      fail(res, 404, `No token ${req.params.id} for ${found.name}.`, viewer, backUrl);
+      return;
+    }
+    // Revoking the session's own token is allowed, and the session it ends is
+    // this one: the redirect lands on the sign-in page rather than pretending
+    // otherwise.
+    if (wasThisSession) {
+      res.redirect('/login');
+      return;
+    }
+    res.redirect(`${backUrl}?msg=${encodeURIComponent(`Revoked token ${req.params.id}.`)}`);
+  });
+
+  app.post('/admin/users/:name/delete', form, (req, res) => {
+    const viewer = requireAdminPost(req, res);
+    if (!viewer) return;
+    const backUrl = `/admin/users/${encodeURIComponent(req.params.name)}`;
+    const found = loadUserForAdmin(req, res, viewer, backUrl);
+    if (!found) return;
+    // Deleting yourself would leave a vault its owner cannot administer except
+    // by hand, and unlike revoking one token it cannot be undone by minting
+    // another.
+    if (found.name === viewer.auth.username) {
+      fail(res, 409, 'A user cannot delete themselves; another admin can, or edit vault.json by hand.', viewer, backUrl);
+      return;
+    }
+    if (field(req, 'confirm').trim() !== found.name) {
+      fail(res, 400, `Type ${found.name} exactly to confirm deletion.`, viewer, backUrl);
+      return;
+    }
+    removeUser(root, found.name);
+    res.redirect(`/admin/users?msg=${encodeURIComponent(`Deleted ${found.name} and revoked their tokens.`)}`);
+  });
+
   app.post('/admin/users/:name/grant', form, (req, res) => {
     const viewer = requireAdminPost(req, res);
     if (!viewer) return;
     const username = req.params.name;
-    const backUrl = '/admin/users';
+    const backUrl = safeNext(field(req, 'next')) === '/' ? '/admin/users' : safeNext(field(req, 'next'));
     if (!isValidName(username)) {
       fail(res, 400, 'Invalid username.', viewer, backUrl);
       return;
