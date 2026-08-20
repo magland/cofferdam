@@ -95,6 +95,10 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
     })
   );
 
+  app.get('/about', (req, res) => {
+    res.type('html').send(views.aboutPage(baseUrlOf(req), getViewer(req, root)));
+  });
+
   app.get(
     '/:collection',
     ah(async (req, res) => {

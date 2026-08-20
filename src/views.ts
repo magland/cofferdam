@@ -771,19 +771,21 @@ export function homePage(
     total === 0
       ? `<div class="empty-state">No repositories yet.${
           viewer ? ' Create one with the buttons above, or push to a new path.' : ''
-        }</div>`
+        } <a href="/about">What is this?</a></div>`
       : repoListing(repos, { showCollection: true, sort, sortBase: '/' });
   const newBtn = viewer
     ? `<a class="btn" href="/new/collection">${icon('plus')}<span>New collection</span></a><a class="btn btn-primary" href="/new">${icon(
         'plus'
       )}<span>New repository</span></a>`
     : '';
+  // The about link is how a visitor who landed here cold finds out what they
+  // are looking at, so it rides on the first line they read.
   const summary =
     total === 0
       ? ''
       : `<p class="lede">${total} ${total === 1 ? 'repository' : 'repositories'} in ${collections.length} ${
           collections.length === 1 ? 'collection' : 'collections'
-        }.</p>`;
+        }. <a class="muted" href="/about">What is this?</a></p>`;
   const content = `<div class="page-head"><h1>Repositories</h1><span class="right-group">${newBtn}</span></div>
 ${summary}
 ${chips}
@@ -796,6 +798,44 @@ ${
       : ''
   }`;
   return layout('cofferdam', content, { viewer, path: '/' });
+}
+
+/**
+ * What this place is and how to use it, for the visitor who landed on a
+ * listing with no idea what they are looking at. One page, self-contained:
+ * the vault serves no other documentation, so nothing here may point into
+ * docs a visitor cannot reach.
+ */
+export function aboutPage(baseUrl: string, viewer: Viewer | null): string {
+  const content = `<div class="about-page">
+<h1>About this vault</h1>
+<p class="lede">This site is a <i>vault</i>: a self-hosted git forge run by its operator, holding git repositories
+grouped into collections.</p>
+
+<h2>Reading</h2>
+<p>Reading is anonymous. Browse files, history, and diffs; read issues and pull requests; search inside a repository
+(press <span class="mono">/</span> anywhere); download any ref as an archive. Cloning needs no account either:</p>
+${copyRow(`git clone ${baseUrl}/<collection>/<repository>`)}
+
+<h2>Writing</h2>
+<p>Every write is authorized by a token. There is no sign-up: tokens are minted by this vault's administrator, so if you
+should be able to push here, ask whoever runs the vault. A token is used two ways, with your username: as the password
+when git asks for credentials, and to <a href="/login">sign in</a> on the web, which unlocks editing files, opening
+issues and pull requests, and drafting releases in the browser.</p>
+<p>Pushing to a repository that does not exist yet creates it, if your token's scope covers that path:</p>
+${copyRow(`git push ${baseUrl}/<collection>/<new-repository> main`)}
+
+<h2>What repositories carry</h2>
+<p>Beside its files, a repository here can have issues, pull requests, releases tied to tags, GitHub-style workflows run
+by the operator's own runners, and a static site served from the repository at
+<span class="mono">/&lt;collection&gt;/&lt;repository&gt;/site/</span>. Workflows run without credentials: a vault holds
+no secrets, so jobs are limited to work that needs none, such as building and publishing a site.</p>
+
+<h2>The software</h2>
+<p>This vault runs <a href="https://github.com/magland/cofferdam">cofferdam</a>, an open-source forge: one process, no
+database, every repository an ordinary bare git repository on the operator's own disk.</p>
+</div>`;
+  return layout('About - cofferdam', content, { viewer, path: '/about' });
 }
 
 export function collectionPage(

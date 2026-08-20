@@ -1186,7 +1186,13 @@ a.chip.label:hover { text-decoration: none; filter: brightness(1.1); }
 .coll-count { color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
 
 .lede { margin: calc(-1 * var(--s3)) 0 var(--s4); color: var(--fg-muted); font-size: var(--t-sm); }
+.lede a.muted { color: var(--fg-muted); text-decoration: underline; }
 .vault-note { margin-top: var(--s5); }
+
+/* /about: prose, so a measure rather than the full container. */
+.about-page { max-width: 720px; }
+.about-page h2 { margin-top: var(--s6); }
+.about-page .cmd-row { margin: var(--s3) 0; }
 
 /* A collection's profile README, above its repository listing. A .box takes
    its space from above, and here the listing follows it, so the gap below is

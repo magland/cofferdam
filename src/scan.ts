@@ -9,6 +9,7 @@ import { collectionsDir, repoPath, reposDir } from './layout';
 // them: they sit beside `collections/` rather than in it, so no file of the
 // vault's can collide with a name a user chose.
 const RESERVED_NAMES = new Set([
+  'about',
   'api',
   'assets',
   'favicon.ico',
