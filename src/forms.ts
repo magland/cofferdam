@@ -258,6 +258,35 @@ function commitFields(
 ${branchChoice}`;
 }
 
+/**
+ * What the browser editor owes its user beyond a bare textarea: Tab indents
+ * instead of leaving, since code is what is being typed (Shift-Tab still moves
+ * focus out, so the keyboard is not trapped), and navigating away from an
+ * edited buffer asks first. Committing does not ask; submitting is the point.
+ */
+function editorScript(): string {
+  return `<script>
+(function () {
+  var ta = document.querySelector('textarea.code-editor');
+  if (!ta) return;
+  var form = ta.closest('form');
+  var initial = ta.value;
+  var submitted = false;
+  if (form) form.addEventListener('submit', function () { submitted = true; });
+  window.addEventListener('beforeunload', function (e) {
+    if (submitted || ta.value === initial) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
+  ta.addEventListener('keydown', function (e) {
+    if (e.key !== 'Tab' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+    e.preventDefault();
+    ta.setRangeText('  ', ta.selectionStart, ta.selectionEnd, 'end');
+  });
+})();
+</script>`;
+}
+
 export function editFilePage(
   ctx: RepoCtx,
   filePath: string,
@@ -281,7 +310,8 @@ ${errorBanner(error)}
 ${commitFields(ctx.viewer!, expectedHead, `Update ${filePath.split('/').pop()}`, ctx.ref)}
 <div class="actions"><button type="submit" class="btn btn-primary">Commit changes</button><a class="btn" href="${cancel}">Cancel</a></div>
 </div>
-</form>`;
+</form>
+${editorScript()}`;
   return layout(`Editing ${filePath} - ${ctx.collection}/${ctx.repo}`, body, repoOpts(ctx));
 }
 
@@ -316,7 +346,8 @@ ${errorBanner(error)}
 ${commitFields(ctx.viewer!, expectedHead, 'Create new file', expectedHead === null ? undefined : branch)}
 <div class="actions"><button type="submit" class="btn btn-primary">Commit new file</button><a class="btn" href="${cancel}">Cancel</a></div>
 </div>
-</form>`;
+</form>
+${editorScript()}`;
   return layout(`New file - ${ctx.collection}/${ctx.repo}`, body, repoOpts(ctx));
 }
 
