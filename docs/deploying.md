@@ -119,6 +119,8 @@ flyctl reads `FLY_API_TOKEN` from the environment, so nothing needs to be logged
 
 A systemd timer, a launchd job, or a cron line on any machine you keep running does the same thing with the same command. GitHub Actions is only the version of it that needs no machine of yours.
 
+The other cadence is on a build rather than on a clock: deploy when a new image exists, which is what this repository does to the vaults it runs itself. The deploy job in `.github/workflows/image.yml` lists them, and runs once the image has been pushed and checked, passing `--image` the exact tag that run built. That is the one difference from the scheduled form above, and it matters for a main build, whose image is tagged `main` and which no CLI version asks for by itself.
+
 Two costs, worth choosing deliberately rather than discovering. A vault is one machine on one volume, so every update is a restart, and a restart cuts whatever clone or push was in flight; weekly at a quiet hour is the cadence to want, and nightly buys nothing, since the published tags move only when a release is cut. And an unattended deploy has no notion of rolling back, so if a release does break something the repair is a deploy that pins the previous version by hand:
 
 ```bash

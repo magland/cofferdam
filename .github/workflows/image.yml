@@ -18,6 +18,13 @@
 # The image is linux/amd64, which is what Fly machines run. Anyone wanting
 # another architecture builds the Dockerfile, which is the same one used here.
 #
+# A published image is then deployed to the vaults listed in the deploy job at
+# the bottom, so that those vaults run the newest image that passed rather than
+# waiting for someone to run a deploy by hand. That job needs a FLY_API_TOKEN
+# repository secret; docs/deploying.md, under "Updating on a schedule", covers
+# what such a token has to be able to do and why nothing secret comes back out
+# of a deploy to an existing app.
+#
 # One thing this workflow cannot do for you: a newly created GitHub package is
 # private, and Fly pulls anonymously. After the first successful run, set the
 # package to public under Packages > cofferdam > Package settings, or deploys
@@ -49,6 +56,11 @@ jobs:
     permissions:
       contents: read
       packages: write # to push to ghcr.io
+    # The one tag the deploy job below pulls, so that what reaches a vault is
+    # the image this run built rather than whatever `main` or `latest` points
+    # at by the time the deploy starts.
+    outputs:
+      image: ${{ steps.tags.outputs.ref }}
     steps:
       # On a workflow_run event the default ref is the head of the default
       # branch, which need not be the commit ci tested. Build that commit.
@@ -73,8 +85,10 @@ jobs:
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             version="${GITHUB_REF_NAME#v}"
             echo "tags=$image:$version,$image:latest" >> "$GITHUB_OUTPUT"
+            echo "ref=$image:$version" >> "$GITHUB_OUTPUT"
           else
             echo "tags=$image:main" >> "$GITHUB_OUTPUT"
+            echo "ref=$image:main" >> "$GITHUB_OUTPUT"
           fi
 
       # The tag must match the version in package.json, since that version is
@@ -137,3 +151,50 @@ jobs:
             echo "the server echoed the supplied owner token into its log"
             exit 1
           fi
+
+  # The vaults that follow the published image, redeployed as soon as one is
+  # built. Each app is one entry in this list; adding a vault is adding a line,
+  # and the matrix keeps one failing app from stopping the others.
+  #
+  # Deploying the exact tag this run built, rather than letting the CLI pick its
+  # own version, is what makes a main build reach a vault at all: on main the
+  # image is tagged `main`, and no released version answers to it.
+  #
+  # This runs only for images built from this repository's own commits. A
+  # workflow_dispatch on a branch would otherwise deploy that branch's image to
+  # a live vault, which is not what dispatching a rebuild means.
+  deploy:
+    needs: image
+    if: github.repository == 'magland/cofferdam' && github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [vault1]
+    steps:
+      # The CLI that drives the deploy is this commit's, so it stays in step
+      # with the image it is deploying.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+
+      # A vault whose app already has a machine mints no owner token and prints
+      # nothing secret, so there is nothing here for a log to leak. The region,
+      # the volume size, and the machine's shape are read back off the live app,
+      # which is why no flag describing them appears.
+      - name: Deploy ${{ matrix.app }}
+        run: node dist/index.js deploy fly ${{ matrix.app }} --image "$IMAGE"
+        env:
+          IMAGE: ${{ needs.image.outputs.image }}
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
