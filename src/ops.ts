@@ -6,6 +6,7 @@ import { writeFileAtomic } from './atomic';
 import { GitRepo, execGit, execGitStatus, isValidRefName, isValidRepoPath, isValidSha } from './git';
 import type { LfsStore } from './lfsstore';
 import { looksLikePointer } from './pointer';
+import { forgetRepoRedirects, recordCollectionRename, recordRepoRename } from './redirects';
 import { REPOS_DIR, collectionDir, repoPath, reposDir } from './layout';
 import {
   displayName,
@@ -677,6 +678,12 @@ export async function renameRepo(
   // moves them itself. Unlike deletion this is not best-effort: an object left
   // behind is one a clone of the moved repository cannot fetch.
   if (lfs) await lfs.renameRepo(collection, name, toCollection, toName);
+  // Last, and only once everything has arrived: the old address is remembered,
+  // so a clone or a link that still names it is redirected here rather than
+  // 404ing. Recorded after the moves for a reason - a redirect written first
+  // and a move that then failed would point at a repository that is not there.
+  // See src/redirects.ts for what the redirect does and does not survive.
+  recordRepoRename(root, collection, name, toCollection, toName);
 }
 
 /**
@@ -690,10 +697,10 @@ export async function renameRepo(
  * separately, since their keys name the collection rather than living in it,
  * and the store is asked to move each repository's for that reason.
  *
- * Two things a rename does not carry with it, and the interface says so
- * before it is done: token scopes in vault.json still name the old
- * collection, and remotes pointing at the old address stop working until
- * they are changed.
+ * One thing a rename does not carry with it, and the interface says so before
+ * it is done: token scopes in vault.json still name the old collection. The
+ * old address itself is remembered, so requests for it are redirected here;
+ * see src/redirects.ts.
  */
 export async function renameCollection(
   root: string,
@@ -729,6 +736,10 @@ export async function renameCollection(
   if (lfs) {
     for (const repo of repos) await lfs.renameRepo(name, repo, toName, repo);
   }
+  // As for a repository: the old name is remembered, so every address under it
+  // - the collection page and every repository in it - is redirected to the new
+  // one until something else is created under that name.
+  recordCollectionRename(root, name, toName);
 }
 
 /**
@@ -772,6 +783,11 @@ export async function deleteRepo(
       );
     }
   }
+  // And any redirect that led here. A redirect pointing at a repository that
+  // no longer exists is inert, but one left pointing at a name that is later
+  // re-created would send traffic meant for the deleted repository to whatever
+  // took its place.
+  forgetRepoRedirects(root, collection, name);
 }
 
 

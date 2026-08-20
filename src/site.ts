@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { loadConfig } from './config';
 import { containedIn } from './ops';
+import { resolveRepoRedirect } from './redirects';
 import { findRepo, siteDir } from './scan';
 import { isUnderSitesHost, parseSiteHost, siteHostFor } from './siteshost';
 import { send404, wildcard } from './web';
@@ -214,6 +215,23 @@ export function registerSiteHost(app: Express, root: string): void {
         minimalPage(404, 'No site here', 'This hostname does not name a repository site in this vault.')
       );
       return;
+    }
+    // A site has a hostname of its own, built from the repository's name, so a
+    // rename moves the site to a different hostname and every published link
+    // to it stops resolving to anything. The redirect the forge host does for
+    // paths is done here for hostnames, on the same terms: only when no
+    // repository answers to the name in this one.
+    if (!findRepo(root, named.collection, named.repo)) {
+      const moved = resolveRepoRedirect(root, named.collection, named.repo);
+      const host = moved && siteHostFor(sitesHost, moved.collection, moved.repo);
+      if (host) {
+        res
+          .status(301)
+          .set('Cache-Control', 'no-store')
+          .set('Location', `${req.protocol}://${host}${req.originalUrl}`)
+          .end();
+        return;
+      }
     }
     serveSite(root, named.collection, named.repo, req, res, 'host');
   });

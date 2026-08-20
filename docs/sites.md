@@ -53,6 +53,8 @@ Each eligible repository's site is then served from `<repo>--<collection>.<sites
 
 The forge path keeps working and redirects: `/<collection>/<repo>/site/...` answers `302` to the same path on the site's origin, query string included. It is a temporary redirect on purpose, so removing `sites.host` takes effect on the next request rather than after every cache in the way has forgotten it. The Site tab links straight to the origin.
 
+Because the hostname is built from the two names, renaming the repository or the collection moves the site to a different origin. The hostname it had answers `301` to the one it has now, path and query kept, on the same terms as the redirect on the forge host: only while no repository answers to the old name. See [The old address](vault.md#the-old-address).
+
 The double hyphen is the separator, and it is unambiguous because neither half may contain one. A collection or repository name may appear in a hostname only if it matches `^[a-z0-9]+(-[a-z0-9]+)*$`: lowercase letters, digits, and single interior hyphens. That rules out uppercase, dots, underscores, leading and trailing hyphens, and doubled hyphens. The combined label must also fit in the 63 characters DNS allows.
 
 Repository names are more permissive than that, so **not every repository is eligible**, and an ineligible one keeps being served on the forge host under the sandbox. This refuses rather than lowercases, because lowercasing `Webapp1` would collide with a `webapp1` beside it: hostnames are case-insensitive and both names are legal on disk. It is a documented rule, not a bug, and the Site tab points wherever that repository's site actually is.

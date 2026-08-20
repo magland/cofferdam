@@ -716,7 +716,23 @@ body_has "settings offers a rename" 'settings/rename'
 check "rename the repository" 302 -b "$JAR" "$BASE/demo/proj/settings/rename" \
   --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=renamed
 check "the new name serves the repository" 200 "$BASE/demo/renamed"
-check "the old name is gone" 404 "$BASE/demo/proj"
+check "the old name redirects to the new one" 301 -D "$TMP/headers" "$BASE/demo/proj"
+header_has "naming where it went" 'location: /demo/renamed'
+header_has "and refusing to be cached, since the old name may be taken later" 'cache-control: no-store'
+check "a path under the old name keeps its tail and its query" 301 -D "$TMP/headers" \
+  "$BASE/demo/proj/blob/main/README.md?plain=1"
+header_has "carried across untouched" 'location: /demo/renamed/blob/main/README.md?plain=1'
+check "following the redirect serves the repository" 200 -L "$BASE/demo/proj"
+check "the api redirects too" 301 -D "$TMP/headers" -H "authorization: Bearer $OWNER_TOKEN" \
+  "$BASE/api/repos/demo/proj/branches"
+header_has "to the same repository under the api" 'location: /api/repos/demo/renamed/branches'
+check "git asks for the old address and is sent to the new one" 301 -D "$TMP/headers" \
+  "$BASE/demo/proj.git/info/refs?service=git-upload-pack"
+header_has "keeping the .git the request wrote" 'location: /demo/renamed.git/info/refs?service=git-upload-pack'
+rm -rf "$TMP/renamedclone"
+git clone -q "$BASE/demo/proj" "$TMP/renamedclone" 2>"$TMP/renameclone.log" \
+  || { echo "FAIL: a clone of the old address did not follow the redirect"; cat "$TMP/renameclone.log"; exit 1; }
+PASS=$((PASS+1)); echo "ok: a clone of the old address follows the redirect"
 check "issues moved with it" 200 "$BASE/demo/renamed/issues?state=all"
 body_has "the moved issue is there" 'Something is still wrong'
 check "a repository to collide with" 302 -b "$JAR" "$BASE/new" \
@@ -733,6 +749,12 @@ no_trace_of "nothing of the repository is left in the old collection" demo proj
 check "move it back" 302 -b "$JAR" "$BASE/moved/proj/settings/rename" \
   --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=proj
 check "back at its old address" 200 "$BASE/demo/proj"
+# Three renames have happened to this repository, and every name it has worn
+# should lead to where it is now rather than to the next name in the chain.
+check "the name it wore in between redirects onward" 301 -D "$TMP/headers" "$BASE/demo/renamed"
+header_has "all the way to where it is now" 'location: /demo/proj'
+check "as does the collection it passed through" 301 -D "$TMP/headers" "$BASE/moved/proj"
+header_has "to the same place" 'location: /demo/proj'
 
 # ---- renaming a collection ----
 
@@ -751,7 +773,15 @@ check "rename the collection" 302 -b "$JAR" "$BASE/oldname/settings/rename" \
   --data-urlencode "csrf=$CSRF" --data-urlencode name=newname
 check "the new name serves the collection" 200 "$BASE/newname"
 check "and the repository in it" 200 "$BASE/newname/thing"
-check "the old name is gone" 404 "$BASE/oldname"
+check "the old collection name redirects" 301 -D "$TMP/headers" "$BASE/oldname"
+header_has "to the name it has now" 'location: /newname'
+check "and so does every address under it" 301 -D "$TMP/headers" "$BASE/oldname/thing/commits"
+header_has "with the repository and the path kept" 'location: /newname/thing/commits'
+check "including one naming a repository that is not there" 301 -D "$TMP/headers" "$BASE/oldname/nosuch"
+header_has "which then 404s at the address the collection has now" 'location: /newname/nosuch'
+check "and the collection api" 301 -D "$TMP/headers" -H "authorization: Bearer $OWNER_TOKEN" \
+  "$BASE/api/collections/oldname"
+header_has "to the collection under its new name" 'location: /api/collections/newname'
 dir_exists "the repository moved with the collection" "$VAULT/collections/newname/repos/thing.git"
 [ -d "$VAULT/collections/oldname" ] && { echo "FAIL: the old collection directory is still there"; exit 1; }
 PASS=$((PASS+1)); echo "ok: nothing is left under the old collection name"
@@ -767,6 +797,42 @@ check "an empty collection to rename" 302 -b "$JAR" "$BASE/new/collection" \
 check "rename the empty collection" 302 -b "$JAR" "$BASE/emptyold/settings/rename" \
   --data-urlencode "csrf=$CSRF" --data-urlencode name=emptynew
 check "the renamed empty collection serves" 200 "$BASE/emptynew"
+
+# ---- where a redirect stops ----
+#
+# A redirect is only consulted for a name nothing answers to, which is what
+# bounds the whole feature: a repository created under a name that used to be
+# redirected owns it outright, and a deletion takes the redirects that pointed
+# at what it removed rather than leaving them to land on whatever is created
+# under that name next.
+
+check "a repository to rename and then displace" 302 -b "$JAR" "$BASE/new" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=movers \
+  --data-urlencode init=1
+check "rename it away" 302 -b "$JAR" "$BASE/demo/movers/settings/rename" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=moved-away
+check "the name it left redirects" 301 -D "$TMP/headers" "$BASE/demo/movers"
+header_has "to where it went" 'location: /demo/moved-away'
+[ -f "$VAULT/redirects.json" ] || { echo "FAIL: no redirects.json in the vault"; exit 1; }
+grep -q '"demo/movers": "demo/moved-away"' "$VAULT/redirects.json" \
+  || { echo "FAIL: the rename is not recorded in redirects.json"; cat "$VAULT/redirects.json"; exit 1; }
+PASS=$((PASS+2)); echo "ok: the vault records where the old name went"
+check "a new repository takes the name that was redirected" 302 -b "$JAR" "$BASE/new" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=movers \
+  --data-urlencode init=1
+check "so the old name is its own again" 200 "$BASE/demo/movers"
+check "which the vault has forgotten it ever redirected" 302 -b "$JAR" "$BASE/demo/moved-away/settings/rename" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=moved-twice
+grep -q '"demo/movers"' "$VAULT/redirects.json" \
+  && { echo "FAIL: a redirect for a name that is in use again is still on record"; cat "$VAULT/redirects.json"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the entry for a name that is in use again is pruned"
+check "the intervening name still redirects" 301 -D "$TMP/headers" "$BASE/demo/moved-away"
+header_has "to the current one" 'location: /demo/moved-twice'
+check "settings for the repository about to be deleted" 200 -b "$JAR" "$BASE/demo/moved-twice/settings"
+CSRF="$(csrf_of)"
+check "delete it" 302 -b "$JAR" "$BASE/demo/moved-twice/settings/delete" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode confirm=demo/moved-twice
+check "and the redirect that led to it is gone, not left dangling" 404 "$BASE/demo/moved-away"
 
 # ---- forking inside the vault ----
 
@@ -1590,7 +1656,8 @@ body_has "saying where it came from" '"renamedFrom":"apiold"'
 body_has "and how much moved with it" '"repos":1'
 api "the collection is at the new name" 200 "$BASE/api/collections/apinew"
 body_has "with its repository" '"moving"'
-api "and gone from the old one" 404 "$BASE/api/collections/apiold"
+api "and the old name redirects to it" 301 -D "$TMP/headers" "$BASE/api/collections/apiold"
+header_has "under the api, as on the web" 'location: /api/collections/apinew'
 api "the repository moved with it" 200 "$BASE/api/repos/apinew/moving"
 api "renaming onto an existing collection is refused" 409 -X POST -H "$JSON_CT" \
   --data '{"name":"apis"}' "$BASE/api/collections/apinew/rename"
@@ -1897,7 +1964,8 @@ run_ok "collection add, to have one to rename and remove" cli collection add thr
 run_ok "collection rename" cli collection rename throwaway keptaway
 body_has "reporting the new name and what moved" 'Now keptaway, with 0 repositories'
 check "the collection is at the new name" 200 "$BASE/keptaway"
-check "and gone from the old one" 404 "$BASE/throwaway"
+check "and the old one redirects to it" 301 -D "$TMP/headers" "$BASE/throwaway"
+header_has "as a rename from the web does" 'location: /keptaway'
 run_ok "collection rename to its own name reports no change" cli collection rename keptaway keptaway
 body_has "rather than a rename that did not happen" 'already its name'
 run_code "collection rename onto an existing one is a conflict" 5 cli collection rename keptaway demo
@@ -2029,6 +2097,26 @@ grep -qi 'reserved' "$TMP/pusherr" || { echo "FAIL: the refusal did not say the 
 [ ! -e "$VAULT/collections/pushed/repos/created.issues" ] || { echo "FAIL: the refused push created the directory anyway"; exit 1; }
 PASS=$((PASS+2)); echo "ok: push-to-create refuses a name reserved for a sibling directory"
 
+# A push to an address a rename left behind follows the redirect, which is the
+# whole point of having one: a clone made before the rename keeps working
+# without its remote being changed. It also settles what a push to such a name
+# does not do, which is create a new repository there, as a push to an unused
+# name would.
+api "rename the pushed repository" 200 -H "$JSON_CT" \
+  --data '{"name":"pushed-elsewhere"}' "$BASE/api/repos/pushed/created/rename"
+cd "$TMP/clone"
+echo "pushed after the rename" >> README.md
+git commit -qam "Push to an old address"
+git push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/pushed/created" main 2>"$TMP/pushmoved.log" \
+  || { echo "FAIL: a push to the old address did not follow the redirect"; cat "$TMP/pushmoved.log"; exit 1; }
+cd - >/dev/null
+PASS=$((PASS+1)); echo "ok: a push to the old address follows the redirect"
+check "the commit landed in the repository at its new name" 200 "$BASE/pushed/pushed-elsewhere/blob/main/README.md"
+body_has "with what was pushed" 'pushed after the rename'
+no_trace_of "and push-to-create did not take the redirected name" pushed created
+api "rename it back" 200 -H "$JSON_CT" \
+  --data '{"name":"created"}' "$BASE/api/repos/pushed/pushed-elsewhere/rename"
+
 # ---- site ----
 
 SITE="$VAULT/collections/pushed/repos/created.site"
@@ -2145,6 +2233,18 @@ check "the bare sites host names no site" 404 "$BASE/" -H 'Host: sites.localhost
 body_lacks "and does not render forge chrome" 'assets/style.css'
 check "a deeper name under the sites host names no site" 404 "$BASE/" -H 'Host: a.b.sites.localhost'
 check "a hostname naming no repository is a 404" 404 "$BASE/" -H "Host: nosuchrepo--pushed.sites.localhost"
+# A site's hostname is built from the repository's name, so a rename moves the
+# site to a different origin. The hostname it had is redirected, on the same
+# terms as a path on the forge host: only while no repository answers to it.
+api "rename the repository whose site has a hostname of its own" 200 -H "$JSON_CT" \
+  --data '{"name":"movedsite"}' "$BASE/api/repos/pushed/created/rename"
+check "the site's old hostname redirects" 301 -D "$TMP/headers" -H "Host: $SITE_HOST" "$BASE/sub/real.txt?x=1"
+header_has "to the hostname the site has now, path and query kept" \
+  "location: http://movedsite--pushed.sites.localhost/sub/real.txt?x=1"
+header_has "and not cached, as on the forge host" 'cache-control: no-store'
+api "rename it back" 200 -H "$JSON_CT" --data '{"name":"created"}' "$BASE/api/repos/pushed/movedsite/rename"
+check "and its own hostname serves the site again" 200 -H "Host: $SITE_HOST" "$BASE/"
+body_has "with its index" 'site ok'
 # Sites are files, so nothing on this hostname needs a method that writes.
 check "a write method on a site host is refused" 405 -X POST -H "Host: $SITE_HOST" "$BASE/"
 

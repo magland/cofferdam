@@ -207,7 +207,7 @@ ${flashBanner(msg)}
 ${errorBanner(error)}
 <div class="danger-zone caution">
 <h3>Rename</h3>
-<p>${holds} Clones and remotes pointing at the old address stop working until they are changed, and token scopes naming the old collection have to be granted again under the new name.</p>
+<p>${holds} The old address is redirected here, so links and existing clones keep working until something else is created under that name, but token scopes naming the old collection have to be granted again under the new name.</p>
 <form method="post" action="${base}/settings/rename" class="inline-form">
 ${csrfField(viewer)}
 <label for="toName">Collection name</label><input type="text" id="toName" name="name" value="${esc(
@@ -412,7 +412,7 @@ ${defaultBranchField}
   const renameForm = ctx.canAdmin
     ? `<div class="danger-zone caution">
 <h3>Rename or move</h3>
-<p>Everything moves with the repository: its site, its workflow runs, its issues, its releases, and its LFS objects. Clones pointing at the old address stop working until their remote is changed.</p>
+<p>Everything moves with the repository: its site, its workflow runs, its issues, its releases, and its LFS objects. The old address is redirected here, so links and existing clones keep working, until something else is created under that name.</p>
 <form method="post" action="${base}/settings/rename" class="inline-form">
 ${csrfField(ctx.viewer!)}
 <label for="toCollection">Collection</label><input type="text" id="toCollection" name="collection" value="${esc(
