@@ -173,14 +173,49 @@ function mathHtml(src: string, display: boolean): string {
   }
 }
 
-export function renderMarkdown(text: string, opts: MarkdownOpts): string {
-  const slots: string[] = [];
-  const marker = `md${crypto.randomBytes(9).toString('hex')}`;
-  const slot = (html: string): string => {
-    slots.push(html);
-    return `${marker}_${slots.length - 1}_`;
-  };
+/**
+ * What one render needs to know, and the only thing the rules below keep
+ * between them.
+ *
+ * The parser used to be built per call, which let every rule close over its
+ * render's own state. That cost 2.8ms of construction -- markdown-it, three
+ * plugins and a dozen rule installs, the emoji plugin's tables most of all --
+ * to do work measured in tenths of a millisecond, on every fragment of every
+ * page: eleven times over for an issue with ten comments. The parser is built
+ * once now, so the state that used to be a closure travels in markdown-it's
+ * env instead, reachable from renderer rules as their fourth argument and from
+ * core rules as state.env.
+ */
+interface RenderEnv {
+  opts: MarkdownOpts;
+  /** Trusted fragments held back from the sanitizer; see the file header. */
+  slots: string[];
+  marker: string;
+  /** Heading slugs already issued, so a repeated heading gets a -1 suffix. */
+  used: Map<string, number>;
+  pendingSlug: string;
+}
 
+function slot(env: RenderEnv, html: string): string {
+  env.slots.push(html);
+  return `${env.marker}_${env.slots.length - 1}_`;
+}
+
+function codeBlock(env: RenderEnv, code: string, lang: string | null): string {
+  const cls = lang ? ` class="language-${esc(lang)}"` : '';
+  // The button sits after the <pre> because the page's copyCmd() copies its
+  // previous sibling.
+  return `${slot(
+    env,
+    `<div class="code-block"><pre><code${cls}>${highlight(code, lang)}</code></pre>${copyButton()}</div>`
+  )}\n`;
+}
+
+function mathBlock(env: RenderEnv, src: string): string {
+  return `<div class="math-block">${slot(env, mathHtml(src, true))}</div>\n`;
+}
+
+function buildMarkdownIt(): MarkdownIt {
   const md = new MarkdownIt({ html: true, linkify: true });
   md.use(footnotePlugin);
   md.use(emojiPlugin);
@@ -190,86 +225,77 @@ export function renderMarkdown(text: string, opts: MarkdownOpts): string {
   // text rule has already swallowed these characters, which is the same
   // reason its own linkify works this way. Text inside a link is left alone,
   // so a reference written inside one does not try to nest a second.
-  if (opts.issueBase || opts.commitBase) {
-    md.core.ruler.push('cofferdam_refs', (state) => {
-      for (const block of state.tokens) {
-        if (block.type !== 'inline' || !block.children) continue;
-        const out: typeof block.children = [];
-        let inLink = 0;
-        let changed = false;
-        for (const token of block.children) {
-          if (token.type === 'link_open') inLink++;
-          else if (token.type === 'link_close') inLink--;
-          if (token.type !== 'text' || inLink > 0) {
-            out.push(token);
-            continue;
-          }
-          let last = 0;
-          CROSS_REF.lastIndex = 0;
-          for (let m = CROSS_REF.exec(token.content); m; m = CROSS_REF.exec(token.content)) {
-            const [whole, issue, sha] = m;
-            const href = issue
-              ? opts.issueBase && `${opts.issueBase}/${issue}`
-              : sha && /[a-f]/.test(sha) && opts.commitBase
-                ? `${opts.commitBase}/${sha}`
-                : undefined;
-            if (!href) continue;
-            if (m.index > last) {
-              const before = new state.Token('text', '', 0);
-              before.content = token.content.slice(last, m.index);
-              out.push(before);
-            }
-            const open = new state.Token('link_open', 'a', 1);
-            open.attrSet('href', href);
-            const label = new state.Token('text', '', 0);
-            // A full commit id is shown abbreviated, the way it is written
-            // everywhere else in the interface.
-            label.content = sha && sha.length > 7 ? sha.slice(0, 7) : whole;
-            const close = new state.Token('link_close', 'a', -1);
-            out.push(open, label, close);
-            last = m.index + whole.length;
-            changed = true;
-          }
-          if (last === 0) {
-            out.push(token);
-          } else if (last < token.content.length) {
-            const rest = new state.Token('text', '', 0);
-            rest.content = token.content.slice(last);
-            out.push(rest);
-          }
+  md.core.ruler.push('cofferdam_refs', (state) => {
+    const opts = (state.env as RenderEnv).opts;
+    if (!opts.issueBase && !opts.commitBase) return;
+    for (const block of state.tokens) {
+      if (block.type !== 'inline' || !block.children) continue;
+      const out: typeof block.children = [];
+      let inLink = 0;
+      let changed = false;
+      for (const token of block.children) {
+        if (token.type === 'link_open') inLink++;
+        else if (token.type === 'link_close') inLink--;
+        if (token.type !== 'text' || inLink > 0) {
+          out.push(token);
+          continue;
         }
-        if (changed) block.children = out;
+        let last = 0;
+        CROSS_REF.lastIndex = 0;
+        for (let m = CROSS_REF.exec(token.content); m; m = CROSS_REF.exec(token.content)) {
+          const [whole, issue, sha] = m;
+          const href = issue
+            ? opts.issueBase && `${opts.issueBase}/${issue}`
+            : sha && /[a-f]/.test(sha) && opts.commitBase
+              ? `${opts.commitBase}/${sha}`
+              : undefined;
+          if (!href) continue;
+          if (m.index > last) {
+            const before = new state.Token('text', '', 0);
+            before.content = token.content.slice(last, m.index);
+            out.push(before);
+          }
+          const open = new state.Token('link_open', 'a', 1);
+          open.attrSet('href', href);
+          const label = new state.Token('text', '', 0);
+          // A full commit id is shown abbreviated, the way it is written
+          // everywhere else in the interface.
+          label.content = sha && sha.length > 7 ? sha.slice(0, 7) : whole;
+          const close = new state.Token('link_close', 'a', -1);
+          out.push(open, label, close);
+          last = m.index + whole.length;
+          changed = true;
+        }
+        if (last === 0) {
+          out.push(token);
+        } else if (last < token.content.length) {
+          const rest = new state.Token('text', '', 0);
+          rest.content = token.content.slice(last);
+          out.push(rest);
+        }
       }
-    });
-  }
+      if (changed) block.children = out;
+    }
+  });
 
-  const codeBlock = (code: string, lang: string | null): string => {
-    const cls = lang ? ` class="language-${esc(lang)}"` : '';
-    // The button sits after the <pre> because the page's copyCmd() copies its
-    // previous sibling.
-    return `${slot(
-      `<div class="code-block"><pre><code${cls}>${highlight(
-        code,
-        lang
-      )}</code></pre>${copyButton()}</div>`
-    )}\n`;
-  };
-  const mathBlock = (src: string): string => `<div class="math-block">${slot(mathHtml(src, true))}</div>\n`;
-
-  md.renderer.rules.fence = (tokens, idx) => {
+  md.renderer.rules.fence = (tokens, idx, _options, env) => {
     const token = tokens[idx];
     const info = token.info.trim().split(/\s+/)[0].toLowerCase();
-    if (info === 'math') return mathBlock(token.content);
-    return codeBlock(token.content, info || null);
+    if (info === 'math') return mathBlock(env as RenderEnv, token.content);
+    return codeBlock(env as RenderEnv, token.content, info || null);
   };
-  md.renderer.rules.code_block = (tokens, idx) => codeBlock(tokens[idx].content, null);
+  md.renderer.rules.code_block = (tokens, idx, _options, env) =>
+    codeBlock(env as RenderEnv, tokens[idx].content, null);
 
   // The plugin renders math itself; we route it through a slot instead so the
   // sanitizer never has to allow KaTeX's own markup.
   md.use(katexPlugin, {});
-  md.renderer.rules.math_inline = (tokens, idx) => slot(mathHtml(tokens[idx].content, false));
-  md.renderer.rules.math_block = (tokens, idx) => mathBlock(tokens[idx].content);
-  md.renderer.rules.math_inline_block = (tokens, idx) => mathBlock(tokens[idx].content);
+  md.renderer.rules.math_inline = (tokens, idx, _options, env) =>
+    slot(env as RenderEnv, mathHtml(tokens[idx].content, false));
+  md.renderer.rules.math_block = (tokens, idx, _options, env) =>
+    mathBlock(env as RenderEnv, tokens[idx].content);
+  md.renderer.rules.math_inline_block = (tokens, idx, _options, env) =>
+    mathBlock(env as RenderEnv, tokens[idx].content);
 
   // markdown-it expresses column alignment as an inline style, which the
   // sanitizer strips; carry it in the align attribute instead, as GitHub does.
@@ -286,25 +312,25 @@ export function renderMarkdown(text: string, opts: MarkdownOpts): string {
   md.renderer.rules.th_open = alignRule;
   md.renderer.rules.td_open = alignRule;
 
-  const used = new Map<string, number>();
-  let pendingSlug = '';
-  md.renderer.rules.heading_open = (tokens, idx, options, _env, self) => {
+  md.renderer.rules.heading_open = (tokens, idx, options, env, self) => {
+    const e = env as RenderEnv;
     const inline = tokens[idx + 1];
     const slug = slugify(inline && inline.type === 'inline' ? inline.content : '');
-    pendingSlug = '';
+    e.pendingSlug = '';
     if (slug) {
-      const seen = used.get(slug) ?? 0;
-      used.set(slug, seen + 1);
-      pendingSlug = seen === 0 ? slug : `${slug}-${seen}`;
-      tokens[idx].attrSet('id', pendingSlug);
+      const seen = e.used.get(slug) ?? 0;
+      e.used.set(slug, seen + 1);
+      e.pendingSlug = seen === 0 ? slug : `${slug}-${seen}`;
+      tokens[idx].attrSet('id', e.pendingSlug);
     }
     return self.renderToken(tokens, idx, options);
   };
-  md.renderer.rules.heading_close = (tokens, idx, options, _env, self) => {
-    const anchor = pendingSlug
-      ? `<a class="heading-anchor" href="#${pendingSlug}" aria-label="Permalink to this heading">#</a>`
+  md.renderer.rules.heading_close = (tokens, idx, options, env, self) => {
+    const e = env as RenderEnv;
+    const anchor = e.pendingSlug
+      ? `<a class="heading-anchor" href="#${e.pendingSlug}" aria-label="Permalink to this heading">#</a>`
       : '';
-    pendingSlug = '';
+    e.pendingSlug = '';
     return anchor + self.renderToken(tokens, idx, options);
   };
 
@@ -352,6 +378,21 @@ export function renderMarkdown(text: string, opts: MarkdownOpts): string {
     }
   });
 
-  const html = sanitizeHtml(md.render(text), sanitizeOptions(opts));
-  return html.replace(new RegExp(`${marker}_(\\d+)_`, 'g'), (_all, n: string) => slots[Number(n)] ?? '');
+  return md;
+}
+
+// Built once, at load. Every render's state rides in the env instead.
+const MD = buildMarkdownIt();
+
+export function renderMarkdown(text: string, opts: MarkdownOpts): string {
+  const env: RenderEnv = {
+    opts,
+    slots: [],
+    // Random per render, so a document cannot forge a slot marker.
+    marker: `md${crypto.randomBytes(9).toString('hex')}`,
+    used: new Map(),
+    pendingSlug: '',
+  };
+  const html = sanitizeHtml(MD.render(text, env), sanitizeOptions(opts));
+  return html.replace(new RegExp(`${env.marker}_(\\d+)_`, 'g'), (_all, n: string) => env.slots[Number(n)] ?? '');
 }
