@@ -44,6 +44,7 @@ import {
   grantScope,
   removeUser,
   revokeToken,
+  setUserEmails,
   tokenId,
 } from './vault';
 import { encPath, repoUrl } from './views';
@@ -1386,6 +1387,28 @@ export function registerWebOps(
       return;
     }
     res.redirect(`${backUrl}?msg=${encodeURIComponent(`Revoked token ${req.params.id}.`)}`);
+  });
+
+  app.post('/admin/users/:name/emails', form, (req, res) => {
+    const viewer = requireAdminPost(req, res);
+    if (!viewer) return;
+    const backUrl = `/admin/users/${encodeURIComponent(req.params.name)}`;
+    const found = loadUserForAdmin(req, res, viewer, backUrl);
+    if (!found) return;
+    const emails = field(req, 'emails')
+      .split(/[\s,]+/)
+      .filter((s) => s.length > 0);
+    // The shape check is deliberately loose -- an @ with something either
+    // side -- since git itself enforces nothing about author emails and the
+    // point is to match whatever this person's commits actually carry.
+    const bad = emails.find((e) => e.length >= 200 || !/^[^@\s]+@[^@\s]+$/.test(e));
+    if (bad !== undefined) {
+      fail(res, 400, `That does not look like an email: ${bad}`, viewer, backUrl);
+      return;
+    }
+    setUserEmails(root, found.name, emails);
+    const msg = emails.length ? `Emails saved for ${found.name}.` : `Emails cleared for ${found.name}.`;
+    res.redirect(`${backUrl}?msg=${encodeURIComponent(msg)}`);
   });
 
   app.post('/admin/users/:name/delete', form, (req, res) => {

@@ -554,6 +554,18 @@ ${csrfField(viewer)}
 </form>
 <p class="muted small">Grants add to what the user has; taking scope away is an edit to <span class="mono">vault.json</span>.</p>
 </div>`;
+  const identity = `<div class="form-box">
+<h2>Identity</h2>
+<form method="post" action="${base}/emails">
+${csrfField(viewer)}
+<div class="field"><label for="emails">Git author emails</label>
+<input type="text" id="emails" name="emails" value="${esc((user.emails ?? []).join(' '))}" placeholder="e.g. jane@example.org">
+<p class="muted small">Commits by these addresses are attributed to ${esc(name)}: one contributor, one face, however they
+were authored. Edits made in the web interface as ${esc(name)} are attributed automatically. Space-separated; saving an
+empty list clears it.</p></div>
+<button type="submit" class="btn">Save emails</button>
+</form>
+</div>`;
   const danger = self
     ? `<p class="muted small">A user cannot delete themselves; another administrator can, or edit <span class="mono">vault.json</span> by hand.</p>`
     : `<div class="danger-zone">
@@ -575,6 +587,7 @@ ${user.admin.length ? `&ensp;<span class="muted">Admin scope</span> <span class=
 ${tokens}
 ${mint}
 ${grant}
+${identity}
 ${danger}
 <p><a href="/admin/users">&larr; All users</a></p>`;
   return adminShell(viewer, 'users', `${name} - Users`, base, content);

@@ -15,7 +15,7 @@ import { collectionDir, repoPath } from './layout';
 import { displayName, isValidName, listCollections, listRepoDirs, repoDescription, siteDir } from './scan';
 import { getViewer } from './session';
 import { serveSite, siteHostUrl } from './site';
-import { canAdminCollection } from './vault';
+import { canAdminCollection, loadVault, mergeContributors } from './vault';
 import * as views from './views';
 import { encPath, repoUrl } from './views';
 import { LoadedRepo, ah, baseUrlOf, loadRepo, makeCtx, send404, sendBusy, wildcard } from './web';
@@ -151,7 +151,14 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
       loaded.repo.lastCommits(ref, entryPaths),
       loaded.repo.commitCount(ref).catch(() => 0),
       treePath === '' ? languageBreakdown(loaded.repo.dir, ref) : Promise.resolve([]),
-      treePath === '' ? loaded.repo.contributors(ref) : Promise.resolve([]),
+      treePath === ''
+        ? loaded.repo.contributors(ref).then((people) => {
+            // One person, one face: a user's web edits carry a synthetic
+            // author, and their listed emails are theirs too.
+            const state = loadVault(root);
+            return mergeContributors(state.status === 'ok' ? state.vault : null, people);
+          })
+        : Promise.resolve([]),
     ]);
     let readmeHtml: string | null = null;
     let readmeName: string | null = null;

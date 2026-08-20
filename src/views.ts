@@ -866,7 +866,7 @@ export interface TreeView {
   /** The language breakdown, measured at the root only and empty elsewhere. */
   languages: LanguageStat[];
   /** Who has committed on this ref, most commits first; the root only. */
-  contributors: { name: string; email: string; commits: number }[];
+  contributors: { name: string; email: string; commits: number; account?: string | null }[];
 }
 
 /** "1,284" - counts in the interface are grouped, as they are on GitHub. */
@@ -918,9 +918,15 @@ const SHOWN_CONTRIBUTORS = 12;
  * page, since a vault has no profiles: the history is what it knows about
  * them.
  */
-function contributorsBlock(ctx: RepoCtx, people: { name: string; email: string; commits: number }[]): string {
+function contributorsBlock(
+  ctx: RepoCtx,
+  people: { name: string; email: string; commits: number; account?: string | null }[]
+): string {
   if (people.length === 0) return '';
   const base = repoUrl(ctx);
+  // A contributor with an account gets the account's identicon, so the same
+  // person wears the same face here as they do on the admin pages, whatever
+  // git author emails their commits carry.
   const faces = people
     .slice(0, SHOWN_CONTRIBUTORS)
     .map(
@@ -928,7 +934,7 @@ function contributorsBlock(ctx: RepoCtx, people: { name: string; email: string; 
         `<a class="contributor" href="${base}/commits/${encPath(ctx.ref)}?author=${encodeURIComponent(
           p.email || p.name
         )}" title="${esc(p.name)} - ${count(p.commits)} commit${p.commits === 1 ? '' : 's'}">${avatar(
-          p.email || p.name,
+          p.account ?? (p.email || p.name),
           28
         )}</a>`
     )

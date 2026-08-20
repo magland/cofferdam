@@ -29,6 +29,13 @@ export interface UserRecord {
   tokens: TokenRecord[];
   scope: string[];
   admin: string[];
+  /**
+   * Git author emails that belong to this user, beside the synthetic
+   * `<user>@noreply.<host>` the web editor writes, which is theirs without
+   * being listed. One person pushing under their own git identity and editing
+   * in the browser is otherwise two contributors with two faces.
+   */
+  emails?: string[];
 }
 
 export interface Vault {
@@ -90,7 +97,11 @@ function normalizeVault(parsed: unknown): Vault {
       }
       throw new Error(`user ${name}: token ${i} must be a hash string or an object with a "hash"`);
     });
-    users[name] = { tokens, scope, admin };
+    const emails = asStringArray(rec.emails ?? []);
+    if (!emails) {
+      throw new Error(`user ${name}: "emails" must be a list of strings`);
+    }
+    users[name] = { tokens, scope, admin, ...(emails.length ? { emails } : {}) };
   }
   return { users };
 }
@@ -372,6 +383,81 @@ export function revokeToken(root: string, username: string, id: string): { revok
     writeVault(file, vault);
     return { revoked: true, remaining: user.tokens.length };
   });
+}
+
+/** Replace the git author emails aliased to a user. An empty list clears them. */
+export function setUserEmails(root: string, username: string, emails: string[]): UserRecord {
+  return editVault(root, (file) => {
+    const vault = normalizeVault(JSON.parse(fs.readFileSync(file, 'utf8')));
+    const user = vault.users[username];
+    if (!user) throw new Error(`no user ${username}`);
+    if (emails.length) user.emails = emails;
+    else delete user.emails;
+    writeVault(file, vault);
+    return user;
+  });
+}
+
+/**
+ * The user a commit author email belongs to, or null when it belongs to no
+ * one this vault knows. Two ways in: the synthetic `<user>@noreply.<anything>`
+ * the web editor writes, recognised by shape so the answer does not depend on
+ * which hostname the vault was being served under at the time, and the emails
+ * a user has listed as theirs.
+ */
+export function accountForEmail(vault: Vault, email: string): string | null {
+  const lower = email.toLowerCase();
+  const m = lower.match(/^([^@]+)@noreply\./);
+  if (m && vault.users[m[1]]) return m[1];
+  for (const [name, user] of Object.entries(vault.users)) {
+    if (user.emails?.some((e) => e.toLowerCase() === lower)) return name;
+  }
+  return null;
+}
+
+export interface Contributor {
+  name: string;
+  email: string;
+  commits: number;
+  /** The vault user these commits belong to, or null for an identity the vault does not know. */
+  account: string | null;
+}
+
+/**
+ * Fold one person's identities into one contributor. Grouped by account where
+ * an email resolves to one, and by email otherwise; within a group the
+ * human-written identity is preferred over the synthetic one for the name and
+ * the email shown, since "Jeremy" is who committed and `owner@noreply...` is
+ * how. Without a vault (one that failed to load) everyone stands as git
+ * reported them.
+ */
+export function mergeContributors(
+  vault: Vault | null,
+  people: { name: string; email: string; commits: number }[]
+): Contributor[] {
+  const groups = new Map<string, Contributor & { bestCommits: number; bestSynthetic: boolean }>();
+  for (const p of people) {
+    const account = vault ? accountForEmail(vault, p.email) : null;
+    const key = account !== null ? `u:${account}` : `e:${(p.email || p.name).toLowerCase()}`;
+    const synthetic = /@noreply\./i.test(p.email);
+    const g = groups.get(key);
+    if (!g) {
+      groups.set(key, { ...p, account, bestCommits: p.commits, bestSynthetic: synthetic });
+      continue;
+    }
+    g.commits += p.commits;
+    // The identity shown is the best-represented human one; a synthetic
+    // identity only fronts a group that holds nothing else.
+    if ((g.bestSynthetic && !synthetic) || (g.bestSynthetic === synthetic && p.commits > g.bestCommits)) {
+      g.name = p.name;
+      g.email = p.email;
+      g.bestCommits = p.commits;
+      g.bestSynthetic = synthetic;
+    }
+  }
+  return [...groups.values()]
+    .map(({ bestCommits: _b, bestSynthetic: _s, ...c }) => c)
+    .sort((a, b) => b.commits - a.commits);
 }
 
 /** Remove a user, and with them every token they hold. */
