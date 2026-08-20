@@ -1,3 +1,4 @@
+import { ansiLineHtml, stripAnsi } from '../ansi';
 import { avatar } from '../avatar';
 import { IconName, icon } from '../icons';
 import { esc, formatSize, timeTag } from '../render';
@@ -230,7 +231,7 @@ function stepBlocks(job: JobRecord, logLines: { s: number; l: string }[]): strin
       if (i < 0) {
         return `<details class="step">
 <summary><span class="run-status queued" aria-hidden="true">&middot;</span><span class="step-name">Runner</span></summary>
-<pre class="joblog">${lines.map((l) => esc(l)).join('\n')}</pre>
+<pre class="joblog">${lines.map((l) => ansiLineHtml(l)).join('\n')}</pre>
 </details>`;
       }
       const st = states[i];
@@ -241,7 +242,7 @@ function stepBlocks(job: JobRecord, logLines: { s: number; l: string }[]): strin
 <summary>${statusIcon(s)}<span class="step-name">${esc(name)}</span><span class="muted small">${esc(
         duration(st?.startedAt, st?.completedAt)
       )}</span></summary>
-<pre class="joblog">${lines.map((l) => esc(l)).join('\n')}</pre>
+<pre class="joblog">${lines.map((l) => ansiLineHtml(l)).join('\n')}</pre>
 </details>`;
     })
     .join('');
@@ -290,7 +291,10 @@ export function runPage(
       : '';
     const errorBox = selected.error ? `<div class="form-error">${esc(selected.error)}</div>` : '';
     if (live) {
-      const initial = logLines.map((l) => l.l).join('\n');
+      // The tailer appends as textContent, so a live log is stripped of
+      // escapes rather than coloured; colour arrives with the step view when
+      // the job completes and the page reloads into it.
+      const initial = logLines.map((l) => stripAnsi(l.l)).join('\n');
       detail = `${errorBox}<div class="job-head"><b>${esc(selected.name)}</b> ${statusIcon(js)} <span class="muted small">${esc(
         js === 'queued' ? 'waiting for a runner' : 'running'
       )}</span></div>

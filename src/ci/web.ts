@@ -1,6 +1,7 @@
 import { Express, Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
+import { stripAnsi } from '../ansi';
 import { findRepo, isValidName } from '../scan';
 import { Viewer, getViewer, viewerIsAdmin } from '../session';
 import { canAdmin } from '../vault';
@@ -231,7 +232,9 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
       res.set('Cache-Control', 'no-store').json({
         done: job.status === 'completed',
         offset: r.offset,
-        lines: r.lines.map((l) => l.l),
+        // Stripped of terminal escapes, since the tailer appends these as
+        // plain text; the log file itself keeps the bytes as written.
+        lines: r.lines.map((l) => stripAnsi(l.l)),
       });
     })
   );
