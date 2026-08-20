@@ -177,6 +177,11 @@ export class Runner {
   private workDir: string;
   private network?: string;
   private stopping = false;
+  // The acquire poll the loop is sitting in, so that stopping can abort it. A
+  // runner between jobs is inside a request the server holds open for twenty-five
+  // seconds, and a stop that only set the flag above was not acted on until that
+  // request answered: Ctrl-C printed "stopping" and then appeared to hang.
+  private polling: AbortController | null = null;
   // The registered name, learned from whoami at startup. Only used in
   // messages, but a message from a runner that does not say which runner
   // sent it is of little use on a vault serving more than one.
@@ -223,21 +228,38 @@ export class Runner {
   }
 
   private async acquire(labels: string[]): Promise<JobSpec | null> {
-    const res = await fetch(`${this.host}/api/runner/acquire`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${this.token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ labels }),
-    });
-    if (res.status === 204) return null;
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new Error(body.error ?? `acquire failed with ${res.status}`);
+    const poll = new AbortController();
+    this.polling = poll;
+    try {
+      const res = await fetch(`${this.host}/api/runner/acquire`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${this.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ labels }),
+        signal: poll.signal,
+      });
+      if (res.status === 204) return null;
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `acquire failed with ${res.status}`);
+      }
+      return (await res.json()) as JobSpec;
+    } catch (e) {
+      // An aborted poll is a stop, not a failure: answer it the way an empty
+      // poll is answered and let the loop see the flag and end.
+      if (this.stopping) return null;
+      throw e;
+    } finally {
+      this.polling = null;
     }
-    return (await res.json()) as JobSpec;
   }
 
   stop(): void {
     this.stopping = true;
+    // Aborting the poll hangs up on the server, which releases any job it was
+    // in the middle of leasing to this runner rather than leaving it leased to
+    // nobody. Nothing is executing at this point: a runner inside a poll is a
+    // runner between jobs.
+    this.polling?.abort();
   }
 
   async loop(): Promise<void> {

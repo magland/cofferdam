@@ -883,15 +883,24 @@ export class CiEngine {
   // Long-poll: resolve with a job when one becomes available, or null at the
   // deadline. Leasing happens synchronously per waiter, so two runners
   // cannot receive the same job.
+  //
+  // `gone` is the caller's way of saying the runner behind this wait has hung
+  // up. It has to be honoured, not merely recorded: a waiter left in line
+  // after its runner went away is handed the next job dispatched, which is
+  // then released again with nobody to run it. A runner stopped and started
+  // within one poll would otherwise see its first job cancelled before it
+  // could ask for one.
   waitForJob(
     runnerName: string,
     labels: string[],
     allow: string[],
     serverUrl: string,
-    timeoutMs: number
+    timeoutMs: number,
+    gone?: AbortSignal
   ): Promise<JobSpec | null> {
     const first = this.acquire(runnerName, labels, allow, serverUrl);
     if (first) return Promise.resolve(first);
+    if (gone?.aborted) return Promise.resolve(null);
     return new Promise((resolve) => {
       const deadline = setTimeout(() => {
         cleanup();
@@ -904,11 +913,17 @@ export class CiEngine {
           resolve(spec);
         }
       };
+      const onGone = () => {
+        cleanup();
+        resolve(null);
+      };
       const cleanup = () => {
         clearTimeout(deadline);
         this.emitter.removeListener('wake', onWake);
+        gone?.removeEventListener('abort', onGone);
       };
       this.emitter.on('wake', onWake);
+      gone?.addEventListener('abort', onGone);
     });
   }
 

@@ -93,11 +93,11 @@ mkdir -p "$VAULT"
 
 export GIT_TERMINAL_PROMPT=0
 
-# Executing workflow jobs is the one part of this suite measured in minutes
-# rather than seconds: each run pulls an image, starts a container per job, and
-# is polled once a second until it finishes. Everything else, planning included,
-# runs against the local server and takes well under a minute together, so the
-# execution checks are opt-in rather than routine:
+# Executing workflow jobs is the one part of this suite that runs containers:
+# each run pulls an image, starts a container per job, and is polled until it
+# finishes, which is about as much time again as everything else together and
+# needs a working Docker. So the execution checks are opt-in rather than routine,
+# and everything up to and including planning a run is not:
 #
 #   npm run smoke        # everything but job execution
 #   npm run smoke:slow   # that too (needs Docker)
@@ -130,6 +130,7 @@ fi
 
 SERVER_PID=""
 FORGE_PID=""
+RUNNER_PID=""
 PRESET_PID=""
 LIMIT_PID=""
 BACKUP_PID=""
@@ -139,6 +140,7 @@ cleanup() {
   [ -n "$PRESET_PID" ] && kill "$PRESET_PID" 2>/dev/null || true
   [ -n "${LIMIT_PID:-}" ] && kill "$LIMIT_PID" 2>/dev/null || true
   [ -n "${BACKUP_PID:-}" ] && kill "$BACKUP_PID" 2>/dev/null || true
+  [ -n "${RUNNER_PID:-}" ] && kill "$RUNNER_PID" 2>/dev/null || true
   rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -2895,26 +2897,99 @@ FORGE_PID=""
 # ---- executing a job (opt-in, and needs Docker) ----
 
 if [ "$SMOKE_SLOW" != 1 ]; then
-  echo "skip: executing jobs takes minutes, so it is opt-in; run SMOKE_SLOW=1 (npm run smoke:slow) for it"
+  echo "skip: executing jobs needs Docker and a minute of container time, so it is opt-in; run SMOKE_SLOW=1 (npm run smoke:slow) for it"
 elif command -v docker > /dev/null 2>&1 && docker version --format '{{.Server.Version}}' > /dev/null 2>&1; then
   CI_IMAGE="${SMOKE_CI_IMAGE:-ubuntu:24.04}"
-  check "actions page for a fresh dispatch" 200 -b "$JAR" "$BASE/demo/ci/actions"
-  CSRF="$(csrf_of)"
-  check "dispatch the build workflow to run for real" 302 -b "$JAR" "$BASE/demo/ci/actions/dispatch" \
-    --data-urlencode "csrf=$CSRF" --data-urlencode "workflow=.github/workflows/build.yml" \
-    --data-urlencode ref=main
-  EXEC_RUN="$(runs_named 'Build' | awk '{print $NF}')"
-  node dist/index.js runner run --host "$BASE" --runner-token "$RUNNER_TOKEN" \
-    --image "ubuntu-latest=$CI_IMAGE" > "$TMP/runner.log" 2>&1 &
-  RUNNER_PID=$!
-  for _ in $(seq 1 120); do
-    [ "$(run_field "$RUNS/$EXEC_RUN/run.json" status)" = "completed" ] && break
-    sleep 1
-  done
-  kill "$RUNNER_PID" 2>/dev/null || true
-  wait "$RUNNER_PID" 2>/dev/null || true
-  [ "$(run_field "$RUNS/$EXEC_RUN/run.json" status)" = "completed" ] || {
-    echo "FAIL: the dispatched run never completed"; cat "$TMP/runner.log"; exit 1; }
+
+  # Nothing has executed a job up to this point, so every run the suite has
+  # planned so far is still queued: the API and web checks above dispatch runs to
+  # see that dispatching plans one, and each push to demo/ci plans a run for
+  # every push-triggered workflow it carries. A runner started here works through
+  # the whole queue before it is stopped, at some ten seconds a run, and none of
+  # those runs is what any check below looks at. So the queue is emptied before
+  # each runner starts, which leaves it the one run under test.
+  drain_queue() {
+    local keep="$1" n
+    for n in $(curl -sS -H "Authorization: Bearer $OWNER_TOKEN" \
+        "$BASE/api/repos/demo/ci/runs?status=queued&limit=200" \
+        | { grep -o '"number":[0-9]*' || true; } | cut -d: -f2); do
+      [ "$n" = "$keep" ] && continue
+      curl -sS -o /dev/null -X POST -H "Authorization: Bearer $OWNER_TOKEN" -H "$JSON_CT" \
+        --data '{}' "$BASE/api/repos/demo/ci/runs/$n/cancel"
+    done
+  }
+
+  # Commit and push the workflows added below. The engine plans a push's runs
+  # after git-receive-pack has already answered the client, so the push returns
+  # before they are on disk; wait for the count to rise and then settle, since
+  # a run planned after the drain would be one the runner goes on to execute.
+  push_ci() {
+    local before now last
+    before="$(find "$RUNS" -mindepth 2 -maxdepth 2 -name run.json | wc -l)"
+    git -C "$CI_REPO" add -A
+    git -C "$CI_REPO" -c user.email=ci@example.com -c user.name=ci commit -qm "$1"
+    git -C "$CI_REPO" push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/demo/ci" main
+    wait_runs_at_least $((before + 1))
+    last=-1
+    for _ in $(seq 1 150); do
+      now="$(find "$RUNS" -mindepth 2 -maxdepth 2 -name run.json | wc -l)"
+      [ "$now" = "$last" ] && break
+      last="$now"
+      sleep 0.2
+    done
+  }
+
+  # A runner between jobs is inside the acquire long poll, which the server
+  # holds open for twenty-five seconds. It has to be asked rather than taken
+  # out: a runner killed mid-poll leaves the poll registered server-side, and
+  # the next job dispatched is then leased to a runner that is no longer there
+  # and released again as cancelled, so the next run under test concludes having
+  # executed nothing. Asking is only cheap because the runner aborts the poll it
+  # is in when it is told to stop; if this ever waits twenty-five seconds per
+  # workflow again, that is where to look.
+  stop_runner() {
+    [ -n "${RUNNER_PID:-}" ] || return 0
+    kill "$RUNNER_PID" 2>/dev/null || true
+    wait "$RUNNER_PID" 2>/dev/null || true
+    RUNNER_PID=""
+  }
+
+  # Dispatch a workflow, run it to completion with one runner, and leave the
+  # run number in RUN_N. It cannot return the number on stdout, since the
+  # checks it performs print there too.
+  run_workflow() {
+    local wf="$1" name="$2"
+    check "dispatch $wf" 302 -b "$JAR" "$BASE/demo/ci/actions/dispatch" \
+      --data-urlencode "csrf=$CI_CSRF" --data-urlencode "workflow=.github/workflows/$wf" \
+      --data-urlencode ref=main
+    RUN_N="$(runs_named "$name" | awk '{print $NF}')"
+    [ -n "$RUN_N" ] || { echo "FAIL: dispatching $wf planned no run"; exit 1; }
+    drain_queue "$RUN_N"
+    node dist/index.js runner run --host "$BASE" --runner-token "$RUNNER_TOKEN" \
+      --image "ubuntu-latest=$CI_IMAGE" --cache-dir "$TMP/runner-cache" >> "$TMP/runner.log" 2>&1 &
+    RUNNER_PID=$!
+    local i
+    # Polled four times a second rather than once: a job here takes a couple of
+    # seconds, so a one-second poll spends most of its last tick doing nothing.
+    for i in $(seq 1 960); do
+      [ "$(run_field "$RUNS/$RUN_N/run.json" status)" = "completed" ] && break
+      sleep 0.25
+    done
+    stop_runner
+    [ "$(run_field "$RUNS/$RUN_N/run.json" status)" = "completed" ] || {
+      echo "FAIL: run #$RUN_N ($name) never completed"; tail -40 "$TMP/runner.log"; exit 1; }
+  }
+
+  # The token in a dispatch form is the session's rather than the form's, so it
+  # is read once here instead of re-rendering the actions page before each of the
+  # dispatches below. That page grows a row per run, and by the end of this
+  # section it takes over a second to answer; it is checked where it is the
+  # subject rather than as a way of collecting a token.
+  check "actions page, for the dispatches below" 200 -b "$JAR" "$BASE/demo/ci/actions"
+  CI_CSRF="$(csrf_of)"
+
+  run_workflow build.yml Build
+  EXEC_RUN="$RUN_N"
   PASS=$((PASS+1)); echo "ok: a runner executed the run to completion"
   [ "$(job_field "$RUNS/$EXEC_RUN/jobs/build.json" conclusion)" = "success" ] || {
     echo "FAIL: the build job did not succeed"; cat "$RUNS/$EXEC_RUN/jobs/build.log"; exit 1; }
@@ -3079,36 +3154,7 @@ jobs:
       - run: test -f incoming/index.html && test -f incoming/css/style.css && echo "the artifact round-tripped"
 YML
 
-  git -C "$CI_REPO" add -A
-  git -C "$CI_REPO" -c user.email=ci@example.com -c user.name=ci commit -qm "Add action and artifact workflows"
-  git -C "$CI_REPO" push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/demo/ci" main
-  sleep 1
-
-  # Dispatch a workflow, run it to completion with one runner, and leave the
-  # run number in RUN_N. It cannot return the number on stdout, since the
-  # checks it performs print there too.
-  run_workflow() {
-    local wf="$1" name="$2"
-    check "actions page before dispatching $wf" 200 -b "$JAR" "$BASE/demo/ci/actions"
-    CSRF="$(csrf_of)"
-    check "dispatch $wf" 302 -b "$JAR" "$BASE/demo/ci/actions/dispatch" \
-      --data-urlencode "csrf=$CSRF" --data-urlencode "workflow=.github/workflows/$wf" \
-      --data-urlencode ref=main
-    RUN_N="$(runs_named "$name" | awk '{print $NF}')"
-    [ -n "$RUN_N" ] || { echo "FAIL: dispatching $wf planned no run"; exit 1; }
-    node dist/index.js runner run --host "$BASE" --runner-token "$RUNNER_TOKEN" \
-      --image "ubuntu-latest=$CI_IMAGE" --cache-dir "$TMP/runner-cache" >> "$TMP/runner.log" 2>&1 &
-    RUNNER_PID=$!
-    local i
-    for i in $(seq 1 240); do
-      [ "$(run_field "$RUNS/$RUN_N/run.json" status)" = "completed" ] && break
-      sleep 1
-    done
-    kill "$RUNNER_PID" 2>/dev/null || true
-    wait "$RUNNER_PID" 2>/dev/null || true
-    [ "$(run_field "$RUNS/$RUN_N/run.json" status)" = "completed" ] || {
-      echo "FAIL: run #$RUN_N ($name) never completed"; tail -40 "$TMP/runner.log"; exit 1; }
-  }
+  push_ci "Add action and artifact workflows"
 
   run_workflow actions.yml Actions
   ACT_RUN="$RUN_N"
@@ -3219,10 +3265,7 @@ jobs:
         uses: actions/configure-pages@v5
       - run: echo "base path is [$COFFERDAM_SITE_BASE_PATH] at ${{ steps.pages.outputs.base_url }}"
 YML
-  git -C "$CI_REPO" add -A
-  git -C "$CI_REPO" -c user.email=ci@example.com -c user.name=ci commit -qm "Add a sites-host workflow"
-  git -C "$CI_REPO" push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/demo/ci" main
-  sleep 1
+  push_ci "Add a sites-host workflow"
   run_workflow sitehost.yml SiteHost
   grep -q "base path is \[/\] at http://ci--demo.sites.localhost" "$RUNS/$RUN_N/jobs/build.log" || {
     echo "FAIL: configure-pages ignored the vault's sites hostname"
@@ -3258,10 +3301,7 @@ jobs:
         uses: actions/deploy-pages@v4
       - run: echo "page url is ${{ steps.deployment.outputs.page_url }}"
 YML
-    git -C "$CI_REPO" add -A
-    git -C "$CI_REPO" -c user.email=ci@example.com -c user.name=ci commit -qm "Add a site deployment workflow"
-    git -C "$CI_REPO" push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/demo/ci" main
-    sleep 1
+    push_ci "Add a site deployment workflow"
     run_workflow deploy.yml Deploy
     DEPLOY_RUN="$RUN_N"
     [ "$(run_field "$RUNS/$DEPLOY_RUN/run.json" conclusion)" = "success" ] || {

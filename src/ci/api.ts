@@ -220,10 +220,21 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
     // away, and treating that as a disconnect would cancel every job at the
     // moment it was leased.
     let closed = false;
+    const gone = new AbortController();
     res.on('close', () => {
-      if (!res.writableEnded) closed = true;
+      if (!res.writableEnded) {
+        closed = true;
+        gone.abort();
+      }
     });
-    const spec = await engine.waitForJob(auth.name, labels, auth.runner.allow, baseUrlOf(req), ACQUIRE_TIMEOUT_MS);
+    const spec = await engine.waitForJob(
+      auth.name,
+      labels,
+      auth.runner.allow,
+      baseUrlOf(req),
+      ACQUIRE_TIMEOUT_MS,
+      gone.signal
+    );
     if (!spec) {
       if (!closed) res.status(204).end();
       return;
