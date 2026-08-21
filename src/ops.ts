@@ -8,6 +8,7 @@ import type { LfsStore } from './lfsstore';
 import { addCollectionOwner, repoIsPrivate, setRepoPrivate } from './perms';
 import { loadVault } from './vault';
 import { looksLikePointer } from './pointer';
+import { parseUpstream } from './source';
 import { forgetRepoRedirects, recordCollectionRename, recordRepoRename } from './redirects';
 import { REPOS_DIR, collectionDir, repoPath, reposDir } from './layout';
 import {
@@ -622,6 +623,20 @@ export async function setDefaultBranch(repoDir: string, branch: string): Promise
   const sha = await refTip(repoDir, `refs/heads/${branch}`);
   if (!sha) throw new OpError(`branch ${branch} not found`, 'notfound');
   await execGit(repoDir, ['symbolic-ref', 'HEAD', `refs/heads/${branch}`]);
+}
+
+/**
+ * Record (or clear, with '') the URL outside this vault the repository was
+ * forked from, as `mochi.upstream`. Only the two URL shapes `mochi fork`
+ * clones from are accepted, so what upstreamOf later reads back always parses.
+ */
+export async function setUpstream(repoDir: string, url: string): Promise<void> {
+  if (url === '') {
+    await execGit(repoDir, ['config', '--unset', 'mochi.upstream']).catch(() => undefined);
+    return;
+  }
+  if (!parseUpstream(url)) throw new OpError('the upstream must be an https or ssh git URL');
+  await execGit(repoDir, ['config', 'mochi.upstream', url]);
 }
 
 export function setDescription(repoDir: string, text: string): void {

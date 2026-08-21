@@ -38,3 +38,21 @@ test('displayName strips the optional .git and nothing else', () => {
   assert.equal(displayName('webapp'), 'webapp');
   assert.equal(displayName('git.thing'), 'git.thing');
 });
+
+test('upstreamOf reads mochi.upstream out of the config file and validates it', async () => {
+  const { makeVaultDir, makeBareRepo } = await import('./helpers');
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { upstreamOf } = await import('../src/scan');
+  const root = makeVaultDir();
+  const dir = makeBareRepo(root, 'alice', 'webapp');
+  assert.equal(upstreamOf(dir), null);
+  fs.writeFileSync(
+    path.join(dir, 'config'),
+    '[core]\n\tbare = true\n[mochi]\n\tupstream = https://github.com/octocat/Hello-World.git\n'
+  );
+  assert.equal(upstreamOf(dir)?.label, 'github.com/octocat/Hello-World');
+  fs.writeFileSync(path.join(dir, 'config'), '[mochi]\n\tupstream = not-a-url\n');
+  assert.equal(upstreamOf(dir), null);
+  fs.rmSync(root, { recursive: true, force: true });
+});

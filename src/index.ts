@@ -28,7 +28,8 @@ import { readStdin } from './cli/input';
 import { JSON_OPTION, jsonMode, pickFields, pickObject, printJson } from './cli/output';
 import { Cli, Command, Invocation, OptionSpec, dispatch, registryJson } from './cli/parse';
 import { TARGET_OPTIONS, targetFrom } from './cli/target';
-import { collectionAddCmd, collectionListCmd, importCmd } from './import-cli';
+import { collectionAddCmd, collectionListCmd, forkCmd, importCmd } from './import-cli';
+import { syncCommand } from './cli/sync-cmd';
 import { deployDestroyCmd, deployFlyCmd, deployShowCmd } from './deploy-cli';
 import {
   deployFlyRunnerCmd,
@@ -480,6 +481,21 @@ Options:
   --no-description         leave the description empty`,
     importCmd
   ),
+  raw(
+    ['fork'],
+    'Import a repository and remember where it came from',
+    `Usage: mochi fork <source> <collection>[/<name>] [--lfs]
+
+Everything mochi import does, plus the source URL is recorded as the
+repository's upstream, which the repository header shows, mochi sync
+fast-forwards from, and mochi pr export sends pull requests back to. The
+source must be a URL (or owner/repo for GitHub): a local directory has no
+upstream to record.
+
+Options are those of mochi import.`,
+    forkCmd
+  ),
+  syncCommand,
   raw(
     ['collection', 'add'],
     'Create an empty collection',

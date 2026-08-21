@@ -1,8 +1,8 @@
-import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { api, apiFailed, apiTry, remoteTarget } from './cli-api';
+import { mochiCredentialArgs, mochiCredentialEnv, run } from './cli/gitrun';
 import { isValidName } from './scan';
 import { parseSource } from './source';
 
@@ -71,30 +71,12 @@ function parseImportArgs(args: string[], usage: () => never): ImportArgs {
   return out;
 }
 
-/** Run git with its output going straight to the terminal, so a long clone shows progress. */
 function git(args: string[], env?: NodeJS.ProcessEnv): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('git', args, { stdio: 'inherit', env: env ?? process.env });
-    child.on('error', (e) =>
-      reject(new Error((e as NodeJS.ErrnoException).code === 'ENOENT' ? 'git is not on PATH' : String(e.message)))
-    );
-    child.on('close', (code) => resolve(code ?? 1));
-  });
+  return run('git', args, env);
 }
-
-// The token is handed to the push through a helper that reads it from the
-// environment rather than through the command line, where every process on the
-// machine could read it. The empty helper first clears the list, so the answer
-// comes from here and nowhere else, and no prompt can appear.
-function pushEnv(username: string, token: string): NodeJS.ProcessEnv {
-  return { ...process.env, MOCHI_USER: username, MOCHI_TOKEN: token, GIT_TERMINAL_PROMPT: '0' };
-}
-
-const CREDENTIAL_HELPER =
-  `!f() { test "$1" = get && printf 'username=%s\\npassword=%s\\n' "$MOCHI_USER" "$MOCHI_TOKEN"; }; f`;
 
 function pushArgs(dir: string): string[] {
-  return ['-C', dir, '-c', 'credential.helper=', '-c', `credential.helper=${CREDENTIAL_HELPER}`];
+  return ['-C', dir, ...mochiCredentialArgs()];
 }
 
 /**
@@ -121,14 +103,24 @@ async function githubDescription(gh: { owner: string; repo: string }): Promise<s
   }
 }
 
-export async function importCmd(args: string[], usage: () => never): Promise<void> {
+export async function importCmd(
+  args: string[],
+  usage: () => never,
+  mode: { fork?: boolean } = {}
+): Promise<void> {
   const a = parseImportArgs(args, usage);
+  const cmd = mode.fork ? 'fork' : 'import';
   if (!a.src) {
-    console.error('Usage: mochi import <source> <collection>[/<name>]');
-    console.error("  e.g. mochi import https://github.com/octocat/Hello-World mycollection");
+    console.error(`Usage: mochi ${cmd} <source> <collection>[/<name>]`);
+    console.error(`  e.g. mochi ${cmd} https://github.com/octocat/Hello-World mycollection`);
     process.exit(1);
   }
   const source = parseSource(a.src);
+  if (mode.fork && source && path.isAbsolute(source.url)) {
+    console.error('A fork records the URL it came from, and a local directory has no URL to record.');
+    console.error(`Use mochi import instead: mochi import ${a.src} <collection>`);
+    process.exit(1);
+  }
   if (!source) {
     console.error(`Not a source we can clone: ${a.src}`);
     console.error('Give an https or ssh git URL, owner/repo for GitHub, or the path to a repository here.');
@@ -138,7 +130,7 @@ export async function importCmd(args: string[], usage: () => never): Promise<voi
   const name = a.name ?? source.name;
   if (!collection) {
     console.error(`Which collection should ${name} go into?`);
-    console.error(`  mochi import ${a.src} mycollection`);
+    console.error(`  mochi ${cmd} ${a.src} mycollection`);
     process.exit(1);
   }
   if (!isValidName(collection) || !isValidName(name)) {
@@ -166,7 +158,7 @@ export async function importCmd(args: string[], usage: () => never): Promise<voi
     console.error(`${collection}/${name} already exists on ${target.host}.`);
     console.error('A mirror push would replace its branches and tags, so this stops here. Import');
     console.error('under another name,');
-    console.error(`  mochi import ${a.src} ${collection}/another-name`);
+    console.error(`  mochi ${cmd} ${a.src} ${collection}/another-name`);
     console.error('or delete the existing repository first, from its settings page.');
     process.exit(1);
   }
@@ -196,7 +188,7 @@ export async function importCmd(args: string[], usage: () => never): Promise<voi
       }
     }
     console.log(`Pushing to ${dest} as ${username}`);
-    const env = pushEnv(username, target.token);
+    const env = mochiCredentialEnv(username, target.token);
     if ((await git([...pushArgs(tmp), 'push', '--mirror', dest], env)) !== 0) {
       throw new Error(
         `Could not push to ${dest}.\nIf it refused the token, check that you may create in ${collection}.`
@@ -213,8 +205,22 @@ export async function importCmd(args: string[], usage: () => never): Promise<voi
     // here would skip this and leave the bare clone behind.
     cleanup();
   }
-  // The description is set after the push rather than before it, since the
-  // repository does not exist until the push creates it.
+  // A fork remembers where it came from: the source URL lands in the
+  // repository's config as mochi.upstream, where the repo header, `mochi
+  // sync`, and `mochi pr export` read it back. Recorded after the push, since
+  // the repository does not exist until the push creates it.
+  let upstream: string | null = null;
+  if (mode.fork) {
+    const patch = await apiTry(target, 'PATCH', `/api/repos/${encodeURIComponent(collection)}/${encodeURIComponent(name)}`, {
+      upstream: source.url,
+    });
+    if (patch.ok) upstream = source.url;
+    else {
+      console.error(`The repository arrived, but its upstream could not be recorded: ${patch.data.error ?? `HTTP ${patch.status}`}`);
+      console.error(`  mochi repo edit ${collection}/${name} --upstream ${source.url}`);
+    }
+  }
+  // The description too is set after the push rather than before it.
   let described: string | null = a.description?.trim() || null;
   if (!described && !a.noDescription && source.github) described = await githubDescription(source.github);
   if (described) {
@@ -228,8 +234,9 @@ export async function importCmd(args: string[], usage: () => never): Promise<voi
   }
 
   console.log('');
-  console.log(`Imported ${collection}/${name}`);
+  console.log(`${mode.fork ? 'Forked' : 'Imported'} ${collection}/${name}`);
   console.log(`  ${dest}`);
+  if (upstream) console.log(`  forked from ${upstream}`);
   // Worth saying rather than leaving to be discovered: a mirror push carries
   // LFS pointer files, so the files look present and read as missing.
   if (described) console.log(`  ${described}`);
@@ -294,4 +301,9 @@ export async function collectionListCmd(args: string[], usage: () => never): Pro
   for (const c of collections) {
     console.log(`${c.name.padEnd(width)}  ${c.repoCount} ${c.repoCount === 1 ? 'repository' : 'repositories'}`);
   }
+}
+
+/** `mochi fork`: `mochi import` that records where the repository came from. */
+export function forkCmd(args: string[], usage: () => never): Promise<void> {
+  return importCmd(args, usage, { fork: true });
 }

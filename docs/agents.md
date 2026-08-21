@@ -53,7 +53,7 @@ diff      <base>...<head>
 search    <query>
 collab    list add remove   roles on a repository: read, write, admin
 issue     list view create edit comment close reopen
-pr        list view create diff comment merge checks close reopen
+pr        list view create diff comment merge checks close reopen export
 release   list view create edit delete
 workflow  list run
 run       list view watch cancel rerun download exec-command

@@ -63,3 +63,39 @@ export function parseSource(input: string): ImportSource | null {
   const name = nameOf(url);
   return name === '' ? null : { url, name, github: githubOf(url) };
 }
+
+// Where a fork came from. `mochi fork` records its source URL in the vault
+// repository's config as `mochi.upstream`, and everything that later reads it
+// back (the repo header, the API, `mochi sync`, `mochi pr export`) goes
+// through this parse, so a stored value that stopped being a URL reads as no
+// upstream rather than as a broken one.
+
+export interface Upstream {
+  /** What git fetch is handed: the https or ssh URL as stored. */
+  url: string;
+  /** host/path with the scheme and any .git suffix stripped, for display. */
+  label: string;
+  /** A browsable https URL, when one is known from the URL's shape. */
+  web: string | null;
+  /** Set when the upstream is a GitHub repository, which pull requests can be sent to. */
+  github: { owner: string; repo: string } | null;
+}
+
+export function parseUpstream(input: string): Upstream | null {
+  if (typeof input !== 'string' || input === '') return null;
+  const github = githubOf(input);
+  if (HTTPS_SOURCE.test(input)) {
+    const label = input.replace(/^https:\/\//, '').replace(/\.git$/i, '').replace(/\/+$/, '');
+    return { url: input, label, web: `https://${label}`, github };
+  }
+  if (SSH_SOURCE.test(input)) {
+    const label = input.replace(/^git@/, '').replace(':', '/').replace(/\.git$/i, '');
+    return {
+      url: input,
+      label,
+      web: github ? `https://github.com/${github.owner}/${github.repo}` : null,
+      github,
+    };
+  }
+  return null;
+}

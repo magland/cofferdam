@@ -109,6 +109,7 @@ Which repository a command is about is resolved in this order: the positional ar
 ```bash
 mochi repo create mycollection/thing --description 'A thing' --readme
 mochi repo edit --description 'A better thing'
+mochi repo edit --upstream https://github.com/owner/repo   # record what mochi sync and pr export use
 mochi repo fork demo/proj myfork
 mochi repo rename demo/proj newname --collection othercollection
 mochi repo delete demo/old --yes
@@ -363,6 +364,24 @@ GIT_ASKPASS= git -C "$tmp" lfs push --all https://you@vault.example.com/mycollec
 `--all` copies every version of every tracked file rather than only the tips, so the history stays checkoutable.
 
 The clone is `--bare` rather than `--mirror` on purpose: mirroring a GitHub repository also copies `refs/pull/*`, which can be thousands of refs.
+
+### Forking from GitHub, and sending changes back
+
+A vault can act as the working forge for a repository whose home is GitHub: fork it in, work on it here with branches, pull requests, and workflows, and send finished changes back as GitHub pull requests. Three commands make the loop, and every one of them runs on your machine, for the same reason importing does: the vault holds no GitHub credential, so nothing in it can reach GitHub on its own.
+
+```bash
+mochi fork owner/repo mycollection          # import, and record where it came from
+mochi sync                                  # fast-forward from the upstream
+mochi pr export 3                           # send pull request 3 on to GitHub
+```
+
+`mochi fork` is `mochi import` plus a memory: the source URL is recorded as the repository's upstream (`mochi.upstream` in the bare repository's config), which the repository header shows as "forked from", and which the other two commands read. It takes the same options as import, and refuses a local directory, which has no URL to record. On a repository imported before this existed, or created some other way, `mochi repo edit --upstream <url>` records one after the fact, and `--upstream ''` clears it.
+
+`mochi sync` keeps the fork from rotting: it fetches the branch from the upstream URL with whatever git credentials this machine already has, and pushes the result to the vault with your token. Only a fast-forward is ever pushed. A branch that is ahead of its upstream is reported as such and left alone, and one that has diverged is refused with the two counts, since deciding how to reconcile it is a merge or a rebase in a clone, not something a sync should guess at. The branch defaults to the repository's default branch; `--branch` names another.
+
+`mochi pr export <n>` turns a pull request in the vault into one on GitHub. It reads the pull request here, pushes its head branch to a fork under your GitHub account (created with `gh` the first time; `--fork owner/repo` names an existing one), and opens a pull request against the upstream with the same title and body, plus a line saying where it came from. GitHub requires the head branch to live on GitHub, which is why the fork in the middle is unavoidable; it is a publishing mirror that holds the branches you have exported and nothing else. Running the command again force-pushes the branch and finds the pull request already open rather than opening a second one, so revising after review is export again. The GitHub side goes through `gh` and its credentials, so `gh auth login` once is the only setup, and the base branch defaults to the pull request's own base; `--base` overrides it.
+
+The division of labor this buys is worth stating: an agent, or anyone else, can be given a mochi token and no GitHub credential at all. They can fork, branch, open pull requests, and run workflows entirely inside the vault, and `mochi pr export` remains a deliberate command run by someone holding a GitHub credential. The vault works as a staging area whose contents cannot reach GitHub without that step.
 
 ### Collections
 

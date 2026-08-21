@@ -7,7 +7,7 @@ import { BUSY_RETRY_SECONDS } from './limit';
 import { pullCounts } from './pulls';
 import { releaseTags } from './releases';
 import { Role, atLeast, repoIsPrivate, repoRole } from './perms';
-import { findRepo, forkParent, siteDir } from './scan';
+import { findRepo, forkParent, siteDir, upstreamOf } from './scan';
 import { Viewer, checkCsrf, getViewer } from './session';
 import { siteHostUrl } from './site';
 import { RepoCtx } from './views';
@@ -164,6 +164,7 @@ export async function makeCtx(
     openIssues: issueCounts(root, loaded.repo.collection, loaded.repo.name).open,
     openPulls: pullCounts(root, loaded.repo.collection, loaded.repo.name).open,
     forkedFrom: forkParent(loaded.repo.dir),
+    upstream: upstreamOf(loaded.repo.dir),
     viewer,
     isPrivate: repoIsPrivate(loaded.repo.dir),
     canPush: atLeast(loaded.role, 'write'),

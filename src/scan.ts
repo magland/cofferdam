@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { GitRepo } from './git';
 import { collectionsDir, repoPath, reposDir } from './layout';
+import { Upstream, parseUpstream } from './source';
 
 // Names the UI owns as top-level path segments. None of these may ever be a
 // collection or repo name, since a collection is reached at /<collection> and
@@ -173,6 +174,23 @@ export function forkParent(dir: string): { collection: string; repo: string } | 
   const [collection, repo] = m[1].split('/');
   if (!collection || !repo || !isValidName(collection) || !isValidName(repo)) return null;
   return { collection, repo };
+}
+
+/**
+ * The URL outside this vault the repository was forked from, or null. Written
+ * by `mochi fork` as `mochi.upstream` and read the same way forkParent is:
+ * out of the config file directly, since this too is asked on page renders.
+ * A stored value that parseUpstream rejects reads as no upstream.
+ */
+export function upstreamOf(dir: string): Upstream | null {
+  let text: string;
+  try {
+    text = fs.readFileSync(path.join(dir, 'config'), 'utf8');
+  } catch {
+    return null;
+  }
+  const m = text.match(/^\s*upstream\s*=\s*(\S+)\s*$/m);
+  return m ? parseUpstream(m[1]) : null;
 }
 
 export function repoDescription(dir: string): string | null {

@@ -8,6 +8,7 @@ import { pageScript } from './pagescript';
 import { THEMES, activeTheme, darkFor } from './themes';
 import { WORDMARK } from './logo';
 import { IconName, icon } from './icons';
+import { Upstream } from './source';
 import { avatar } from './avatar';
 import { buildInfo } from './version';
 // Type only: profile.ts builds its URLs with encPath from here, so a value
@@ -35,6 +36,8 @@ export interface RepoCtx {
   openPulls: number;
   /** The repository this one was forked from, if it was. */
   forkedFrom: { collection: string; repo: string } | null;
+  /** The URL outside this vault it was forked from, if `mochi fork` recorded one. */
+  upstream: Upstream | null;
   viewer: Viewer | null;
   /** Whether the repository is private, for the badge beside its name. */
   isPrivate: boolean;
@@ -368,7 +371,13 @@ export function repoHeader(
     ? html`<div class="fork-note muted small">${icon('repo-forked')}<span>forked from <a href="/${encodeURIComponent(
         ctx.forkedFrom.collection
       )}/${encodeURIComponent(ctx.forkedFrom.repo)}">${ctx.forkedFrom.collection}/${ctx.forkedFrom.repo}</a></span></div>`
-    : '';
+    : ctx.upstream
+      ? html`<div class="fork-note muted small">${icon('repo-forked')}<span>forked from ${
+          ctx.upstream.web
+            ? html`<a href="${ctx.upstream.web}" rel="noopener">${ctx.upstream.label}</a>`
+            : ctx.upstream.label
+        }</span></div>`
+      : '';
   const badge = ctx.isPrivate ? html` <span class="counter" title="Only collaborators, owners, and site admins can see this repository">Private</span>` : '';
   return html`<div class="repo-title">${REPO_ICON}<a href="/${encodeURIComponent(ctx.collection)}">${ctx.collection}</a> <span class="muted">/</span> <a href="${base}"><b>${ctx.repo}</b></a>${badge}${search}</div>
 ${parent}

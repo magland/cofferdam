@@ -90,10 +90,12 @@ All three take a site admin: a collection owner should not read or change a vaul
 ```
 GET    /api/repos                                  every repository the caller may see, flat
 GET    /api/repos/:c/:r                            one repository: description, default branch,
-                                                   counts, fork parent, visibility, whether it has a site
+                                                   counts, fork parent, upstream URL, visibility,
+                                                   whether it has a site
 POST   /api/repos                                  create   {collection, name, description?, initReadme?, private?}
-PATCH  /api/repos/:c/:r                            settings {description?, defaultBranch?, private?}
-                                                   (private takes the admin role; the rest take write)
+PATCH  /api/repos/:c/:r                            settings {description?, defaultBranch?, upstream?, private?}
+                                                   (private takes the admin role; the rest take write;
+                                                   upstream is an https or ssh git URL, '' clears it)
 POST   /api/repos/:c/:r/fork                       fork     {collection, name?}
                                                    (read on the source, create where it lands)
 POST   /api/repos/:c/:r/rename                     rename   {name?, collection?}          (admin;

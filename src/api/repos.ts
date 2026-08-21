@@ -4,7 +4,7 @@ import * as path from 'path';
 import { AuthLimiter } from '../limit';
 import { repoPath } from '../layout';
 import { atLeast, repoIsPrivate, repoRole } from '../perms';
-import { displayName, forkParent, listCollections, listRepoDirs, repoDescription, siteDir } from '../scan';
+import { displayName, forkParent, listCollections, listRepoDirs, repoDescription, siteDir, upstreamOf } from '../scan';
 import { issueCounts } from '../issues';
 import { pullCounts } from '../pulls';
 import { listReleases } from '../releases';
@@ -21,6 +21,8 @@ export interface RepoSummary {
   name: string;
   description: string;
   forkedFrom: { collection: string; repo: string } | null;
+  /** The URL outside this vault the repository was forked from, if recorded. */
+  upstream: string | null;
   hasSite: boolean;
   private: boolean;
 }
@@ -33,6 +35,7 @@ function summarize(root: string, collection: string, dirName: string): RepoSumma
     name,
     description: repoDescription(dir) ?? '',
     forkedFrom: forkParent(dir),
+    upstream: upstreamOf(dir)?.url ?? null,
     hasSite: siteDir(root, collection, name) !== null,
     private: repoIsPrivate(dir),
   };

@@ -89,6 +89,7 @@ export const repoCommands: Command[] = [
         const from = data.forkedFrom as { collection: string; repo: string };
         console.log(`forked from ${from.collection}/${from.repo}`);
       }
+      if (data.upstream) console.log(`forked from ${data.upstream}`);
       printTable([
         ['visibility', data.private ? 'private' : 'public'],
         ['default branch', String(data.defaultBranch ?? '(none)')],
@@ -165,6 +166,7 @@ export const repoCommands: Command[] = [
     options: [
       { name: 'description', type: 'string', value: '<d>', summary: 'New description' },
       { name: 'default-branch', type: 'string', value: '<b>', summary: 'New default branch' },
+      { name: 'upstream', type: 'string', value: '<url>', summary: "URL this was forked from; '' clears it" },
       { name: 'private', type: 'boolean', summary: 'Make the repository private (takes the admin role)' },
       { name: 'public', type: 'boolean', summary: 'Make the repository public' },
       JSON_OPTION,
@@ -173,18 +175,20 @@ export const repoCommands: Command[] = [
     async run(inv) {
       const description = inv.str('description');
       const defaultBranch = inv.str('default-branch');
+      const upstream = inv.str('upstream');
       if (inv.bool('private') && inv.bool('public')) {
         throw new CliError('Pass --private or --public, not both.', EXIT_USAGE);
       }
       const priv = inv.bool('private') ? true : inv.bool('public') ? false : undefined;
-      if (description === null && defaultBranch === null && priv === undefined) {
-        throw new CliError('Nothing to change. Pass --description, --default-branch, --private, or --public.', EXIT_USAGE);
+      if (description === null && defaultBranch === null && upstream === null && priv === undefined) {
+        throw new CliError('Nothing to change. Pass --description, --default-branch, --upstream, --private, or --public.', EXIT_USAGE);
       }
       const target = await targetFrom(inv);
       const repo = await resolveRepo(inv, target, inv.args[0] ?? null);
       const data = await api(target, 'PATCH', repoPath(repo), {
         description: description ?? undefined,
         defaultBranch: defaultBranch ?? undefined,
+        upstream: upstream ?? undefined,
         private: priv,
       });
       const json = jsonMode(inv);

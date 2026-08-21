@@ -24,6 +24,7 @@ import {
   renameRepo,
   setDefaultBranch,
   setDescription,
+  setUpstream,
   writeFile,
 } from '../ops';
 import {
@@ -37,7 +38,7 @@ import {
   setCollaborator,
   setRepoPrivate,
 } from '../perms';
-import { findRepo, isValidName, reservedRepoSuffix } from '../scan';
+import { findRepo, isValidName, reservedRepoSuffix, upstreamOf } from '../scan';
 import { loadVault } from '../vault';
 import {
   Actor,
@@ -448,13 +449,14 @@ export function registerWriteApi(
     const body = bodyOf(req);
     const description = stringField(body, 'description');
     const defaultBranch = stringField(body, 'defaultBranch');
+    const upstream = stringField(body, 'upstream');
     const priv = body.private;
     if (priv !== undefined && typeof priv !== 'boolean') {
       apiError(res, 400, '"private" must be a boolean');
       return;
     }
-    if (description === null && defaultBranch === null && priv === undefined) {
-      apiError(res, 400, 'nothing to change; provide "description", "defaultBranch", and/or "private"');
+    if (description === null && defaultBranch === null && upstream === null && priv === undefined) {
+      apiError(res, 400, 'nothing to change; provide "description", "defaultBranch", "upstream", and/or "private"');
       return;
     }
     // Visibility is the one setting here that takes the admin role rather than
@@ -467,12 +469,14 @@ export function registerWriteApi(
     try {
       if (description !== null) setDescription(ctx.repo.dir, description);
       if (defaultBranch !== null) await setDefaultBranch(ctx.repo.dir, defaultBranch);
+      if (upstream !== null) await setUpstream(ctx.repo.dir, upstream);
       if (priv !== undefined) setRepoPrivate(ctx.repo.dir, priv);
       const branches = await ctx.repo.listRefs('heads');
       res.json({
         collection: ctx.repo.collection,
         name: ctx.repo.name,
         defaultBranch: await ctx.repo.defaultBranch(branches),
+        upstream: upstreamOf(ctx.repo.dir)?.url ?? null,
         private: repoIsPrivate(ctx.repo.dir),
         changed: true,
       });

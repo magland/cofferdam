@@ -1,5 +1,10 @@
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { api, apiTry } from '../cli-api';
-import { CliError, EXIT_CONFLICT, EXIT_USAGE, exitCodeForStatus } from './exit';
+import { parseUpstream } from '../source';
+import { capture, ghCredentialArgs, mochiCredentialArgs, mochiCredentialEnv, run } from './gitrun';
+import { CliError, EXIT_CONFLICT, EXIT_FAIL, EXIT_USAGE, exitCodeForStatus } from './exit';
 import { readFileArg } from './input';
 import { JSON_OPTION, jsonMode, pickFields, pickObject, printJson, printTable, shortDate } from './output';
 import { Command, Invocation, OptionSpec } from './parse';
@@ -260,6 +265,121 @@ commit. That is what this reports, and it is worth knowing that is what it means
       printTable(
         matching.map((r) => [`#${r.number}`, String(r.status), String(r.conclusion ?? ''), String(r.workflowName ?? r.workflow ?? '')])
       );
+    },
+  },
+  {
+    path: ['pr', 'export'],
+    summary: 'Send a pull request on to the GitHub repository this one was forked from',
+    description: `The repository must have a GitHub upstream recorded (mochi fork records one;
+mochi repo edit --upstream sets one). The pull request's head branch is pushed
+to a fork under your GitHub account, made with gh if it does not exist yet,
+and a pull request with the same title and body is opened against the
+upstream. Running it again force-pushes the branch and finds the pull request
+already open rather than opening a second one.
+
+GitHub is only ever touched from this machine, through gh's own credentials:
+the vault holds no GitHub token, so run gh auth login once first.`,
+    args: [{ name: 'number', required: true }],
+    options: [
+      { name: 'base', type: 'string', value: '<b>', summary: 'Base branch on GitHub (default: the pull request base)' },
+      { name: 'fork', type: 'string', value: '<o/r>', summary: 'Your GitHub fork (default: <your login>/<upstream name>)' },
+      ...COMMON,
+    ],
+    async run(inv) {
+      const target = await targetFrom(inv);
+      const ref = await resolveRepo(inv, target);
+      const n = pullRef(inv);
+      const pull = await api(target, 'GET', `${repoPath(ref)}/pulls/${n}`);
+      if (pull.state !== 'open') {
+        throw new CliError(`Pull request #${n} is ${pull.state}; only an open one can be exported.`, EXIT_USAGE);
+      }
+      const head = String(pull.head ?? '');
+      const repoData = await api(target, 'GET', repoPath(ref));
+      const upstream = parseUpstream(String(repoData.upstream ?? ''));
+      if (!upstream?.github) {
+        throw new CliError(
+          `${ref.collection}/${ref.repo} has no GitHub upstream recorded, so there is nowhere to send this.\n` +
+            `Fork with mochi fork, or record one:\n` +
+            `  mochi repo edit ${ref.collection}/${ref.repo} --upstream https://github.com/owner/repo`,
+          EXIT_USAGE
+        );
+      }
+      const gh = upstream.github;
+      const login = (await capture('gh', ['api', 'user', '--jq', '.login']))?.trim();
+      if (!login) {
+        throw new CliError('GitHub is reached through gh, which is not installed or not logged in. Run: gh auth login', EXIT_FAIL);
+      }
+      const forkSpec = inv.str('fork') ?? `${login}/${gh.repo}`;
+      if (!/^[^/\s]+\/[^/\s]+$/.test(forkSpec)) {
+        throw new CliError(`--fork should be <owner>/<repo>, not '${forkSpec}'`, EXIT_USAGE);
+      }
+      // The head branch has to live on GitHub for GitHub to accept it, so a
+      // fork under your account is the unavoidable middle step. It is a
+      // publishing mirror: it holds the branches you have exported and nothing
+      // else, and gh creates it the first time.
+      if ((await capture('gh', ['repo', 'view', forkSpec, '--json', 'name'])) === null) {
+        if (inv.str('fork') !== null) {
+          throw new CliError(`${forkSpec} was not found on GitHub.`, EXIT_FAIL);
+        }
+        console.log(`Forking ${gh.owner}/${gh.repo} on GitHub`);
+        if ((await run('gh', ['repo', 'fork', `${gh.owner}/${gh.repo}`, '--clone=false'])) !== 0) {
+          throw new CliError(`Could not fork ${gh.owner}/${gh.repo} on GitHub.`, EXIT_FAIL);
+        }
+      }
+      const vaultUrl = `${target.host}/${encodeURIComponent(ref.collection)}/${encodeURIComponent(ref.repo)}`;
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mochi-export-'));
+      try {
+        console.log(`Fetching ${ref.collection}/${ref.repo} @ ${head}`);
+        const env = mochiCredentialEnv('mochi', target.token);
+        if ((await run('git', [...mochiCredentialArgs(), 'clone', '--bare', '--quiet', '--single-branch', '--branch', head, vaultUrl, tmp], env)) !== 0) {
+          throw new CliError(`Could not fetch branch ${head} from ${vaultUrl}.`, EXIT_FAIL);
+        }
+        // Forced, deliberately: the branch on the fork exists only as this
+        // pull request's published copy, and a re-export after a rebase in
+        // the vault must win.
+        console.log(`Pushing ${head} to ${forkSpec}`);
+        if ((await run('git', ['-C', tmp, ...ghCredentialArgs(), 'push', '--quiet', '--force', `https://github.com/${forkSpec}.git`, `refs/heads/${head}:refs/heads/${head}`])) !== 0) {
+          throw new CliError(`Could not push ${head} to ${forkSpec}.`, EXIT_FAIL);
+        }
+      } finally {
+        try {
+          fs.rmSync(tmp, { recursive: true, force: true });
+        } catch {
+          // A leftover temporary directory is not worth failing the export over.
+        }
+      }
+      const ghHead = `${forkSpec.split('/')[0]}:${head}`;
+      const findExisting = async (): Promise<string | null> => {
+        const out = await capture('gh', ['pr', 'list', '--repo', `${gh.owner}/${gh.repo}`, '--head', ghHead, '--state', 'open', '--json', 'url']);
+        if (out === null) return null;
+        try {
+          const arr = JSON.parse(out) as { url?: string }[];
+          return arr.length ? String(arr[0].url ?? '') || null : null;
+        } catch {
+          return null;
+        }
+      };
+      const existing = await findExisting();
+      if (existing) {
+        console.log(`Updated the branch behind the pull request already open: ${existing}`);
+        return;
+      }
+      const base = inv.str('base') ?? String(pull.base ?? '');
+      const body = `${String(pull.body ?? '').trim()}\n\n---\n\nExported from ${vaultUrl}/pulls/${n}\n`;
+      const bodyFile = path.join(os.tmpdir(), `mochi-export-body-${process.pid}.md`);
+      fs.writeFileSync(bodyFile, body);
+      try {
+        if ((await run('gh', ['pr', 'create', '--repo', `${gh.owner}/${gh.repo}`, '--base', base, '--head', ghHead, '--title', String(pull.title ?? `Pull request ${n}`), '--body-file', bodyFile])) !== 0) {
+          throw new CliError(`gh could not open the pull request on ${gh.owner}/${gh.repo}.`, EXIT_FAIL);
+        }
+      } finally {
+        fs.rmSync(bodyFile, { force: true });
+      }
+      // Close the loop in the vault: the mochi pull request says where it went.
+      const url = await findExisting();
+      if (url) {
+        await apiTry(target, 'POST', `${repoPath(ref)}/pulls/${n}/comments`, { body: `Exported to ${url}` });
+      }
     },
   },
   ...(['close', 'reopen'] as const).map((verb) => ({
