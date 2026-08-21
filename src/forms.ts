@@ -146,7 +146,7 @@ ${copyRow(opts.gitCommand)}`
 <p class="muted">Importing runs on your machine, not on this server: git reads the source with the credentials you already have there and pushes it here, which creates the repository. The <span class="mono">feorge</span> command does both.</p>
 <hr class="rule">
 <h2>Once per machine</h2>
-${copyRow('npm install -g feorge')}
+${copyRow('npm install -g @magland/feorge')}
 ${copyRow(`feorge login ${opts.vaultUrl}`)}
 <h2>Then, for each repository</h2>
 ${copyRow(`feorge import https://github.com/owner/repo ${collection}`)}

@@ -5,7 +5,7 @@ The `feorge` command, how it is configured, how pushing is authorized, and the A
 Installing the package globally puts a `feorge` command on your PATH:
 
 ```bash
-npm install -g feorge    # then: feorge --help
+npm install -g @magland/feorge    # then: feorge --help
 ```
 
 From a checkout, everything is available as `node dist/index.js <command>` after `npm run build`, or link the checkout to get the command while keeping your edits live:
@@ -15,7 +15,7 @@ npm run build
 npm link          # then: feorge --help
 ```
 
-Use `npm unlink -g feorge` to remove either one. Note that with a version manager such as fnm or nvm the link belongs to the active Node version, so switching versions hides it until you link again.
+Use `npm unlink -g @magland/feorge` to remove either one. Note that with a version manager such as fnm or nvm the link belongs to the active Node version, so switching versions hides it until you link again.
 
 `feorge serve` is the only command that touches the vault directory (set it positionally or with `FEORGE_VAULT`). Every other command talks to a running server, so it works the same whether the vault is on your machine or across the network. Say which vault and with which token once, by logging in:
 

@@ -1,5 +1,5 @@
 {
-  "name": "feorge",
+  "name": "@magland/feorge",
   "version": "0.3.0",
   "description": "A self-hosted git forge with the shape of GitHub: browsing, in-browser editing, issues, pull requests, Actions-compatible workflows, static sites, and Git LFS, from one small server.",
   "license": "Apache-2.0",

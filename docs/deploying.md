@@ -108,7 +108,7 @@ jobs:
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
-      - run: npx --yes feorge@latest deploy fly my-vault-name
+      - run: npx --yes @magland/feorge@latest deploy fly my-vault-name
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 ```
@@ -312,7 +312,7 @@ Not every repository is eligible for a hostname of its own, because not every le
 On a host that already has Node and git, the published package needs no checkout:
 
 ```bash
-npm install -g feorge
+npm install -g @magland/feorge
 feorge serve /srv/vault --host 0.0.0.0 --port 3000
 ```
 

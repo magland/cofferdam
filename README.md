@@ -8,7 +8,7 @@ Reading is anonymous, unless a repository is made private, in which case it is v
 
 ```bash
 mkdir myvault
-npx feorge serve myvault
+npx @magland/feorge serve myvault
 ```
 
 The server initializes the vault and prints an owner token once (only its hash is stored). Open http://127.0.0.1:3000, sign in at `/login` as `owner`, then push a repository in - the push creates it:
@@ -23,7 +23,7 @@ git push http://127.0.0.1:3000/alice/myproject main   # user 'owner', password t
 With a [Fly.io](https://fly.io) account and flyctl installed, one command creates the app, the volume, and the machine:
 
 ```bash
-npm install -g feorge
+npm install -g @magland/feorge
 feorge deploy fly my-vault-name       # -> https://my-vault-name.fly.dev
 feorge login https://my-vault-name.fly.dev
 feorge user add alice

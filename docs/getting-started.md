@@ -10,7 +10,7 @@ A vault is a directory, and the server is one Node process pointed at it. Nothin
 
 ```bash
 mkdir myvault
-npx feorge serve myvault
+npx @magland/feorge serve myvault
 ```
 
 Finding no `vault.json` in the directory, the server initializes one and prints an owner token:
@@ -74,7 +74,7 @@ If you would rather see a populated vault than build one, clone this repository 
 The step from a laptop vault to a real one is a persistent disk and TLS in front, and `feorge deploy fly` arranges both. Fly.io runs the container; you need an account there, [flyctl](https://fly.io/docs/flyctl/install/) installed, and `fly auth login` run once. Nothing is needed on your machine but the CLI, and no checkout of this repository:
 
 ```bash
-npm install -g feorge
+npm install -g @magland/feorge
 fly auth login
 feorge deploy fly my-vault-name
 ```

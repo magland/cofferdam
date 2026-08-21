@@ -469,7 +469,7 @@ ${flash ? html`<div class="flash">${flash}</div>` : ''}
 ${facts}
 <div class="form-box wide" style="margin-top:24px">
 <h2>Start this runner</h2>
-<p class="muted">On the machine that will execute the jobs, with Docker installed and running, and the <code>feorge</code> CLI on the path (<code>npm install -g feorge</code>):</p>
+<p class="muted">On the machine that will execute the jobs, with Docker installed and running, and the <code>feorge</code> CLI on the path (<code>npm install -g @magland/feorge</code>):</p>
 ${copyRow(`feorge runner run --host ${host} --runner-token <token>`)}
 <p class="muted small">The token is shown only when it is issued, so if you no longer have it, regenerate it below and the command will be filled in for you. Adding <code>--save</code> writes the host and token to <code>~/.config/feorge/runner.json</code>, after which <code>feorge runner run</code> needs no arguments; <code>FEORGE_RUNNER_TOKEN</code> supplies the token where a command line is the wrong place for it, as in a systemd unit. Leave the process running; it polls for work and exits only when you stop it.</p>
 <p class="muted small">Jobs are matched by label, so this runner will be offered jobs whose <code>runs-on</code> names ${
