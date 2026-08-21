@@ -3,7 +3,16 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { writeFileAtomic } from './atomic';
-import { GitRepo, execGit, execGitStatus, isValidRefName, isValidRepoPath, isValidSha } from './git';
+import {
+  GitRepo,
+  execGit,
+  execGitStatus,
+  isValidNewRefName,
+  isValidNewRepoPath,
+  isValidRefName,
+  isValidRepoPath,
+  isValidSha,
+} from './git';
 import type { LfsStore } from './lfsstore';
 import { COLLECTION_FILE, addCollectionOwner, repoIsPrivate, setRepoPrivate } from './perms';
 import { loadVault } from './vault';
@@ -12,11 +21,14 @@ import { parseUpstream } from './source';
 import { forgetCollectionRedirects, forgetRepoRedirects, recordCollectionRename, recordRepoRename } from './redirects';
 import { REPOS_DIR, collectionDir, repoPath, reposDir } from './layout';
 import {
+  MAX_NAME_LENGTH,
+  collectionCaseClash,
   displayName,
   findRepo,
   isDotName,
   isValidName,
   listRepoDirs,
+  repoCaseClash,
   repoSiblingSuffixes,
   reservedRepoSuffix,
 } from './scan';
@@ -103,11 +115,32 @@ function tmpFile(prefix: string): string {
  */
 export function createCollection(root: string, name: string): string {
   if (!isValidName(name) || isDotName(name)) throw new OpError('invalid collection name');
+  checkNewName('collection', name);
   const dir = collectionDir(root, name);
   if (fs.existsSync(dir)) throw new OpError(`collection ${name} already exists`, 'exists');
+  checkCollectionCase(root, name);
   fs.mkdirSync(dir, { recursive: true });
   fs.mkdirSync(path.join(dir, REPOS_DIR));
   return dir;
+}
+
+/**
+ * The checks every route a collection or repository name comes into being
+ * through shares, beyond the character rules isValidName applies. Only asked
+ * at creation and rename: reading stays permissive, so a vault that already
+ * holds such a name keeps serving it.
+ *
+ * The length cap keeps the on-disk form (`<name>.git`, `<name>.issues`) well
+ * clear of the 255-byte filename limit, which a longer name would otherwise
+ * hit inside the filesystem and surface as a bare failure. A trailing dot is
+ * refused because `name..git` cannot exist on Windows and reads like a typo
+ * everywhere else.
+ */
+function checkNewName(kind: 'collection' | 'repository', name: string): void {
+  if (name.length > MAX_NAME_LENGTH) {
+    throw new OpError(`a ${kind} name may be at most ${MAX_NAME_LENGTH} characters (this one is ${name.length})`);
+  }
+  if (name.endsWith('.')) throw new OpError(`a ${kind} name may not end with a dot`);
 }
 
 /**
@@ -116,10 +149,36 @@ export function createCollection(root: string, name: string): string {
  * asked: a repository that already carries such a name goes on working.
  */
 function checkNewRepoName(name: string): void {
+  checkNewName('repository', name);
   const suffix = reservedRepoSuffix(name);
   if (suffix) {
     throw new OpError(
       `a repository may not be named to end in ${suffix}, which is reserved for the directories a repository keeps beside it`
+    );
+  }
+}
+
+/**
+ * Refuse a collection or repository name that matches an existing one apart
+ * from letter case. Two names telling apart only by case are confusing side by
+ * side in every listing, and a vault holding both would not survive a copy to
+ * a case-insensitive filesystem (macOS, Windows) or backup target.
+ * `allowSelf`, on a rename, is the name being moved away from, so a rename
+ * that only changes case is not refused as a collision with itself.
+ */
+function checkCollectionCase(root: string, name: string, allowSelf?: string): void {
+  const clash = collectionCaseClash(root, name);
+  if (clash && clash !== allowSelf) {
+    throw new OpError(`collection ${clash} already exists; names may not differ only in letter case`, 'exists');
+  }
+}
+
+function checkRepoCase(root: string, collection: string, name: string, allowSelf?: string): void {
+  const clash = repoCaseClash(root, collection, name);
+  if (clash && clash !== allowSelf) {
+    throw new OpError(
+      `${collection}/${clash} already exists; names may not differ only in letter case`,
+      'exists'
     );
   }
 }
@@ -143,7 +202,14 @@ export async function createRepo(
 ): Promise<GitRepo> {
   if (!isValidName(collection) || !isValidName(name)) throw new OpError('invalid collection or repository name');
   checkNewCollectionName(collection);
+  checkNewName('collection', collection);
   checkNewRepoName(name);
+  if (findRepo(root, collection, name)) throw new OpError(`${collection}/${name} already exists`, 'exists');
+  // The case check on the collection only matters when this create would bring
+  // the collection into being: a collection that already exists under exactly
+  // this name is simply being added to, whatever else the vault holds.
+  if (!fs.existsSync(collectionDir(root, collection))) checkCollectionCase(root, collection);
+  checkRepoCase(root, collection, name);
   fs.mkdirSync(reposDir(root, collection), { recursive: true });
   const dir = repoPath(root, collection, `${name}.git`);
   await execGit(root, ['init', '--bare', '--initial-branch=main', dir]);
@@ -182,6 +248,7 @@ export async function forkRepo(
     throw new OpError('invalid collection or repository name');
   }
   checkNewCollectionName(toCollection);
+  checkNewName('collection', toCollection);
   checkNewRepoName(toName);
   if (toCollection === collection && toName === name) {
     throw new OpError('a repository cannot be forked onto itself');
@@ -189,6 +256,8 @@ export async function forkRepo(
   if (findRepo(root, toCollection, toName)) {
     throw new OpError(`${toCollection}/${toName} already exists`, 'exists');
   }
+  if (!fs.existsSync(collectionDir(root, toCollection))) checkCollectionCase(root, toCollection);
+  checkRepoCase(root, toCollection, toName);
   fs.mkdirSync(reposDir(root, toCollection), { recursive: true });
   const dir = repoPath(root, toCollection, `${toName}.git`);
   await execGit(root, ['clone', '--bare', source.dir, dir]);
@@ -291,9 +360,14 @@ export async function commitFiles(
   const { branch, files, message, author, expectedHead } = args;
   const removals = args.removals ?? [];
   if (!isValidRefName(branch) || branch.startsWith('-')) throw new OpError('invalid branch name');
+  // A first commit is also the branch coming into being, so the name takes
+  // the same rules explicit branch creation applies.
+  if (expectedHead === null) checkNewRefName('branch', branch);
   if (files.length === 0 && removals.length === 0) throw new OpError('no files to commit');
   for (const file of files) {
-    if (!isValidRepoPath(file.path) || file.path === '') throw new OpError(`invalid file path: ${file.path}`);
+    // The stricter write-side rule: paths only being removed stay on the
+    // permissive one, so whatever the repository already holds can go.
+    if (!isValidNewRepoPath(file.path) || file.path === '') throw new OpError(`invalid file path: ${file.path}`);
   }
   for (const target of removals) {
     if (!isValidRepoPath(target) || target === '') throw new OpError(`invalid file path: ${target}`);
@@ -365,11 +439,17 @@ export async function commitFiles(
 export async function commitFileChange(repoDir: string, args: FileCommitArgs): Promise<string> {
   const { branch, filePath, message, author, expectedHead, action } = args;
   if (!isValidRefName(branch) || branch.startsWith('-')) throw new OpError('invalid branch name');
-  if (!isValidRepoPath(filePath) || filePath === '') throw new OpError('invalid file path');
+  // A first commit is also the branch coming into being; see commitFiles.
+  if (expectedHead === null) checkNewRefName('branch', branch);
+  // A path being created takes the stricter write-side rule; a path that is
+  // only being edited in place or deleted stays on the permissive one, so a
+  // file the repository already holds under an awkward name can still go.
+  const pathCheck = action.kind === 'create' ? isValidNewRepoPath : isValidRepoPath;
+  if (!pathCheck(filePath) || filePath === '') throw new OpError('invalid file path');
   if (expectedHead !== null && !isValidSha(expectedHead)) throw new OpError('invalid expected commit');
 
   const toPath = action.kind === 'edit' && action.toPath && action.toPath !== filePath ? action.toPath : null;
-  if (toPath !== null && !isValidRepoPath(toPath)) throw new OpError('invalid file path');
+  if (toPath !== null && !isValidNewRepoPath(toPath)) throw new OpError('invalid file path');
 
   if (expectedHead !== null) {
     if (action.kind === 'create') {
@@ -579,16 +659,80 @@ async function moveBranch(repoDir: string, branch: string, to: string, from: str
   }
 }
 
+/**
+ * Refuse a name no new branch or tag may carry, saying which rule it broke.
+ * The rules themselves live in isValidNewRefName (src/git.ts); this spells
+ * each refusal out, because "invalid branch name" helps nobody whose name was
+ * refused for being a pseudo-ref or for carrying a pasted refs/ prefix.
+ */
+function checkNewRefName(kind: 'branch' | 'tag', name: string): void {
+  if (isValidNewRefName(name)) return;
+  if (name === 'HEAD' || /^[A-Z_]+_HEAD$/.test(name)) {
+    throw new OpError(`${name} is reserved by git; a ${kind} of that name would be ambiguous on every clone`);
+  }
+  if (name === 'refs' || name.startsWith('refs/')) {
+    throw new OpError(`name the ${kind} without the refs/ prefix`);
+  }
+  if (name.length > 200) {
+    throw new OpError(`a ${kind} name may be at most 200 characters (this one is ${name.length})`);
+  }
+  throw new OpError(`invalid ${kind} name`);
+}
+
+/**
+ * Why creating `refs/<space>/<name>` failed, as an OpError a person can act
+ * on. update-ref fails the same way whether the ref exists or its name
+ * collides with the file/directory shape of another ref (creating `feat` when
+ * `feat/sub` exists, or the reverse), so the two are told apart here rather
+ * than both reported as "already exists".
+ */
+async function refCreateError(
+  repoDir: string,
+  kind: 'branch' | 'tag',
+  space: string,
+  name: string,
+  fallback: unknown
+): Promise<OpError> {
+  if (await refTip(repoDir, `${space}/${name}`)) {
+    return new OpError(`${kind} ${name} already exists`, 'exists');
+  }
+  try {
+    const under = (await execGit(repoDir, ['for-each-ref', '--count=1', '--format=%(refname)', `${space}/${name}/`]))
+      .toString('utf8')
+      .trim();
+    if (under !== '') {
+      const other = under.slice(space.length + 1);
+      return new OpError(
+        `${kind} ${name} conflicts with existing ${kind} ${other}; a ${kind} cannot also name a prefix of another`,
+        'conflict'
+      );
+    }
+    const parts = name.split('/');
+    for (let i = 1; i < parts.length; i++) {
+      const prefix = parts.slice(0, i).join('/');
+      if (await refTip(repoDir, `${space}/${prefix}`)) {
+        return new OpError(
+          `${kind} ${name} conflicts with existing ${kind} ${prefix}; a ${kind} cannot also name a prefix of another`,
+          'conflict'
+        );
+      }
+    }
+  } catch {
+    // Diagnosis is best-effort; the fallback below still names the failure.
+  }
+  return new OpError(`could not create ${kind} ${name}: ${fallback instanceof Error ? fallback.message : fallback}`);
+}
+
 export async function createBranch(repoDir: string, name: string, fromRef: string): Promise<void> {
-  if (!isValidRefName(name) || name.startsWith('-')) throw new OpError('invalid branch name');
+  checkNewRefName('branch', name);
   if (!isValidRefName(fromRef) || fromRef.startsWith('-')) throw new OpError('invalid source ref');
   await execGit(repoDir, ['check-ref-format', `refs/heads/${name}`]);
   const sha = await refTip(repoDir, fromRef);
   if (!sha) throw new OpError(`ref ${fromRef} not found`, 'notfound');
   try {
     await execGit(repoDir, ['update-ref', `refs/heads/${name}`, sha, '']);
-  } catch {
-    throw new OpError(`branch ${name} already exists`, 'exists');
+  } catch (e) {
+    throw await refCreateError(repoDir, 'branch', 'refs/heads', name, e);
   }
 }
 
@@ -601,15 +745,15 @@ export async function deleteBranch(repoDir: string, name: string): Promise<void>
 }
 
 export async function createTag(repoDir: string, name: string, atRef: string): Promise<void> {
-  if (!isValidRefName(name) || name.startsWith('-')) throw new OpError('invalid tag name');
+  checkNewRefName('tag', name);
   if (!isValidRefName(atRef) || atRef.startsWith('-')) throw new OpError('invalid target ref');
   await execGit(repoDir, ['check-ref-format', `refs/tags/${name}`]);
   const sha = await refTip(repoDir, atRef);
   if (!sha) throw new OpError(`ref ${atRef} not found`, 'notfound');
   try {
     await execGit(repoDir, ['update-ref', `refs/tags/${name}`, sha, '']);
-  } catch {
-    throw new OpError(`tag ${name} already exists`, 'exists');
+  } catch (e) {
+    throw await refCreateError(repoDir, 'tag', 'refs/tags', name, e);
   }
 }
 
@@ -639,8 +783,21 @@ export async function setUpstream(repoDir: string, url: string): Promise<void> {
   await execGit(repoDir, ['config', 'mochi.upstream', url]);
 }
 
+/**
+ * The longest description a repository may carry. Descriptions are rendered on
+ * the listing pages, so an unbounded one is a one-field way to swell every
+ * page that names the repository; a few hundred characters is room for a
+ * sentence or two, which is what the field is for.
+ */
+export const MAX_DESCRIPTION_LENGTH = 500;
+
 export function setDescription(repoDir: string, text: string): void {
   const line = text.replace(/\s+/g, ' ').trim();
+  if (line.length > MAX_DESCRIPTION_LENGTH) {
+    throw new OpError(
+      `the description may be at most ${MAX_DESCRIPTION_LENGTH} characters (this one is ${line.length}); longer prose belongs in the README`
+    );
+  }
   writeFileAtomic(path.join(repoDir, 'description'), line === '' ? '' : line + '\n');
 }
 
@@ -710,11 +867,17 @@ export async function renameRepo(
     throw new OpError('invalid collection or repository name');
   }
   checkNewCollectionName(toCollection);
+  checkNewName('collection', toCollection);
   checkNewRepoName(toName);
   if (toCollection === collection && toName === name) throw new OpError('that is already its name', 'nochange');
   if (findRepo(root, toCollection, toName)) {
     throw new OpError(`${toCollection}/${toName} already exists`, 'exists');
   }
+  if (!fs.existsSync(collectionDir(root, toCollection))) checkCollectionCase(root, toCollection);
+  // A rename that only changes the name's case is the repository colliding
+  // with itself, which is allowed; anything else that matches apart from case
+  // is refused.
+  checkRepoCase(root, toCollection, toName, toCollection === collection ? name : undefined);
   const rootReal = fs.realpathSync(root);
   if (!containedIn(rootReal, repo.dir)) {
     throw new OpError('repository directory is outside the vault; refusing to move it');
@@ -783,6 +946,7 @@ export async function renameCollection(
   if (!isValidName(name) || !isValidName(toName) || isDotName(toName)) {
     throw new OpError('invalid collection name');
   }
+  checkNewName('collection', toName);
   const dir = collectionDir(root, name);
   let isDir = false;
   try {
@@ -794,6 +958,9 @@ export async function renameCollection(
   if (toName === name) throw new OpError('that is already its name', 'nochange');
   const dest = collectionDir(root, toName);
   if (fs.existsSync(dest)) throw new OpError(`collection ${toName} already exists`, 'exists');
+  // A rename that only changes the case of this collection's own name is
+  // allowed; a case-variant of any other collection is refused.
+  checkCollectionCase(root, toName, name);
   const rootReal = fs.realpathSync(root);
   if (!containedIn(rootReal, dir)) {
     throw new OpError('collection directory is outside the vault; refusing to move it');
@@ -1023,8 +1190,15 @@ export async function createRepoWithReadme(
   name: string,
   opts: { description?: string; readme?: boolean; private?: boolean; author: CommitAuthor }
 ): Promise<{ repo: GitRepo; sha: string | null }> {
+  const description = (opts.description ?? '').replace(/\s+/g, ' ').trim();
+  // Checked before the repository exists, so a refused description does not
+  // leave a created repository behind the error page.
+  if (description.length > MAX_DESCRIPTION_LENGTH) {
+    throw new OpError(
+      `the description may be at most ${MAX_DESCRIPTION_LENGTH} characters (this one is ${description.length}); longer prose belongs in the README`
+    );
+  }
   const repo = await createRepo(root, collection, name, { private: opts.private });
-  const description = (opts.description ?? '').trim();
   if (description) setDescription(repo.dir, description);
   if (!opts.readme) return { repo, sha: null };
   const sha = await commitFileChange(repo.dir, {

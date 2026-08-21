@@ -4,7 +4,7 @@ import * as zlib from 'zlib';
 import { CiEngine } from './ci/engine';
 import { GitRepo, execGit } from './git';
 import { grantCovers, verifyJobToken } from './jobtoken';
-import { createRepo } from './ops';
+import { OpError, createRepo, opErrorStatus } from './ops';
 import { atLeast, canCreateRepo, canReadRepo, repoIsPrivate, repoRole } from './perms';
 import { displayName, findRepo, isDotName, isValidName, reservedRepoSuffix } from './scan';
 import { AuthLimiter, BUSY_RETRY_SECONDS, Gates } from './limit';
@@ -368,7 +368,18 @@ export function registerGitHttp(app: Express, root: string, gates: Gates, authLi
             res.status(400).type('text/plain').send('collection names may not begin with a dot\n');
             return;
           }
-          repo = await createRepo(root, collectionName, repoName);
+          // The ops layer applies the rest of what a new name must satisfy
+          // (length, case collisions with existing names); its refusal is an
+          // answer for the pusher, not a failure of the server.
+          try {
+            repo = await createRepo(root, collectionName, repoName);
+          } catch (e) {
+            if (e instanceof OpError) {
+              res.status(opErrorStatus(e.kind)).type('text/plain').send(`${e.message}\n`);
+              return;
+            }
+            throw e;
+          }
         }
         await advertise(req, res, 'git-receive-pack', repo.dir);
         return;
@@ -412,7 +423,17 @@ export function registerGitHttp(app: Express, root: string, gates: Gates, authLi
           res.status(400).type('text/plain').send('collection names may not begin with a dot\n');
           return;
         }
-        repo = await createRepo(root, collectionName, repoName);
+        // As in the advertisement above: the ops layer's refusal of a new
+        // name is an answer for the pusher.
+        try {
+          repo = await createRepo(root, collectionName, repoName);
+        } catch (e) {
+          if (e instanceof OpError) {
+            res.status(opErrorStatus(e.kind)).type('text/plain').send(`${e.message}\n`);
+            return;
+          }
+          throw e;
+        }
       }
       const target = repo;
       const actor = auth.username;

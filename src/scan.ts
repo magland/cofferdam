@@ -52,7 +52,42 @@ export function isDotName(name: string): boolean {
  * created, since only a repository may carry one.
  */
 export function isValidUserName(name: string): boolean {
-  return isValidName(name) && !isDotName(name);
+  return isValidName(name) && !isDotName(name) && name.length <= MAX_NAME_LENGTH;
+}
+
+/**
+ * The longest name a collection, repository, or user may be created under.
+ * Far below any filesystem limit on purpose: the interface has to render
+ * these, and the on-disk form carries suffixes (`<name>.git`, `<name>.issues`)
+ * that a name near the 255-byte filename limit would push over it. Enforced
+ * only where a name comes into being; reading stays permissive, so a vault
+ * that somehow holds a longer one still serves it.
+ */
+export const MAX_NAME_LENGTH = 100;
+
+/**
+ * The existing collection whose name matches `name` apart from letter case, or
+ * null when none does (an exact match does not count). Creation refuses such a
+ * near-duplicate: two collections telling apart only by case are confusing in
+ * every listing and cannot coexist on a case-insensitive filesystem, which is
+ * where a vault copied to macOS or Windows would find itself.
+ */
+export function collectionCaseClash(root: string, name: string): string | null {
+  const lower = name.toLowerCase();
+  for (const c of listCollections(root)) {
+    if (c.name !== name && c.name.toLowerCase() === lower) return c.name;
+  }
+  return null;
+}
+
+/** As collectionCaseClash, for a repository name within one collection. */
+export function repoCaseClash(root: string, collection: string, name: string): string | null {
+  const lower = name.toLowerCase();
+  for (const d of listRepoDirs(root, collection)) {
+    const existing = displayName(d);
+    if (existing !== name && existing.toLowerCase() === lower) return existing;
+  }
+  return null;
 }
 
 // The directories a repository accumulates beside its bare repository, by the

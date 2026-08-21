@@ -1,7 +1,7 @@
 import { Express, Response } from 'express';
 import { CiEngine } from '../ci/engine';
 import { firePush } from '../ci/trigger';
-import { isValidRefName, isValidRepoPath } from '../git';
+import { isValidNewRefName, isValidRefName, isValidRepoPath } from '../git';
 import { AuthLimiter } from '../limit';
 import { LfsContext } from '../lfsstore';
 import {
@@ -74,7 +74,7 @@ function writeBody(body: Record<string, unknown>, fallbackMessage: string): Writ
   const branch = stringField(body, 'branch');
   if (branch === null || !isValidRefName(branch)) return '"branch" is required and must be a usable branch name';
   const newBranch = stringField(body, 'newBranch');
-  if (newBranch !== null && !isValidRefName(newBranch)) return '"newBranch" is not a usable branch name';
+  if (newBranch !== null && !isValidNewRefName(newBranch)) return '"newBranch" is not a usable branch name';
   const expectedSha = stringField(body, 'expectedSha');
   return {
     branch,

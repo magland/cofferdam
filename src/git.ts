@@ -119,12 +119,52 @@ export function isValidRefName(ref: string): boolean {
   return true;
 }
 
+/**
+ * Whether a name may become a new branch or tag. Stricter than isValidRefName,
+ * which stays permissive because it also vets names being looked up:
+ *
+ *   - `HEAD` and git's other pseudo-refs (FETCH_HEAD, MERGE_HEAD, ...) resolve
+ *     ahead of any branch or tag of the same name, so a ref that could be
+ *     created under one would be ambiguous everywhere it is typed and warned
+ *     about on every clone.
+ *   - A `refs/` prefix means the caller pasted a full ref name; creating it
+ *     verbatim would silently nest (refs/heads/refs/heads/x).
+ *   - 200 characters keeps the loose-ref file under every common filesystem's
+ *     255-byte name limit, so a too-long name is refused here with a clear
+ *     message rather than failing inside git.
+ *   - A leading dash could read as an option to a git command.
+ */
+export function isValidNewRefName(name: string): boolean {
+  if (!isValidRefName(name) || name.startsWith('-')) return false;
+  if (name.length > 200) return false;
+  if (name === 'HEAD' || /^[A-Z_]+_HEAD$/.test(name)) return false;
+  if (name === 'refs' || name.startsWith('refs/')) return false;
+  return true;
+}
+
 export function isValidRepoPath(p: string): boolean {
   if (p === '') return true;
   // A control character in a path is never meant, and a newline in one would
   // let a later line of a git plumbing command be forged.
   if (p.startsWith('/') || p.endsWith('/') || /[\x00-\x1f]/.test(p)) return false;
   return p.split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..');
+}
+
+/**
+ * Whether a path may be written into a repository. Stricter than
+ * isValidRepoPath, which also vets paths being read and so must keep serving
+ * whatever a repository already holds:
+ *
+ *   - a `.git` component (in any case) is refused, because git itself will
+ *     not take it in a tree and the failure would otherwise surface deep in
+ *     the plumbing rather than as a validation error;
+ *   - a backslash is refused, because a path carrying one cannot be checked
+ *     out on Windows and is almost always a Windows separator pasted whole.
+ */
+export function isValidNewRepoPath(p: string): boolean {
+  if (!isValidRepoPath(p)) return false;
+  if (p.includes('\\')) return false;
+  return p.split('/').every((seg) => seg.toLowerCase() !== '.git');
 }
 
 export function isValidSha(s: string): boolean {
