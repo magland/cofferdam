@@ -333,6 +333,8 @@ check "csrf rejected on POST" 403 -b "$JAR" "$BASE/demo/proj/branches/create" \
 # ---- edit a file ----
 
 check "edit form" 200 -b "$JAR" "$BASE/demo/proj/edit/main/README.md"
+body_has "a markdown file gets the markdown editor" 'data-md-editor'
+body_has "with the preview anchored to the file's branch" 'data-md-ref="main"'
 CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
 [ -n "$EXPECTED" ] || { echo "FAIL: no expected sha on edit form"; exit 1; }
 check "commit edit" 302 -b "$JAR" "$BASE/demo/proj/edit/main/README.md" \
@@ -746,6 +748,25 @@ check "comment on an issue" 302 -b "$JAR" "$BASE/demo/proj/issues/1/comment" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "body=I see it too"
 check "comment shows on the issue" 200 "$BASE/demo/proj/issues/1"
 body_has "comment body" 'I see it too'
+body_lacks "no reply box for the anonymous reader" 'data-md-editor'
+check "the issue page for a signed-in reader" 200 -b "$JAR" "$BASE/demo/proj/issues/1"
+body_has "the reply box is the markdown editor" 'data-md-editor'
+body_has "with Write and Preview tabs" 'data-md-pane="preview"'
+body_has "and a toolbar that writes markdown" 'data-md-act="bold"'
+
+# ---- the markdown preview behind the editor's Preview tab ----
+
+check "anonymous preview is refused" 403 "$BASE/demo/proj/preview" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "text=hi"
+check "csrf is checked on previews" 403 -b "$JAR" "$BASE/demo/proj/preview" \
+  --data-urlencode "csrf=bogus" --data-urlencode "text=hi"
+check "preview renders the draft" 200 -b "$JAR" "$BASE/demo/proj/preview" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "text=some **bold** words about #1"
+body_has "through the same markdown pipeline" '<strong>bold</strong>'
+body_has "with issue references resolved" 'href="/demo/proj/issues/1"'
+check "an empty draft previews as a note, not an error" 200 -b "$JAR" "$BASE/demo/proj/preview" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "text="
+body_has "saying there is nothing to show" 'Nothing to preview'
 check "edit an issue" 302 -b "$JAR" "$BASE/demo/proj/issues/1/edit" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "title=Something is still wrong" \
   --data-urlencode "body=It breaks on startup." --data-urlencode "labels=bug"

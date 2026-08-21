@@ -7,6 +7,7 @@ import { CommitSummary, isValidRefName } from './git';
 import { Html, html, raw } from './html';
 import { icon } from './icons';
 import { renderMarkdown } from './markdown';
+import { markdownEditor, previewUrl } from './mdedit';
 import { OpError, previewMerge, MergePreview } from './ops';
 import * as pulls from './pulls';
 import { Pull, PullSummary } from './pulls';
@@ -239,7 +240,7 @@ function pullPage(
       viewer
     )}
 <div class="issue-comment-head">${avatar(viewer.auth.username, 24)}<b>${viewer.auth.username}</b></div>
-<textarea class="code-editor" name="body" rows="6" placeholder="Leave a comment"></textarea>
+${markdownEditor({ name: 'body', rows: 6, placeholder: 'Leave a comment', preview: previewUrl(ctx) })}
 <div class="actions">${toggle}<button class="btn btn-primary" type="submit">Comment</button></div>
 </form>`;
   } else {
@@ -326,9 +327,15 @@ ${
     pulls.MAX_TITLE
   }" required autofocus></div>
 <div class="field"><label for="body">Description</label>
-<textarea class="code-editor" id="body" name="body" rows="10" placeholder="What this changes, and why. Markdown is welcome.">${
-    values.body
-  }</textarea></div>
+${markdownEditor({
+    name: 'body',
+    id: 'body',
+    rows: 10,
+    placeholder: 'What this changes, and why. Markdown is welcome.',
+    value: values.body,
+    preview: previewUrl(ctx),
+    ref: values.head,
+  })}</div>
 <div class="actions"><button class="btn btn-primary" type="submit">${icon(
     'git-pull-request'
   )}<span>Create pull request</span></button><a class="btn" href="${base}">Cancel</a></div>

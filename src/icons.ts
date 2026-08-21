@@ -91,6 +91,20 @@ const PATHS: Record<string, string> = {
   search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.2 15.2 20.5 20.5"/>',
   link: '<path d="M9.5 14.5 14.5 9.5"/><path d="M10.5 6.6 12.3 4.8a4.5 4.5 0 0 1 6.4 6.4l-1.8 1.8"/><path d="M13.5 17.4 11.7 19.2a4.5 4.5 0 0 1-6.4-6.4l1.8-1.8"/>',
 
+  // The markdown toolbar. Letterforms and list marks, drawn in the same
+  // monoline stroke as everything else rather than borrowed from a text face.
+  heading: '<path d="M5.5 5v14M18.5 5v14M5.5 12h13"/>',
+  bold: '<path d="M7.5 5.5V18.5"/><path d="M7.5 5.5h5.2a3.25 3.25 0 0 1 0 6.5H7.5"/><path d="M7.5 12h6.2a3.25 3.25 0 0 1 0 6.5H7.5"/>',
+  italic: '<path d="M10.5 5.5h7M6.5 18.5h7M14 5.5 10 18.5"/>',
+  strikethrough:
+    '<path d="M4 12h16"/><path d="M16.6 7.4C16 6 14.2 5 12 5 9.5 5 7.6 6.3 7.6 8.2c0 1.4 1 2.3 2.9 2.9"/><path d="M7.4 16.6C8 18 9.8 19 12 19c2.5 0 4.4-1.3 4.4-3.2 0-.6-.2-1.1-.5-1.5"/>',
+  quote: '<path d="M4.5 5.5v13"/><path d="M9.5 7.5h11M9.5 12h8M9.5 16.5h11"/>',
+  'list-unordered': `${DOT(4.5, 6)}${DOT(4.5, 12)}${DOT(4.5, 18)}<path d="M9.5 6h11M9.5 12h11M9.5 18h11"/>`,
+  'list-ordered':
+    '<path d="M4.2 5.6 6.1 4.2V9.5"/><path d="M4.2 15.2a1.9 1.9 0 0 1 3.7.6c0 1.4-3.7 2.2-3.7 4h3.9"/><path d="M11 6.5h9.5M11 17.5h9.5"/>',
+  tasklist:
+    '<rect x="3.5" y="3.5" width="7" height="7" rx="1.8"/><path d="M5.7 7.2 6.9 8.4 8.8 6"/><path d="M14 7h6.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.8"/><path d="M14 17h6.5"/>',
+
   // People.
   person: '<circle cx="12" cy="8" r="3.6"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/>',
   people:

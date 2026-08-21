@@ -2,6 +2,8 @@ import { avatar } from './avatar';
 import { EgressSnapshot } from './egress';
 import { Html, html, joinHtml, raw } from './html';
 import { IconName, icon } from './icons';
+import { isMarkdownFile } from './markdown';
+import { markdownEditor, previewUrl } from './mdedit';
 import { MARK } from './logo';
 import { formatSize, timeTag } from './render';
 import { Viewer } from './session';
@@ -302,12 +304,26 @@ export function editFilePage(
   const action = `${base}/edit/${encPath(ctx.ref)}/${encPath(filePath)}`;
   const cancel = `${base}/blob/${encPath(ctx.ref)}/${encPath(filePath)}`;
   const rows = Math.min(30, Math.max(12, content.split('\n').length + 2));
+  // A markdown file gets the markdown editor's tabs and toolbar around the
+  // same field, with the preview resolving relative links against the file's
+  // own branch and directory; any other file gets the plain editor.
+  const editor = isMarkdownFile(filePath)
+    ? markdownEditor({
+        name: 'content',
+        rows,
+        value: content,
+        codeEditor: true,
+        preview: previewUrl(ctx),
+        ref: ctx.ref,
+        dir: filePath.split('/').slice(0, -1).join('/'),
+      })
+    : html`<textarea class="code-editor" name="content" rows="${rows}" spellcheck="false">${content}</textarea>`;
   const body = html`${repoHeader(ctx, 'code')}
 <h2 class="file-head">Editing <span class="mono">${filePath}</span> on <span class="mono">${ctx.ref}</span></h2>
 ${errorBanner(error)}
 <form method="post" action="${action}">
 <div class="field"><label for="path">Path</label><input type="text" id="path" name="path" value="${filePath}" spellcheck="false"><p class="muted small">Changing it renames or moves the file in the same commit.</p></div>
-<textarea class="code-editor" name="content" rows="${rows}" spellcheck="false">${content}</textarea>
+${editor}
 <div class="commit-box">
 ${commitFields(ctx.viewer!, expectedHead, `Update ${filePath.split('/').pop()}`, ctx.ref)}
 <div class="actions"><button type="submit" class="btn btn-primary">Commit changes</button><a class="btn" href="${cancel}">Cancel</a></div>

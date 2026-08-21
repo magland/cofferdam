@@ -6,6 +6,7 @@ import * as issues from './issues';
 import { Issue, IssueSummary } from './issues';
 import { Html, html, joinHtml, raw } from './html';
 import { renderMarkdown } from './markdown';
+import { markdownEditor, previewUrl } from './mdedit';
 import { OpError } from './ops';
 import { timeTag } from './render';
 import { Viewer, getViewer } from './session';
@@ -273,7 +274,7 @@ function issuePage(ctx: RepoCtx, issue: Issue, canWrite: boolean): string {
       viewer
     )}
 <div class="issue-comment-head">${avatar(viewer.auth.username, 24)}<b>${viewer.auth.username}</b></div>
-<textarea class="code-editor" name="body" rows="6" placeholder="Leave a comment"></textarea>
+${markdownEditor({ name: 'body', rows: 6, placeholder: 'Leave a comment', preview: previewUrl(ctx) })}
 <div class="actions">${toggle}<button class="btn btn-primary" type="submit">Comment</button></div>
 </form>`;
   } else {
@@ -328,7 +329,7 @@ ${error ? html`<div class="form-error">${error}</div>` : ''}
     issues.MAX_TITLE
   }" required autofocus></div>
 <div class="field"><label for="body">Description</label>
-<textarea class="code-editor" id="body" name="body" rows="12" placeholder="Markdown is welcome">${values.body}</textarea></div>
+${markdownEditor({ name: 'body', id: 'body', rows: 12, placeholder: 'Markdown is welcome', value: values.body, preview: previewUrl(ctx) })}</div>
 ${
   ctx.canPush
     ? html`<div class="field"><label for="labels">Labels</label>

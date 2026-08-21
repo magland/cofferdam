@@ -75,6 +75,7 @@ import {
   wildcard,
 } from './web';
 import { isBinary } from './render';
+import { renderMarkdown } from './markdown';
 import { boundaryOf, parseMultipart, partField, partFiles } from './multipart';
 
 function urlOf(repo: { collection: string; name: string }): string {
@@ -594,6 +595,45 @@ export function registerWebOps(
     }
     throw e;
   }
+
+  // The markdown editor's Preview tab posts a draft here and gets it back
+  // rendered. The route is repo-scoped so relative links, `#12`, and commit
+  // ids resolve exactly as they will on the saved page, and it sits behind the
+  // same session and CSRF check as the write being drafted: the renderer
+  // sanitizes what it is given, but there is no reason to render for anyone
+  // who could not save.
+  app.post(
+    '/:collection/:repo/preview',
+    form,
+    ah(async (req, res) => {
+      const viewer = requireViewerPost(root, req, res);
+      if (!viewer) return;
+      const loaded = await loadRepo(root, req, res, viewer);
+      if (!loaded) return;
+      const ctx = await makeCtx(root, req, loaded, loaded.defaultBranch ?? '', viewer);
+      const text = field(req, 'text');
+      // The ref and directory are the draft's claim about where it sits: an
+      // unknown ref falls back to the default branch, and a directory is only
+      // honoured when it is a plain relative path.
+      const asked = field(req, 'ref');
+      const ref = asked !== '' && loaded.refNames.includes(asked) ? asked : ctx.defaultBranch || ctx.ref || 'HEAD';
+      const dirAsked = field(req, 'dir');
+      const dir =
+        dirAsked !== '' && dirAsked.split('/').every((s) => s !== '' && s !== '.' && s !== '..') ? dirAsked : '';
+      const base = urlOf(loaded.repo);
+      const at = (kind: string) => `${base}/${kind}/${encPath(ref)}${dir === '' ? '' : `/${encPath(dir)}`}`;
+      const rendered =
+        text.trim() === ''
+          ? '<p class="muted">Nothing to preview.</p>'
+          : renderMarkdown(text, {
+              rawBase: at('raw'),
+              blobBase: at('blob'),
+              issueBase: `${base}/issues`,
+              commitBase: `${base}/commit`,
+            });
+      res.type('html').send(rendered);
+    })
+  );
 
   app.get(
     '/:collection/:repo/edit/*',

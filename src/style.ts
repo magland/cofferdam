@@ -1072,6 +1072,43 @@ table.listing.issues td.issue-cell > span { min-width: 0; }
 .issue-reply textarea { border: none; border-radius: 0; }
 .issue-reply .actions { padding: 10px 12px; justify-content: flex-end; border-top: 1px solid var(--border); }
 
+/* --- the markdown editor: Write and Preview tabs over the field, and a
+   toolbar that writes markdown into it. The tabs read as file tabs into the
+   writing surface, which is why the current one shares its background and
+   sits on the head's border. --- */
+.md-editor { border: 1px solid var(--border); border-radius: var(--radius); background: var(--input-bg); }
+.md-editor:focus-within { outline: 2px solid var(--focus); border-color: var(--accent); }
+.md-head {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+  padding: 6px 8px 0; background: var(--surface); border-bottom: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.md-tabs { display: flex; gap: 2px; }
+.md-tab {
+  border: 1px solid transparent; border-bottom: none; background: none; padding: 6px 12px;
+  font: inherit; font-size: 13px; color: var(--fg-muted); cursor: pointer;
+  border-radius: var(--radius) var(--radius) 0 0; margin-bottom: -1px;
+}
+.md-tab:hover { color: var(--fg); }
+.md-tab.current { background: var(--input-bg); border-color: var(--border); color: var(--fg); font-weight: 600; }
+.md-toolbar { display: flex; align-items: center; gap: 8px; padding-bottom: 6px; flex-wrap: wrap; }
+.md-group { display: flex; }
+.md-group + .md-group { border-left: 1px solid var(--border); padding-left: 8px; }
+.md-btn {
+  display: inline-flex; align-items: center; justify-content: center; border: none; background: none;
+  padding: 4px 5px; border-radius: var(--radius); color: var(--fg-muted); cursor: pointer;
+}
+.md-btn:hover { background: var(--surface-hover); color: var(--fg); }
+/* Previewing: the buttons would edit a field that is not on screen. */
+.md-editor.previewing .md-toolbar { visibility: hidden; }
+.md-editor textarea { border: none; border-radius: 0 0 var(--radius) var(--radius); display: block; }
+.md-editor textarea[hidden] { display: none; }
+.md-editor textarea:focus { outline: none; }
+.md-render { padding: 12px; overflow-x: auto; }
+/* Inside a reply card the editor sits borderless: the card is the border. */
+.issue-reply .md-editor, .issue-reply .md-editor:focus-within { border: none; outline: none; border-radius: 0; }
+.issue-reply .md-head { border-radius: 0; }
+
 /* --- releases: notes attached to a tag --- */
 .release { display: flex; gap: 24px; align-items: flex-start; padding: 20px 0; border-top: 1px solid var(--border-soft); }
 .release:first-of-type { border-top: none; }

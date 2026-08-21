@@ -345,6 +345,10 @@ document.addEventListener('click', function (e) {
   if (lines) { copyLines(lines); return; }
   var select = closestOf(t, '[data-select-all]');
   if (select) { select.select(); return; }
+  var mdTab = closestOf(t, '[data-md-pane]');
+  if (mdTab) { mdPane(mdEditorOf(mdTab), mdTab.getAttribute('data-md-pane')); return; }
+  var mdBtn = closestOf(t, '[data-md-act]');
+  if (mdBtn) { mdAct(mdEditorOf(mdBtn), mdBtn.getAttribute('data-md-act')); return; }
 });
 
 document.addEventListener('input', function (e) {
@@ -367,6 +371,14 @@ document.addEventListener('keydown', function (e) {
   if (!el || !el.matches) return;
   if (el.id === 'jump-q') { jumpKey(e); return; }
   if (el.matches('.find-input')) { findKey(e, el); return; }
+  // The formatting shortcuts, only inside a markdown editor's field: the same
+  // four GitHub answers to, so hands need not relearn anything.
+  if (el.tagName === 'TEXTAREA' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+    var ed = mdEditorOf(el);
+    if (!ed) return;
+    var act = { b: 'bold', i: 'italic', k: 'link', e: 'code' }[String(e.key).toLowerCase()];
+    if (act) { e.preventDefault(); mdAct(ed, act); }
+  }
 });
 
 // mouseenter does not bubble, so the jump list is followed with mouseover,
@@ -398,26 +410,164 @@ function pickWorkflow(sel) {
   }
 }
 
-// The editor: Tab indents rather than leaving the field, since code is what is
-// being typed (Shift-Tab still moves focus out, so the keyboard is not
-// trapped), and navigating away from an edited buffer asks first. Committing
-// does not ask; submitting is the point.
+// ---- the markdown editor ----
+//
+// The toolbar writes markdown into the textarea rather than styling anything:
+// what is stored is what was typed. Every button is a toggle where a toggle
+// makes sense (bold twice is plain again), and the Preview tab shows the draft
+// through the same renderer the saved page will use, fetched from the
+// repository's own preview endpoint so relative links, #12, and commit ids
+// resolve as they will when saved.
+
+function mdEditorOf(el) { return closestOf(el, '[data-md-editor]'); }
+
+// Replace [start, end) with text, leave [selStart, selEnd) selected, and keep
+// the field focused so the next keystroke lands where the edit did.
+function mdSet(input, start, end, text, selStart, selEnd) {
+  input.focus();
+  input.setRangeText(text, start, end, 'preserve');
+  input.setSelectionRange(selStart, selEnd);
+}
+
+// Wrap the selection in the marks, or take them off again when they are
+// already there, inside the selection or just around it.
+function mdSurround(input, before, after, placeholder) {
+  var s = input.selectionStart, e = input.selectionEnd, v = input.value;
+  var sel = v.slice(s, e);
+  if (sel.length >= before.length + after.length &&
+      sel.slice(0, before.length) === before && sel.slice(sel.length - after.length) === after) {
+    var inner = sel.slice(before.length, sel.length - after.length);
+    mdSet(input, s, e, inner, s, s + inner.length);
+    return;
+  }
+  if (s >= before.length && v.slice(s - before.length, s) === before && v.slice(e, e + after.length) === after) {
+    mdSet(input, s - before.length, e + after.length, sel, s - before.length, s - before.length + sel.length);
+    return;
+  }
+  var body = sel || placeholder || '';
+  mdSet(input, s, e, before + body + after, s + before.length, s + before.length + body.length);
+}
+
+// The whole lines the selection touches, and where they sit in the value.
+function mdLines(input) {
+  var v = input.value;
+  var s = v.lastIndexOf('\\n', input.selectionStart - 1) + 1;
+  var e = v.indexOf('\\n', input.selectionEnd);
+  if (e === -1) e = v.length;
+  return { start: s, end: e, lines: v.slice(s, e).split('\\n') };
+}
+
+// Prefix each selected line, or strip the prefix when every line has one
+// already; blank lines between prefixed ones are passed over.
+function mdPrefix(input, make, strip) {
+  var r = mdLines(input);
+  var on = r.lines.every(function (l) { return l === '' || strip.test(l); });
+  var out = [];
+  for (var i = 0; i < r.lines.length; i++) {
+    var l = r.lines[i];
+    out.push(on ? l.replace(strip, '') : (l === '' && r.lines.length > 1 ? l : make(i) + l));
+  }
+  var text = out.join('\\n');
+  mdSet(input, r.start, r.end, text, r.start, r.start + text.length);
+}
+
+// A link: a selected URL becomes the target with the cursor in the text, and
+// anything else becomes the text with the url placeholder selected.
+function mdLink(input) {
+  var s = input.selectionStart, e = input.selectionEnd;
+  var sel = input.value.slice(s, e);
+  if (/^https?:\\/\\/\\S+$/.test(sel)) {
+    mdSet(input, s, e, '[](' + sel + ')', s + 1, s + 1);
+  } else {
+    var body = sel || 'link text';
+    mdSet(input, s, e, '[' + body + '](url)', s + body.length + 3, s + body.length + 6);
+  }
+}
+
+function mdAct(ed, act) {
+  var input = ed && ed.querySelector('textarea');
+  if (!input || input.hidden) return;
+  if (act === 'bold') return mdSurround(input, '**', '**', 'bold text');
+  if (act === 'italic') return mdSurround(input, '_', '_', 'italic text');
+  if (act === 'strike') return mdSurround(input, '~~', '~~', 'struck text');
+  if (act === 'link') return mdLink(input);
+  if (act === 'code') {
+    var sel = input.value.slice(input.selectionStart, input.selectionEnd);
+    if (sel.indexOf('\\n') !== -1) return mdSurround(input, '\`\`\`\\n', '\\n\`\`\`', '');
+    return mdSurround(input, '\`', '\`', 'code');
+  }
+  if (act === 'heading') return mdPrefix(input, function () { return '### '; }, /^#{1,6} /);
+  if (act === 'quote') return mdPrefix(input, function () { return '> '; }, /^> /);
+  if (act === 'ul') return mdPrefix(input, function () { return '- '; }, /^[-*] (?!\\[[ xX]\\] )/);
+  if (act === 'ol') return mdPrefix(input, function (i) { return (i + 1) + '. '; }, /^\\d+\\. /);
+  if (act === 'task') return mdPrefix(input, function () { return '- [ ] '; }, /^[-*] \\[[ xX]\\] /);
+}
+
+// The tabs. Write is the field back; Preview posts the draft, with the CSRF
+// value of the form it sits in, and shows what came back. The height of the
+// field is kept so the page does not jump, and an unchanged draft is not
+// posted again.
+function mdPane(ed, pane) {
+  var input = ed.querySelector('textarea');
+  var render = ed.querySelector('.md-render');
+  var tabs = ed.querySelectorAll('[data-md-pane]');
+  for (var i = 0; i < tabs.length; i++) {
+    var on = tabs[i].getAttribute('data-md-pane') === pane;
+    tabs[i].classList[on ? 'add' : 'remove']('current');
+    tabs[i].setAttribute('aria-selected', String(on));
+  }
+  var previewing = pane === 'preview';
+  ed.classList[previewing ? 'add' : 'remove']('previewing');
+  input.hidden = previewing;
+  render.hidden = !previewing;
+  if (!previewing) { input.focus(); return; }
+  render.style.minHeight = input.offsetHeight + 'px';
+  if (ed.mdShown === input.value) return;
+  render.innerHTML = '<p class="muted">Rendering\\u2026</p>';
+  var form = closestOf(ed, 'form');
+  var csrf = form && form.querySelector('input[name=csrf]');
+  var params = new URLSearchParams();
+  params.set('csrf', csrf ? csrf.value : '');
+  params.set('text', input.value);
+  params.set('ref', ed.getAttribute('data-md-ref') || '');
+  params.set('dir', ed.getAttribute('data-md-dir') || '');
+  fetch(ed.getAttribute('data-md-preview'), { method: 'POST', body: params })
+    .then(function (r) { if (!r.ok) throw new Error('preview ' + r.status); return r.text(); })
+    .then(function (h) { ed.mdShown = input.value; render.innerHTML = h; })
+    .catch(function () { render.innerHTML = '<p class="muted">The preview could not be rendered. The draft is untouched.</p>'; });
+}
+
+// The editors: in one of the code kind, Tab indents rather than leaving the
+// field, since code is what is being typed (Shift-Tab still moves focus out,
+// so the keyboard is not trapped). Navigating away from any edited buffer asks
+// first; committing does not ask, since submitting is the point.
 document.addEventListener('DOMContentLoaded', function () {
-  var ta = document.querySelector('textarea.code-editor');
-  if (!ta) return;
-  var form = ta.closest('form');
-  var initial = ta.value;
+  var tas = document.querySelectorAll('textarea.code-editor, [data-md-editor] textarea');
+  if (!tas.length) return;
+  var initial = [];
   var submitted = false;
-  if (form) form.addEventListener('submit', function () { submitted = true; });
+  function watch(ta) {
+    initial.push(ta.value);
+    var form = ta.closest('form');
+    if (form && !form.mdWatched) {
+      form.mdWatched = true;
+      form.addEventListener('submit', function () { submitted = true; });
+    }
+    if (!ta.classList.contains('code-editor')) return;
+    ta.addEventListener('keydown', function (e) {
+      if (e.key !== 'Tab' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+      e.preventDefault();
+      ta.setRangeText('  ', ta.selectionStart, ta.selectionEnd, 'end');
+    });
+  }
+  for (var i = 0; i < tas.length; i++) watch(tas[i]);
   window.addEventListener('beforeunload', function (e) {
-    if (submitted || ta.value === initial) return;
+    if (submitted) return;
+    var dirty = false;
+    for (var i = 0; i < tas.length; i++) if (tas[i].value !== initial[i]) dirty = true;
+    if (!dirty) return;
     e.preventDefault();
     e.returnValue = '';
-  });
-  ta.addEventListener('keydown', function (e) {
-    if (e.key !== 'Tab' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
-    e.preventDefault();
-    ta.setRangeText('  ', ta.selectionStart, ta.selectionEnd, 'end');
   });
 });
 

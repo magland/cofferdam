@@ -8,6 +8,7 @@ import { RefInfo, isValidRefName } from './git';
 import { Html, html, joinHtml, raw } from './html';
 import { icon } from './icons';
 import { renderMarkdown } from './markdown';
+import { markdownEditor, previewUrl } from './mdedit';
 import { timeTag } from './render';
 import { Viewer, checkCsrf, getViewer } from './session';
 import { repoPath } from './layout';
@@ -275,9 +276,14 @@ ${
 <div class="field"><label for="name">Title</label>
 <input type="text" id="name" name="name" maxlength="${MAX_NAME}" value="${editing?.name ?? ''}" placeholder="Leave empty to use the tag name"></div>
 <div class="field"><label for="body">Notes</label>
-<textarea class="code-editor" id="body" name="body" rows="16" placeholder="What changed, and what it means for anyone upgrading. Markdown.">${
-    editing?.body ?? ''
-  }</textarea></div>
+${markdownEditor({
+    name: 'body',
+    id: 'body',
+    rows: 16,
+    placeholder: 'What changed, and what it means for anyone upgrading. Markdown.',
+    value: editing?.body ?? '',
+    preview: previewUrl(ctx),
+  })}</div>
 <div class="field"><label class="checkbox"><input type="checkbox" name="prerelease" value="1"${
     editing?.prerelease ? raw(' checked') : ''
   }> This is a pre-release</label></div>
