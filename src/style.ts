@@ -105,6 +105,13 @@ code, pre, .mono { font-family: var(--font-mono); }
 .topbar .crumbs a { color: var(--fg-muted); }
 .topbar .crumbs a:hover { color: var(--accent); }
 .userbox { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+/* A square glyph button in the bar, the size the appearance menu's summary is,
+   so the icons beside the account sit on one rhythm. */
+.topbar-icon {
+  display: flex; align-items: center; justify-content: center;
+  width: var(--touch); height: var(--touch); border-radius: var(--radius); color: var(--fg-muted);
+}
+.topbar-icon:hover { background: var(--surface-hover); color: var(--fg); text-decoration: none; }
 .user-menu > summary { display: flex; align-items: center; gap: 2px; }
 .user-menu .dropdown-menu { width: 220px; }
 .user-menu form { margin: 0; }

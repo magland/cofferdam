@@ -45,6 +45,7 @@ const PATHS: Record<string, string> = {
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 6.8V12L15.6 14.1"/>',
   sync: '<path d="M12 3.5a8.5 8.5 0 1 1-8.5 8.5"/><path d="M1.9 14.6 3.5 12 5.1 14.6"/>',
   kebab: `${DOT(5, 12)}${DOT(12, 12)}${DOT(19, 12)}`,
+  info: `<circle cx="12" cy="12" r="9"/>${DOT(12, 7.8, 1.2)}<path d="M12 11.2V16.6"/>`,
 
   // Repositories and their contents.
   repo: '<rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M8.5 3V21"/>',
