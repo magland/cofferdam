@@ -76,11 +76,11 @@ No database, no state outside the directory. Backup is `cp -a`, migration is `rs
 
 ## Using a vault from Claude Code
 
-[mochi-skill](https://github.com/magland/mochi-skill) teaches an agent this CLI the way it already knows `gh`.
+[mochiforge-skill](https://github.com/magland/mochiforge-skill) teaches an agent this CLI the way it already knows `gh`.
 
 ```
-/plugin marketplace add magland/mochi-skill
-/plugin install mochi@mochi-skill
+/plugin marketplace add magland/mochiforge-skill
+/plugin install mochi@mochiforge-skill
 ```
 
 The agent needs `mochi` on its PATH and either `MOCHI_HOST`/`MOCHI_TOKEN` or a completed `mochi login`.
