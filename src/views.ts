@@ -6,6 +6,7 @@ import { Viewer, viewerIsAdmin } from './session';
 import { styleSheet } from './assets';
 import { pageScript } from './pagescript';
 import { ageScript } from './agescript';
+import { isAgeFile } from './agefile';
 import { THEMES, activeTheme, darkFor } from './themes';
 import { WORDMARK } from './logo';
 import { IconName, icon } from './icons';
@@ -85,7 +86,11 @@ export function csrfField(viewer: Viewer): Html {
 
 const FOLDER_ICON = icon('folder', 'icon');
 const FILE_ICON = icon('file', 'icon file');
+// An age-encrypted file wears the lock wherever files are listed, so what is
+// encrypted can be seen without opening anything.
+const AGE_ICON = icon('lock', 'icon file');
 const REPO_ICON = icon('repo', 'icon');
+const fileIcon = (name: string): Html => (isAgeFile(name) ? AGE_ICON : FILE_ICON);
 
 function userBox(opts: PageOpts): Html {
   const viewer = opts.viewer ?? null;
@@ -292,6 +297,30 @@ export function copyButton(label = '', text?: string, title = ''): Html {
 
 export function copyRow(cmd: string): Html {
   return html`<div class="cmd-row"><code>${cmd}</code>${copyButton()}</div>`;
+}
+
+/**
+ * A passphrase input wrapped with a show/hide toggle. The input never carries
+ * a name, so no form can ever post its value; /assets/age.js wires the
+ * toggle, and both eye glyphs are drawn here so the script draws nothing.
+ * With an `id` the field is labelled by its <label>; without one it carries
+ * its placeholder as the accessible name.
+ */
+export function agePassInput(opts: {
+  id?: string;
+  placeholder?: string;
+  autocomplete: 'off' | 'new-password';
+  required?: boolean;
+}): Html {
+  const label = opts.placeholder ?? 'Passphrase';
+  return html`<span class="age-pass-wrap"><input type="password"${opts.id ? html` id="${opts.id}"` : ''}${
+    opts.placeholder ? html` placeholder="${opts.placeholder}"` : ''
+  }${opts.id ? '' : html` aria-label="${label}"`} autocomplete="${opts.autocomplete}" spellcheck="false"${
+    opts.required ? raw(' required') : ''
+  }><button type="button" class="age-eye" aria-label="Show the passphrase" aria-pressed="false">${icon(
+    'eye',
+    'glyph-eye'
+  )}${icon('eye-off', 'glyph-eye-off')}</button></span>`;
 }
 
 /**
@@ -793,7 +822,7 @@ export function treePage(ctx: RepoCtx, view: TreeView): string {
     if (e.type === 'tree') {
       name = html`${FOLDER_ICON}<a href="${refBase}/${encPath(childPath)}">${e.name}</a>`;
     } else if (e.type === 'blob') {
-      name = html`${FILE_ICON}<a href="${base}/blob/${encPath(ctx.ref)}/${encPath(childPath)}">${e.name}</a>`;
+      name = html`${fileIcon(e.name)}<a href="${base}/blob/${encPath(ctx.ref)}/${encPath(childPath)}">${e.name}</a>`;
     } else {
       name = html`${FOLDER_ICON}<span>${e.name}</span> <span class="muted small mono">@ ${e.sha.slice(0, 7)}</span>`;
     }
@@ -981,7 +1010,7 @@ export function findFilePage(ctx: RepoCtx, paths: string[], total: number): stri
   const items = paths.map((p) => {
     const cut = p.lastIndexOf('/');
     const dir = cut === -1 ? '' : html`<span class="muted">${p.slice(0, cut + 1)}</span>`;
-    return html`<a class="find-item" href="${base}/blob/${encPath(ctx.ref)}/${encPath(p)}">${FILE_ICON}<span>${dir}${p.slice(
+    return html`<a class="find-item" href="${base}/blob/${encPath(ctx.ref)}/${encPath(p)}">${fileIcon(p)}<span>${dir}${p.slice(
       cut + 1
     )}</span></a>`;
   });
@@ -1090,16 +1119,25 @@ export function blobPage(
     // The card is inert markup; /assets/age.js (loaded by this page alone)
     // wires the form, fetches the ciphertext from the raw URL, and decrypts
     // in the page. The passphrase inputs never carry a name, so no form
-    // mishap can post one.
+    // mishap can post one. On unlock the card gives way to a slim bar over
+    // the output: what happened, a copy of the exact plaintext, and the lock
+    // that puts the card back.
     body = html`${meta(formatSize(view.size))}
 <div class="age-box" data-age-view data-age-raw="${rawUrl}" data-age-inner="${view.markdownInner ? 'markdown' : 'text'}">
 <div class="blob-binary age-card">
 <p class="age-head">${icon('lock')}<b>Encrypted with age</b></p>
 <p class="muted small">The vault stores this file as ciphertext it cannot read. The passphrase decrypts it here, in this page, and is sent nowhere.</p>
-<form class="age-unlock"><input type="password" placeholder="Passphrase" aria-label="Passphrase" autocomplete="off" required><button type="submit" class="btn btn-primary">Decrypt</button></form>
+<form class="age-unlock">${agePassInput({ placeholder: 'Passphrase', autocomplete: 'off', required: true })}<button type="submit" class="btn btn-primary" data-busy-label="Decrypting&hellip;">Decrypt</button></form>
 <p class="age-error form-error" hidden></p>
-<button type="button" class="btn" data-age-lock hidden>${icon('lock')}<span>Lock again</span></button>
 <noscript><p class="muted small">Decrypting in the browser needs JavaScript. Without it, take the raw file and the age CLI.</p></noscript>
+</div>
+<div class="age-bar" data-age-bar hidden>
+<span class="age-bar-note">${icon('lock')}<span>Decrypted in your browser; the vault still holds only the ciphertext.</span></span>
+<span class="age-bar-actions"><button type="button" class="btn" data-age-copy title="Copy the decrypted text"><span class="copy-idle">${icon(
+      'copy'
+    )}<span>Copy</span></span><span class="copy-done">${icon('check')}<span>Copied</span></span></button><button type="button" class="btn" data-age-lock title="Clear the plaintext from the page">${icon(
+      'lock'
+    )}<span>Lock</span></button></span>
 </div>
 <div class="age-output" hidden></div>
 </div>`;

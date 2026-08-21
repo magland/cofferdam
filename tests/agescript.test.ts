@@ -14,7 +14,7 @@ import { looksLikeAge } from '../src/agefile';
 /** Load the script with a window for the bundle and a document for the glue. */
 function load(): Record<string, any> {
   const win: Record<string, unknown> = {};
-  const doc = { querySelector: () => null };
+  const doc = { querySelector: () => null, querySelectorAll: () => [] };
   new Function('window', 'document', 'self', ageScript().body)(win, doc, win);
   return win;
 }

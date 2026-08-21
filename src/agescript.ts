@@ -76,9 +76,58 @@ const GLUE_JS = `
     if (msg) { el.textContent = msg; el.hidden = false; } else { el.hidden = true; }
   }
 
+  // A working button says so. The scrypt derivation takes long enough to feel,
+  // so while it runs the button shows the busy label the server put on it
+  // ('Decrypting...', 'Encrypting...') rather than reading as a dead click.
+  function setBtnBusy(btn, busy) {
+    if (!btn) return;
+    btn.disabled = busy;
+    var label = btn.getAttribute('data-busy-label');
+    if (!label) return;
+    if (busy) {
+      if (!btn.getAttribute('data-idle-label')) btn.setAttribute('data-idle-label', btn.textContent);
+      btn.textContent = label;
+    } else if (btn.getAttribute('data-idle-label')) {
+      btn.textContent = btn.getAttribute('data-idle-label');
+    }
+  }
+
   function setBusy(box, busy) {
-    var btn = box.querySelector('.age-unlock button');
-    if (btn) btn.disabled = busy;
+    setBtnBusy(box.querySelector('.age-unlock button[type=submit]'), busy);
+  }
+
+  // A failed passphrase leaves the input focused and selected, so the retry
+  // is a retype rather than a clear-then-retype.
+  function failedPass(input) { input.focus(); input.select(); }
+
+  // Every passphrase input arrives wrapped with a show/hide toggle (the
+  // .age-eye button the server renders beside it). Only the input's type
+  // flips; the value still never carries a name, so it still cannot post.
+  function wireEyes() {
+    var wraps = document.querySelectorAll('.age-pass-wrap');
+    for (var i = 0; i < wraps.length; i++) (function (wrap) {
+      var input = wrap.querySelector('input');
+      var btn = wrap.querySelector('.age-eye');
+      if (!input || !btn) return;
+      btn.addEventListener('click', function () {
+        var show = input.type === 'password';
+        input.type = show ? 'text' : 'password';
+        wrap.classList.toggle('showing', show);
+        btn.setAttribute('aria-pressed', show ? 'true' : 'false');
+        btn.setAttribute('aria-label', show ? 'Hide the passphrase' : 'Show the passphrase');
+        input.focus();
+      });
+    })(wraps[i]);
+  }
+
+  // The plaintext to copy comes from the closure, not from the DOM, so it is
+  // exact bytes even where the output was rendered as a markdown document.
+  function copyPlain(btn, text) {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) return;
+    navigator.clipboard.writeText(text).then(function () {
+      btn.classList.add('copied');
+      setTimeout(function () { btn.classList.remove('copied'); }, 1400);
+    }, function () {});
   }
 
   // ---- the blob page ----
@@ -103,33 +152,46 @@ const GLUE_JS = `
     out.hidden = false;
   }
 
+  // On unlock the explanatory card gives way to a slim bar over the output:
+  // a note that the decryption stayed in the page, a copy of the exact
+  // plaintext, and the lock that puts the card back. Locking drops the
+  // plaintext from the closure as well as from the DOM.
   function wireView(box) {
     var form = box.querySelector('form.age-unlock');
-    var pass = box.querySelector('input[type=password]');
+    var pass = form ? form.querySelector('input') : null;
     var out = box.querySelector('.age-output');
+    var card = box.querySelector('.age-card');
+    var bar = box.querySelector('[data-age-bar]');
     var lock = box.querySelector('[data-age-lock]');
-    if (!form || !pass || !out) return;
+    var copy = box.querySelector('[data-age-copy]');
+    if (!form || !pass || !out || !card) return;
+    var plain = null;
     form.addEventListener('submit', function (ev) {
       ev.preventDefault();
-      setError(box, null);
-      setBusy(box, true);
+      setError(card, null);
+      setBusy(card, true);
       fetchCiphertext(box.getAttribute('data-age-raw'))
         .then(function (bytes) { return decryptText(bytes, pass.value); })
         .then(function (text) {
+          plain = text;
           pass.value = '';
           renderPlain(out, box.getAttribute('data-age-inner'), text);
-          form.hidden = true;
-          if (lock) lock.hidden = false;
+          card.hidden = true;
+          if (bar) bar.hidden = false;
         })
-        .catch(function (err) { setError(box, explain(err)); })
-        .then(function () { setBusy(box, false); });
+        .catch(function (err) { setError(card, explain(err)); failedPass(pass); })
+        .then(function () { setBusy(card, false); });
     });
     if (lock) lock.addEventListener('click', function () {
+      plain = null;
       out.textContent = '';
       out.hidden = true;
-      lock.hidden = true;
-      form.hidden = false;
+      if (bar) bar.hidden = true;
+      card.hidden = false;
       pass.focus();
+    });
+    if (copy) copy.addEventListener('click', function () {
+      if (plain !== null) copyPlain(copy, plain);
     });
     pass.focus();
   }
@@ -141,19 +203,25 @@ const GLUE_JS = `
   // editor and the passphrase stays in this closure for the re-encryption at
   // commit time. The textarea carries no name; what the form posts is the
   // hidden content field, written at the last moment with fresh ciphertext.
+  // An optional pair of new-passphrase inputs (also nameless) re-keys the
+  // file: filled and matching, the commit encrypts with the new passphrase.
   function wireEdit(form) {
     var passForm = document.querySelector('form.age-unlock[data-age-for-edit]');
-    var passInput = passForm ? passForm.querySelector('input[type=password]') : null;
+    var passInput = passForm ? passForm.querySelector('input') : null;
+    var card = passForm ? passForm.closest('.age-card') : null;
     var editor = form.querySelector('textarea.code-editor');
     var content = form.querySelector('input[name=content]');
     var commitBtn = form.querySelector('button[type=submit]');
-    if (!passForm || !passInput || !editor || !content || !commitBtn) return;
+    var path = form.querySelector('input[name=path]');
+    var renameWarn = form.querySelector('[data-age-rename-warn]');
+    var newPass = form.querySelectorAll('.age-newpass input');
+    if (!passForm || !passInput || !card || !editor || !content || !commitBtn) return;
     var passphrase = null;
     var readyToPost = false;
     passForm.addEventListener('submit', function (ev) {
       ev.preventDefault();
-      setError(passForm, null);
-      setBusy(passForm, true);
+      setError(card, null);
+      setBusy(card, true);
       var pass = passInput.value;
       fetchCiphertext(form.getAttribute('data-age-raw'))
         .then(function (bytes) { return decryptText(bytes, pass); })
@@ -163,26 +231,42 @@ const GLUE_JS = `
           editor.value = text;
           editor.disabled = false;
           commitBtn.disabled = false;
-          passForm.hidden = true;
+          card.hidden = true;
           form.hidden = false;
           editor.focus();
         })
-        .catch(function (err) { setError(passForm, explain(err)); })
-        .then(function () { setBusy(passForm, false); });
+        .catch(function (err) { setError(card, explain(err)); failedPass(passInput); })
+        .then(function () { setBusy(card, false); });
+    });
+    // Renaming away from .age is legal but almost never meant: the commit
+    // would still be ciphertext, under a name the vault reads as plain text.
+    // The warning appears as the name changes, not as a surprise afterwards.
+    if (path && renameWarn) path.addEventListener('input', function () {
+      renameWarn.hidden = /\\.age$/i.test(path.value.trim());
     });
     form.addEventListener('submit', function (ev) {
       if (readyToPost) return;
       ev.preventDefault();
       if (passphrase === null) return;
-      commitBtn.disabled = true;
-      encryptArmored(editor.value, passphrase)
+      var usePass = passphrase;
+      if (newPass.length === 2 && (newPass[0].value !== '' || newPass[1].value !== '')) {
+        if (newPass[0].value !== newPass[1].value) {
+          setError(form, 'The new passphrases do not match.');
+          failedPass(newPass[1]);
+          return;
+        }
+        usePass = newPass[0].value;
+      }
+      setError(form, null);
+      setBtnBusy(commitBtn, true);
+      encryptArmored(editor.value, usePass)
         .then(function (armored) {
           content.value = armored;
           readyToPost = true;
           form.submit();
         })
         .catch(function (err) {
-          commitBtn.disabled = false;
+          setBtnBusy(commitBtn, false);
           setError(form, explain(err));
         });
     });
@@ -192,28 +276,35 @@ const GLUE_JS = `
   // ---- the new-file form ----
 
   // The form is the ordinary one; a file name ending in .age reveals the
-  // passphrase pair and switches the commit to encrypt-then-post. The
-  // passphrase inputs carry no name, so they can never be posted, and the
-  // server refuses a .age path whose content is not age-shaped, so a page
-  // where this script failed cannot commit plaintext under the name.
+  // passphrase pair (and retires the hint that said so) and switches the
+  // commit to encrypt-then-post. The passphrase inputs carry no name, so
+  // they can never be posted, and the server refuses a .age path whose
+  // content is not age-shaped, so a page where this script failed cannot
+  // commit plaintext under the name.
   function wireNew(form) {
     var filename = form.querySelector('input[name=filename]');
     var fields = form.querySelector('.age-pass-fields');
+    var hint = form.querySelector('[data-age-hint]');
     var editor = form.querySelector('textarea[name=content]');
+    var commitBtn = form.querySelector('button[type=submit]');
     if (!filename || !fields || !editor) return;
-    var inputs = fields.querySelectorAll('input[type=password]');
+    var inputs = fields.querySelectorAll('.age-pass-wrap input');
     if (inputs.length !== 2) return;
     var readyToPost = false;
     function wantsAge() { return /\\.age$/i.test(filename.value.trim()); }
-    function toggle() { fields.hidden = !wantsAge(); }
+    function toggle() {
+      fields.hidden = !wantsAge();
+      if (hint) hint.hidden = wantsAge();
+    }
     filename.addEventListener('input', toggle);
     toggle();
     form.addEventListener('submit', function (ev) {
       if (readyToPost || !wantsAge()) return;
       ev.preventDefault();
       setError(fields, null);
-      if (inputs[0].value === '') { setError(fields, 'Choose a passphrase for this file.'); return; }
-      if (inputs[0].value !== inputs[1].value) { setError(fields, 'The passphrases do not match.'); return; }
+      if (inputs[0].value === '') { setError(fields, 'Choose a passphrase for this file.'); failedPass(inputs[0]); return; }
+      if (inputs[0].value !== inputs[1].value) { setError(fields, 'The passphrases do not match.'); failedPass(inputs[1]); return; }
+      setBtnBusy(commitBtn, true);
       encryptArmored(editor.value, inputs[0].value)
         .then(function (armored) {
           inputs[0].value = '';
@@ -227,10 +318,11 @@ const GLUE_JS = `
           readyToPost = true;
           form.submit();
         })
-        .catch(function (err) { setError(fields, explain(err)); });
+        .catch(function (err) { setBtnBusy(commitBtn, false); setError(fields, explain(err)); });
     });
   }
 
+  wireEyes();
   var view = document.querySelector('[data-age-view]');
   if (view) wireView(view);
   var edit = document.querySelector('form[data-age-edit]');

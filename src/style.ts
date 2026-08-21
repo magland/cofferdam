@@ -58,6 +58,10 @@ export const CSS = `
   :root { --touch: 42px; }
 }
 * { box-sizing: border-box; }
+/* The hidden attribute always wins, including over a display this sheet set:
+   scripts show and hide parts of a page by toggling it, and a .age-unlock
+   form (display: flex) must actually vanish when unlocking hides it. */
+[hidden] { display: none !important; }
 /* The bar at the top stays put, so an anchored line or heading has to be
    pushed clear of it when the page jumps to one. */
 html { scroll-padding-top: 68px; }
@@ -497,13 +501,40 @@ table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
 .rendered { padding: 24px 12px 28px; background: var(--bg); }
 
 /* Age-encrypted files: the unlock card on the blob page and in the editor,
-   and the passphrase pair the new-file form reveals for a .age name. */
+   the passphrase pair the new-file form reveals for a .age name, the slim
+   bar that stands over decrypted output, and the show/hide eye every
+   passphrase input carries. */
 .age-card { text-align: center; }
 .age-head { display: inline-flex; align-items: center; gap: 8px; color: var(--fg); margin-bottom: 4px; }
 .age-unlock { display: flex; justify-content: center; gap: 8px; margin: 12px 0 4px; flex-wrap: wrap; }
-.age-unlock input[type='password'] { width: min(320px, 100%); }
+.age-unlock .age-pass-wrap { width: min(320px, 100%); }
+.age-pass-wrap { position: relative; display: inline-flex; align-items: center; }
+.age-pass-wrap input { width: 100%; padding-right: 36px; }
+.age-eye {
+  position: absolute; right: 3px; display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--radius);
+  background: none; color: var(--fg-subtle); cursor: pointer;
+}
+.age-eye:hover { color: var(--fg); }
+.age-eye .glyph-eye-off, .age-pass-wrap.showing .glyph-eye { display: none; }
+.age-pass-wrap.showing .glyph-eye-off { display: block; }
 .age-card .form-error { display: inline-block; margin-top: 10px; }
 .age-card .field { max-width: 360px; margin-left: auto; margin-right: auto; text-align: left; }
+.age-card .field .age-pass-wrap { display: flex; }
+.age-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 8px 12px; margin-bottom: 12px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+}
+.age-bar-note { display: inline-flex; align-items: baseline; gap: 8px; color: var(--fg-muted); font-size: var(--t-sm); }
+.age-bar-note .glyph, .age-warn .glyph { flex: none; transform: translateY(2px); }
+.age-bar-actions { display: inline-flex; gap: 8px; }
+p.age-bar-note { margin: 0 0 12px; }
+.age-warn { display: flex; align-items: baseline; gap: 6px; color: var(--alert-warning); font-size: var(--t-sm); margin: 4px 0 0; }
+.age-newpass { margin: 12px 0; }
+.age-newpass > summary { cursor: pointer; color: var(--fg-muted); }
+.age-newpass > summary:hover { color: var(--fg); }
+.age-newpass .field { max-width: 360px; margin-top: 10px; }
 .age-output .age-plain { padding: 16px; overflow-x: auto; background: var(--bg); font-size: 13px; line-height: 1.5; }
 
 /* Segmented Preview/Code switch on rendered files. */
