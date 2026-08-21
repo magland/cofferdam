@@ -979,8 +979,8 @@ check "the dotted repository is there" 200 "$BASE/demo/my.site.thing"
 # reachable anonymously and self-contained.
 check "the about page explains the vault" 200 "$BASE/about"
 body_has "what this place is" 'About this vault'
-body_has "that reading needs no account" 'Reading is anonymous'
-body_has "and how writing is authorized" 'minted by this vault'
+body_has "that reading needs no account" 'Browsing and cloning are anonymous'
+body_has "and how writing is authorized" 'Writing needs an account'
 check "the front page points at it" 200 "$BASE/"
 body_has "from its first line" 'href="/about"'
 check "and no collection can shadow the address" 400 -b "$JAR" "$BASE/new/collection" \
