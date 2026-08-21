@@ -221,7 +221,7 @@ function renderJump() {
     var it = items[i];
     if (it.group !== group) { group = it.group; html += '<li class="jump-group" role="presentation">' + escapeHtml(group) + '</li>'; }
     html += '<li role="option" aria-selected="' + (i === jumpSel) + '"><a class="jump-item' + (i === jumpSel ? ' on' : '') +
-      '" href="' + escapeHtml(it.href) + '" data-jump-index="' + i + '">' + escapeHtml(it.label) +
+      '" href="' + escapeHtml(it.href) + '" data-jump-index="' + i + '"><span class="jump-name">' + escapeHtml(it.label) + '</span>' +
       (it.note ? '<span class="jump-note">' + escapeHtml(it.note) + '</span>' : '') + '</a></li>';
   }
   list.innerHTML = html || '<li class="jump-empty" role="presentation">' +

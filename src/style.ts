@@ -172,7 +172,12 @@ kbd {
   display: flex; align-items: center; gap: var(--s2);
   padding: 7px var(--s4); min-height: var(--touch);
   color: var(--fg); font-size: var(--t-sm);
+  min-width: 0;
 }
+/* Both halves of a row stay on their own line, cut with an ellipsis, so a
+   long repository name can never widen the panel or wrap its note. */
+.jump-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jump-note { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jump-item:hover { text-decoration: none; }
 /* The highlight follows the keyboard, and the pointer moves the keyboard, so
    there is only ever one selected row however the reader is driving. */
@@ -1239,7 +1244,11 @@ a.chip.label:hover { text-decoration: none; filter: brightness(1.1); }
   font-weight: 600;
   font-size: var(--t-base);
   min-width: 0;
-  overflow-wrap: anywhere;
+  /* One line however long the name is: a name that would wrap is cut with an
+     ellipsis, so no card is ever taller than its neighbours because of it. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .rc-name::after { content: ''; position: absolute; inset: 0; }
 /* The collection stays whole, so a narrow column breaks the name at the slash
