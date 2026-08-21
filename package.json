@@ -43,6 +43,7 @@
     "test:unit": "node --import tsx --test tests/*.test.ts",
     "smoke": "bash scripts/smoke.sh",
     "smoke:slow": "SMOKE_SLOW=1 bash scripts/smoke.sh",
+    "bump": "bash scripts/bump.sh",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
