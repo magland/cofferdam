@@ -503,7 +503,7 @@ given, so a generated file can be piped straight in.
 
 --expected-sha is the commit the caller last saw. Given one, a branch that has
 moved since is a conflict (exit 5) rather than a silent overwrite, which is what a
-caller that reads, thinks, and then writes wants. 'cofferdam file view <path>
+caller that reads, thinks, and then writes wants. 'feorge file view <path>
 --json=commit' is where that value comes from.`,
     args: [{ name: 'path', required: true }],
     options: [

@@ -10,7 +10,7 @@ import { getSecret } from './session';
 // Storage for Git LFS objects. Two backends behind one interface: "s3" issues
 // presigned URLs against any S3-compatible bucket, so large-file bytes never
 // pass through this process; "local" stores objects inside the vault and
-// issues HMAC-signed URLs pointing back at cofferdam's own transfer routes, so
+// issues HMAC-signed URLs pointing back at feorge's own transfer routes, so
 // LFS works with no credentials (dev, smoke test, laptop vaults). The choice
 // is made from the environment at startup and never recorded in the vault.
 //
@@ -428,10 +428,10 @@ class S3LfsStore implements LfsStore {
 // Tigris works with the credentials Fly injects.
 export function createLfsStore(root: string, env: NodeJS.ProcessEnv = process.env): LfsContext {
   let maxSize = DEFAULT_MAX_SIZE;
-  if (env.COFFERDAM_LFS_MAX_SIZE !== undefined) {
-    maxSize = parseInt(env.COFFERDAM_LFS_MAX_SIZE, 10);
+  if (env.FEORGE_LFS_MAX_SIZE !== undefined) {
+    maxSize = parseInt(env.FEORGE_LFS_MAX_SIZE, 10);
     if (!Number.isSafeInteger(maxSize) || maxSize <= 0) {
-      throw new LfsConfigError(`COFFERDAM_LFS_MAX_SIZE must be a positive integer, got: ${env.COFFERDAM_LFS_MAX_SIZE}`);
+      throw new LfsConfigError(`FEORGE_LFS_MAX_SIZE must be a positive integer, got: ${env.FEORGE_LFS_MAX_SIZE}`);
     }
   }
   const local = (): LfsContext => ({
@@ -440,11 +440,11 @@ export function createLfsStore(root: string, env: NodeJS.ProcessEnv = process.en
     label: 'local (objects stored inside the vault)',
     offloaded: false,
   });
-  if (env.COFFERDAM_LFS === 'off') return local();
+  if (env.FEORGE_LFS === 'off') return local();
 
   const vars: [string, string | undefined][] = [
-    ['COFFERDAM_LFS_BUCKET (or BUCKET_NAME)', env.COFFERDAM_LFS_BUCKET || env.BUCKET_NAME],
-    ['COFFERDAM_LFS_ENDPOINT (or AWS_ENDPOINT_URL_S3)', env.COFFERDAM_LFS_ENDPOINT || env.AWS_ENDPOINT_URL_S3],
+    ['FEORGE_LFS_BUCKET (or BUCKET_NAME)', env.FEORGE_LFS_BUCKET || env.BUCKET_NAME],
+    ['FEORGE_LFS_ENDPOINT (or AWS_ENDPOINT_URL_S3)', env.FEORGE_LFS_ENDPOINT || env.AWS_ENDPOINT_URL_S3],
     ['AWS_ACCESS_KEY_ID', env.AWS_ACCESS_KEY_ID],
     ['AWS_SECRET_ACCESS_KEY', env.AWS_SECRET_ACCESS_KEY],
   ];
@@ -456,15 +456,15 @@ export function createLfsStore(root: string, env: NodeJS.ProcessEnv = process.en
     // bucket backend exists to prevent.
     throw new LfsConfigError(
       `Git LFS bucket configuration is incomplete; missing: ${missing.join(', ')}. ` +
-        `Set the missing variables, or set COFFERDAM_LFS=off to store LFS objects inside the vault.`
+        `Set the missing variables, or set FEORGE_LFS=off to store LFS objects inside the vault.`
     );
   }
   const [bucket, endpoint] = [vars[0][1] as string, vars[1][1] as string];
-  const addressing = env.COFFERDAM_LFS_ADDRESSING ?? 'path';
+  const addressing = env.FEORGE_LFS_ADDRESSING ?? 'path';
   if (addressing !== 'path' && addressing !== 'vhost') {
-    throw new LfsConfigError(`COFFERDAM_LFS_ADDRESSING must be "path" or "vhost", got: ${addressing}`);
+    throw new LfsConfigError(`FEORGE_LFS_ADDRESSING must be "path" or "vhost", got: ${addressing}`);
   }
-  let prefix = env.COFFERDAM_LFS_PREFIX ?? '';
+  let prefix = env.FEORGE_LFS_PREFIX ?? '';
   if (prefix !== '') prefix = prefix.replace(/^\/+|\/+$/g, '') + '/';
   const store = new S3LfsStore({
     bucket,

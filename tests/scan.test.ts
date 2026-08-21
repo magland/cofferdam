@@ -10,7 +10,7 @@ import {
 test('names the UI owns, dotted traversals, and empty names are not valid', () => {
   assert.ok(isValidName('webapp'));
   assert.ok(isValidName('hello-numerics'));
-  assert.ok(isValidName('.cofferdam'));
+  assert.ok(isValidName('.feorge'));
   assert.ok(!isValidName('admin'));
   assert.ok(!isValidName('about'));
   assert.ok(!isValidName('api'));
@@ -22,7 +22,7 @@ test('names the UI owns, dotted traversals, and empty names are not valid', () =
 
 test('a username may not carry the leading dot a repository may', () => {
   assert.ok(isValidUserName('alice'));
-  assert.ok(!isValidUserName('.cofferdam'));
+  assert.ok(!isValidUserName('.feorge'));
 });
 
 test('a repository may not take a sibling suffix as its name, in any case', () => {

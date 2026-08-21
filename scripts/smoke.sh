@@ -52,7 +52,7 @@ BASE="http://127.0.0.1:$PORT"
 #  - it must be able to execute a script, because git silently skips a hook it
 #    cannot execute. git-lfs uploads objects from a pre-push hook, so on a
 #    filesystem mounted noexec the LFS checks below see a pointer pushed, no
-#    object uploaded, and a download that 404s, none of which is cofferdam's
+#    object uploaded, and a download that 404s, none of which is feorge's
 #    doing. The vault lives here too, and its repositories have hooks of their
 #    own.
 #  - it should be able to keep a file private, because `git credential-store`
@@ -67,7 +67,7 @@ smoke_tmp() {
   local base d mode exec_ok private_ok fallback=""
   for base in "${TMPDIR:-/tmp}" /dev/shm; do
     [ -d "$base" ] && [ -w "$base" ] || continue
-    d="$(mktemp -d "$base/cofferdam-smoke.XXXXXX" 2>/dev/null)" || continue
+    d="$(mktemp -d "$base/feorge-smoke.XXXXXX" 2>/dev/null)" || continue
     printf '#!/bin/sh\nexit 0\n' > "$d/probe.sh"; chmod +x "$d/probe.sh"
     if "$d/probe.sh" 2>/dev/null; then exec_ok=1; else exec_ok=0; fi
     ( umask 077; : > "$d/probe.mode" )
@@ -103,7 +103,7 @@ export GIT_TERMINAL_PROMPT=0
 #   npm run smoke:slow   # that too (needs Docker)
 SMOKE_SLOW="${SMOKE_SLOW:-0}"
 
-# The suite tests cofferdam, not the machine's git configuration, and two of the
+# The suite tests feorge, not the machine's git configuration, and two of the
 # checks below are only meaningful against a known one: "login refuses when no
 # credential helper is configured" is false the moment a system config sets a
 # helper, as a hosted development container does. An identity has to come from
@@ -112,7 +112,7 @@ export GIT_CONFIG_SYSTEM=/dev/null
 export GIT_CONFIG_GLOBAL="$TMP/gitconfig"
 cat > "$GIT_CONFIG_GLOBAL" <<'GITCONFIG'
 [user]
-	name = cofferdam smoke
+	name = feorge smoke
 	email = smoke@example.invalid
 [init]
 	defaultBranch = main
@@ -176,7 +176,7 @@ if [ "$started" != 1 ]; then
   echo "FAIL: server did not start"; cat "$LOG"; exit 1
 fi
 
-OWNER_TOKEN="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$LOG" | head -1 || true)"
+OWNER_TOKEN="$(grep -o 'feorge_[0-9a-f]\{64\}' "$LOG" | head -1 || true)"
 [ -n "$OWNER_TOKEN" ] || { echo "FAIL: no owner token in server log"; cat "$LOG"; exit 1; }
 
 PASS=0
@@ -422,11 +422,11 @@ check "deleted file is gone" 404 -b "$JAR" "$BASE/demo/proj/blob/main/docs/notes
 check "import page needs a session" 302 "$BASE/import"
 check "import page" 200 -b "$JAR" "$BASE/import"
 body_lacks "no form to fill in" 'name="src"'
-body_has "the cli command is written out" 'cofferdam import https://github.com/owner/repo'
-body_has "and the login that precedes it" "cofferdam login $BASE"
+body_has "the cli command is written out" 'feorge import https://github.com/owner/repo'
+body_has "and the login that precedes it" "feorge login $BASE"
 check "import page for a collection" 200 -b "$JAR" \
   --get "$BASE/import" --data-urlencode collection=demo
-body_has "the command carries the collection" 'cofferdam import https://github.com/owner/repo demo'
+body_has "the command carries the collection" 'feorge import https://github.com/owner/repo demo'
 body_has "a way back to the collection" 'href="/demo">Back to demo'
 # The git commands stay below the cli one, for a machine with no Node on it.
 body_has "clone is bare, not mirror" 'git clone --bare'
@@ -726,31 +726,31 @@ body_has "description updated" 'A refreshed description'
 
 # ---- a collection's profile README ----
 #
-# The file is read from a .cofferdam repository in the collection, which is an
+# The file is read from a .feorge repository in the collection, which is an
 # ordinary repository under a name only a repository may carry: a leading dot.
 # The checks therefore cover both halves, that the dot name works everywhere a
 # name is used and that the collection page reads the file out of it.
 
 check "a collection without a profile" 200 -b "$JAR" "$BASE/demo"
 body_has "offers to write one to whoever may administer it" 'no profile README'
-body_has "and points the offer at the new-repository form" 'name=\.cofferdam'
+body_has "and points the offer at the new-repository form" 'name=\.feorge'
 check "anonymously, the same page offers nothing" 200 "$BASE/demo"
 body_lacks "no prompt for a viewer who could not act on it" 'no profile README'
 
-check "new repo form prefilled from the offer" 200 -b "$JAR" "$BASE/new?collection=demo&name=.cofferdam"
+check "new repo form prefilled from the offer" 200 -b "$JAR" "$BASE/new?collection=demo&name=.feorge"
 CSRF="$(csrf_of)"
-body_has "the name arrives filled in" 'name="name" value="\.cofferdam"'
-check "create demo/.cofferdam" 302 -b "$JAR" "$BASE/new" \
-  --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=.cofferdam \
+body_has "the name arrives filled in" 'name="name" value="\.feorge"'
+check "create demo/.feorge" 302 -b "$JAR" "$BASE/new" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode collection=demo --data-urlencode name=.feorge \
   --data-urlencode "description=About this collection" --data-urlencode init=1
-check "a dot-named repository browses like any other" 200 "$BASE/demo/.cofferdam"
+check "a dot-named repository browses like any other" 200 "$BASE/demo/.feorge"
 check "and is listed in its collection" 200 "$BASE/demo"
-body_has "under its own name" 'href="/demo/\.cofferdam"'
+body_has "under its own name" 'href="/demo/\.feorge"'
 
-check "new file form in the profile directory" 200 -b "$JAR" "$BASE/demo/.cofferdam/new/main/profile"
+check "new file form in the profile directory" 200 -b "$JAR" "$BASE/demo/.feorge/new/main/profile"
 CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
 PROFILE_MD=$'# Everything demo\n\nSee [proj](proj.md) for the project.\n'
-check "write profile/README.md" 302 -b "$JAR" "$BASE/demo/.cofferdam/new/main/profile" \
+check "write profile/README.md" 302 -b "$JAR" "$BASE/demo/.feorge/new/main/profile" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
   --data-urlencode filename=README.md \
   --data-urlencode "content=$PROFILE_MD" \
@@ -758,11 +758,11 @@ check "write profile/README.md" 302 -b "$JAR" "$BASE/demo/.cofferdam/new/main/pr
 check "the collection page renders it" 200 "$BASE/demo"
 body_has "the profile heading" 'Everything demo'
 body_has "in a box naming the file it came from" 'profile/README\.md'
-body_has "linking to the file in the repository" 'href="/demo/\.cofferdam/blob/main/profile/README\.md"'
-body_has "with relative links resolved against profile/" 'href="/demo/\.cofferdam/blob/main/profile/proj\.md"'
+body_has "linking to the file in the repository" 'href="/demo/\.feorge/blob/main/profile/README\.md"'
+body_has "with relative links resolved against profile/" 'href="/demo/\.feorge/blob/main/profile/proj\.md"'
 check "a signed-in administrator is no longer prompted" 200 -b "$JAR" "$BASE/demo"
 body_lacks "the offer is gone once there is a profile" 'no profile README'
-check "the repository's own page is unaffected" 200 "$BASE/demo/.cofferdam"
+check "the repository's own page is unaffected" 200 "$BASE/demo/.feorge"
 body_has "showing its own README rather than the profile" 'About this collection'
 
 # Only a repository may begin with a dot. A collection or a user under such a
@@ -980,14 +980,14 @@ check "admin users page" 200 -b "$JAR" "$BASE/admin/users"
 CSRF="$(csrf_of)"
 check "create user alice" 200 -b "$JAR" "$BASE/admin/users" \
   --data-urlencode "csrf=$CSRF" --data-urlencode username=alice
-ALICE_TOKEN="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+ALICE_TOKEN="$(grep -o 'feorge_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
 
 # A second user with no role anywhere, for the half of the authorization
 # checks that need a token which may read public repositories but write
 # nothing. alice will own demo and so cannot stand in for it everywhere.
 check "create user narrow" 200 -b "$JAR" "$BASE/admin/users" \
   --data-urlencode "csrf=$CSRF" --data-urlencode username=narrow
-NARROW_TOKEN="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+NARROW_TOKEN="$(grep -o 'feorge_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
 [ -n "$NARROW_TOKEN" ] || { echo "FAIL: no token for the narrow user"; exit 1; }
 PASS=$((PASS+1)); echo "ok: a token that may read everything public and write nothing"
 [ -n "$ALICE_TOKEN" ] || { echo "FAIL: no token for alice shown"; exit 1; }
@@ -1011,7 +1011,7 @@ check "and withdraw it again" 302 -b "$JAR" "$BASE/admin/users/narrow/grant" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "siteAdmin=false"
 check "mint token for alice" 200 -b "$JAR" "$BASE/admin/users/alice/token" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "tokenScope="
-body_has "minted token shown" 'cofferdam_'
+body_has "minted token shown" 'feorge_'
 
 # ---- one user's admin page: tokens listed and revocable, the user deletable ----
 
@@ -1020,7 +1020,7 @@ body_has "minted token shown" 'cofferdam_'
 check "create user pagetest" 200 -b "$JAR" "$BASE/admin/users" \
   --data-urlencode "csrf=$CSRF" --data-urlencode username=pagetest \
   --data-urlencode "scope=nowhere/*" --data-urlencode "admin="
-PT_TOKEN="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+PT_TOKEN="$(grep -o 'feorge_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
 [ -n "$PT_TOKEN" ] || { echo "FAIL: no token for pagetest"; exit 1; }
 check "the token authenticates" 200 -H "authorization: Bearer $PT_TOKEN" "$BASE/api/whoami"
 check "the user's admin page" 200 -b "$JAR" "$BASE/admin/users/pagetest"
@@ -1054,16 +1054,16 @@ REV_JAR="$TMP/revoked.jar"
 check "create user revoked" 200 -b "$JAR" "$BASE/admin/users" \
   --data-urlencode "csrf=$CSRF" --data-urlencode username=revoked --data-urlencode "scope=demo/*" \
   --data-urlencode "admin="
-REV_ONE="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+REV_ONE="$(grep -o 'feorge_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
 # Three tokens, because the interesting deletion has to leave one behind: a
 # user down to no tokens at all was already cut off before sessions were bound
 # to a token, so a test that deletes them all proves nothing.
 check "mint a second token for revoked" 200 -b "$JAR" "$BASE/admin/users/revoked/token" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "tokenScope="
-REV_TWO="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+REV_TWO="$(grep -o 'feorge_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
 check "mint a third token for revoked" 200 -b "$JAR" "$BASE/admin/users/revoked/token" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "tokenScope="
-REV_THREE="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+REV_THREE="$(grep -o 'feorge_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
 [ -n "$REV_ONE" ] && [ -n "$REV_TWO" ] && [ -n "$REV_THREE" ] &&
   [ "$REV_ONE" != "$REV_TWO" ] && [ "$REV_TWO" != "$REV_THREE" ] && [ "$REV_ONE" != "$REV_THREE" ] || {
   echo "FAIL: expected three distinct tokens for the revoked user"; exit 1; }
@@ -1173,7 +1173,7 @@ check "admin users page for delegation" 200 -b "$JAR" "$BASE/admin/users"
 CSRF="$(csrf_of)"
 check "create collection owner" 200 -b "$JAR" "$BASE/admin/users" \
   --data-urlencode "csrf=$CSRF" --data-urlencode username=collectionadmin
-COLLECTION_TOKEN="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+COLLECTION_TOKEN="$(grep -o 'feorge_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
 [ -n "$COLLECTION_TOKEN" ] || { echo "FAIL: no token for collectionadmin"; exit 1; }
 check "the collection settings page offers owners" 200 -b "$JAR" "$BASE/demo/settings"
 body_has "an owners box" 'Add owner'
@@ -1716,7 +1716,7 @@ check "admin users page for the mover setup" 200 -b "$JAR" "$BASE/admin/users"
 CSRF="$(csrf_of)"
 check "create user mover" 200 -b "$JAR" "$BASE/admin/users" \
   --data-urlencode "csrf=$CSRF" --data-urlencode username=mover
-MOVER_TOKEN="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+MOVER_TOKEN="$(grep -o 'feorge_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
 [ -n "$MOVER_TOKEN" ] || { echo "FAIL: no token for mover"; exit 1; }
 api "mover gets the admin role on the fork" 200 -X PUT -H "$JSON_CT" \
   --data '{"role":"admin"}' "$BASE/api/repos/apiforks/renamed/collaborators/mover"
@@ -1812,7 +1812,7 @@ api "revoking it again is a 404" 404 -X DELETE "$BASE/api/users/narrow/tokens/$N
 # A user with no tokens is still a user, so mint one back for the checks below.
 api "mint a token back for the narrow user" 200 -H "$JSON_CT" \
   --data '{"username":"narrow"}' "$BASE/api/users"
-NARROW_TOKEN="$({ grep -o '"token":"cofferdam_[0-9a-f]*"' "$BODY" || true; } | head -1 | cut -d'"' -f4)"
+NARROW_TOKEN="$({ grep -o '"token":"feorge_[0-9a-f]*"' "$BODY" || true; } | head -1 | cut -d'"' -f4)"
 [ -n "$NARROW_TOKEN" ] || { echo "FAIL: no replacement token for the narrow user"; exit 1; }
 PASS=$((PASS+1)); echo "ok: a user with no tokens can be given another"
 
@@ -1948,7 +1948,7 @@ body_has "saying whose it is" 'not an owner'
 # explicit owners on the way, or they would be locked out of what is theirs.
 check "a user whose namespace this is" 200 -b "$JAR" "$BASE/admin/users" \
   --data-urlencode "csrf=$CSRF" --data-urlencode username=renamer
-RENAMER_TOKEN="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+RENAMER_TOKEN="$(grep -o 'feorge_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
 [ -n "$RENAMER_TOKEN" ] || { echo "FAIL: no token for renamer"; exit 1; }
 api_as "they create in their namespace" 201 "$RENAMER_TOKEN" -H "$JSON_CT" \
   --data '{"collection":"renamer","name":"mine","initReadme":true}' "$BASE/api/repos"
@@ -1997,7 +1997,7 @@ api "an empty host serves sites on the forge hostname again" 200 -X PATCH -H "$J
 body_has "reporting the cleared value" '"host":""'
 check "which also takes effect on the next request" 200 "$BASE/" -H 'Host: nosuchrepo--demo.sites.example.org'
 
-# ---- cofferdam login: the token in git's credential store ----
+# ---- feorge login: the token in git's credential store ----
 
 # An isolated HOME so this never touches the developer's own git configuration,
 # and an askpass that trips a wire rather than answering, standing in for an
@@ -2012,10 +2012,10 @@ touch "$TRIPPED"
 exit 1
 ASKPASS
 chmod +x "$TMP/askpass"
-# The global config goes with the isolated HOME, so that what `cofferdam login`
+# The global config goes with the isolated HOME, so that what `feorge login`
 # writes lands there and starts out empty: the first check needs no helper to
 # be configured anywhere git will look.
-# XDG_CONFIG_HOME goes with it, so the vault that `cofferdam login` records
+# XDG_CONFIG_HOME goes with it, so the vault that `feorge login` records
 # lands here too rather than in the developer's own configuration.
 cred_env() { env HOME="$CRED_HOME" XDG_CONFIG_HOME="$CRED_HOME/.config" GIT_CONFIG_GLOBAL="$CRED_HOME/.gitconfig" GIT_ASKPASS="$TMP/askpass" SSH_ASKPASS="$TMP/askpass" "$@"; }
 cli() { cred_env node dist/index.js "$@"; }
@@ -2064,10 +2064,10 @@ no_prompt() {
 # exits zero, so login has to refuse rather than report success.
 run_fails "login refuses when no credential helper is configured" \
   cli login --host "$BASE" --token "$OWNER_TOKEN"
-body_has "login names the helpers it could use" 'cofferdam login --helper store'
+body_has "login names the helpers it could use" 'feorge login --helper store'
 
 run_fails "login refuses a bad token before storing it" \
-  cli login --host "$BASE" --token cofferdam_not_a_real_token --helper store
+  cli login --host "$BASE" --token feorge_not_a_real_token --helper store
 if [ -e "$CRED_HOME/.git-credentials" ]; then echo "FAIL: a rejected token was stored anyway"; exit 1; fi
 PASS=$((PASS+1)); echo "ok: nothing stored for a rejected token"
 
@@ -2083,7 +2083,7 @@ else
 fi
 # The vault is recorded as well, which is the whole of the CLI's configuration:
 # commands after a login take no arguments and read no environment.
-LOGIN_JSON="$CRED_HOME/.config/cofferdam/login.json"
+LOGIN_JSON="$CRED_HOME/.config/feorge/login.json"
 grep -q "\"$BASE\"" "$LOGIN_JSON" || { echo "FAIL: login did not record the vault URL"; exit 1; }
 PASS=$((PASS+1)); echo "ok: login recorded the vault URL"
 run_ok "whoami needs no arguments after login" cli whoami
@@ -2092,7 +2092,7 @@ run_ok "user list needs no arguments after login" cli user list
 body_has "user list came from the vault" 'site admin'
 run_ok "runner list needs no arguments after login" cli runner list
 
-# ---- the command registry, `cofferdam api`, and the output contract ----
+# ---- the command registry, `feorge api`, and the output contract ----
 
 # Help is per command rather than one dump of all of them, which is what keeps
 # it small enough for a caller with a context window to read. Two levels pin the
@@ -2132,7 +2132,7 @@ check "the collection the api command made is there" 200 "$BASE/fromapi"
 # The exit codes an agent retries on. 4 and 5 are the two that earn their keep.
 run_code "a 404 from the vault exits 4" 4 cli api collections/nosuchcollection
 run_code "a 409 from the vault exits 5" 5 cli api collections -X POST --field name=fromapi
-run_code "a rejected --json token exits 3" 3 cli whoami --json --token cofferdam_not_a_real_token
+run_code "a rejected --json token exits 3" 3 cli whoami --json --token feorge_not_a_real_token
 err_has "on stderr, as an error object" '{"error":'
 if [ -s "$BODY" ]; then echo "FAIL: a failed --json command wrote to stdout"; exit 1; fi
 PASS=$((PASS+1)); echo "ok: nothing on stdout when a --json command fails"
@@ -2295,11 +2295,11 @@ body_has "which is the repository it was cloned from" '"name": "proj"'
 # code is what is being asserted, so it is captured rather than shadowed.
 run_code "and with no remote for this vault it is a usage error" 2 \
   sh -c "cd '$TMP/credclone' && git remote set-url origin https://github.com/owner/other.git && { $(printf '%s ' env HOME="$CRED_HOME" XDG_CONFIG_HOME="$CRED_HOME/.config" GIT_CONFIG_GLOBAL="$CRED_HOME/.gitconfig" GIT_ASKPASS="$TMP/askpass") node '$PWD/dist/index.js' repo view; code=\$?; git remote set-url origin '$BASE/demo/proj'; exit \$code; }"
-err_has "naming all three ways to say" 'COFFERDAM_REPO'
+err_has "naming all three ways to say" 'FEORGE_REPO'
 
-# ---- cofferdam import and collections, from the CLI ----
+# ---- feorge import and collections, from the CLI ----
 
-# Importing is a client-side operation and `cofferdam import` is
+# Importing is a client-side operation and `feorge import` is
 # what performs it: a bare clone into a temporary directory, a mirror push at
 # the vault, and the clone removed again. The source here is a directory on this
 # machine, which import accepts alongside a URL and which is also what a suite
@@ -2328,7 +2328,7 @@ run_fails "import refuses to guess a collection" cli import "$TMP/importsrc"
 body_has "and asks which one" 'Which collection'
 # The clone is scratch and temporary in both senses: it is removed whether the
 # import succeeded or failed, which a process.exit inside the import would skip.
-LEFTOVER="$(ls -d "${TMPDIR:-/tmp}"/cofferdam-import-* 2>/dev/null || true)"
+LEFTOVER="$(ls -d "${TMPDIR:-/tmp}"/feorge-import-* 2>/dev/null || true)"
 [ -z "$LEFTOVER" ] || { echo "FAIL: import left a clone behind: $LEFTOVER"; exit 1; }
 PASS=$((PASS+1)); echo "ok: no temporary clone left behind"
 
@@ -2339,11 +2339,11 @@ PASS=$((PASS+1)); echo "ok: credential file is empty after logout"
 if [ -e "$LOGIN_JSON" ]; then echo "FAIL: logout left the vault recorded"; exit 1; fi
 PASS=$((PASS+1)); echo "ok: logout forgot the vault too"
 run_fails "commands stop working after logout" cli whoami
-body_has "and say to log in" 'cofferdam login'
+body_has "and say to log in" 'feorge login'
 # A container has no keyring and may have no writable home, so the environment
 # is a source of both, between the flags and the login.
-run_ok "COFFERDAM_HOST and COFFERDAM_TOKEN stand in for a login" \
-  cred_env env COFFERDAM_HOST="$BASE" COFFERDAM_TOKEN="$OWNER_TOKEN" node dist/index.js whoami
+run_ok "FEORGE_HOST and FEORGE_TOKEN stand in for a login" \
+  cred_env env FEORGE_HOST="$BASE" FEORGE_TOKEN="$OWNER_TOKEN" node dist/index.js whoami
 body_has "as the same user" "owner @ $BASE"
 run_ok "logout again is not an error" cli logout --host "$BASE"
 body_has "logout says there was nothing stored" 'No stored credential'
@@ -2602,25 +2602,25 @@ header_has "sandboxed again" 'content-security-policy: sandbox'
 # ---- session cookie naming ----
 
 # Cookies are not scoped by origin, so a sibling subdomain of a shared parent
-# domain can set one named cofferdam_session with Domain=<parent> and shadow a
+# domain can set one named feorge_session with Domain=<parent> and shadow a
 # real session. Browsers refuse a __Host- cookie that carries Domain at all,
 # and the prefix is legal only with Secure and Path=/, so the name follows the
 # scheme.
 check "login over plain http" 302 -D "$TMP/headers" "$BASE/login" \
   --data-urlencode username=owner --data-urlencode "token=$OWNER_TOKEN" --data-urlencode next=/
-header_has "keeps the bare cookie name" 'set-cookie: cofferdam_session='
+header_has "keeps the bare cookie name" 'set-cookie: feorge_session='
 header_lacks "since __Host- would need Secure" '__Host-'
 check "login behind a TLS proxy" 302 -D "$TMP/headers" -H 'X-Forwarded-Proto: https' "$BASE/login" \
   --data-urlencode username=owner --data-urlencode "token=$OWNER_TOKEN" --data-urlencode next=/
-header_has "uses the __Host- prefix" 'set-cookie: __Host-cofferdam_session='
-HOST_COOKIE="$({ grep -io 'set-cookie: __Host-cofferdam_session=[^;]*' "$TMP/headers" || true; } | head -1 | sed 's/^[Ss]et-[Cc]ookie: //')"
+header_has "uses the __Host- prefix" 'set-cookie: __Host-feorge_session='
+HOST_COOKIE="$({ grep -io 'set-cookie: __Host-feorge_session=[^;]*' "$TMP/headers" || true; } | head -1 | sed 's/^[Ss]et-[Cc]ookie: //')"
 [ -n "$HOST_COOKIE" ] || { echo "FAIL: no __Host- cookie to present back"; exit 1; }
 check "a request presenting the prefixed cookie is signed in" 200 \
   -H 'X-Forwarded-Proto: https' -H "Cookie: $HOST_COOKIE" "$BASE/"
 body_has "as the owner" '>owner<'
 # A session minted before the prefix existed keeps working, or every signed-in
 # browser would be signed out by an upgrade.
-BARE_COOKIE="cofferdam_session=$(printf '%s' "$HOST_COOKIE" | sed 's/^__Host-cofferdam_session=//')"
+BARE_COOKIE="feorge_session=$(printf '%s' "$HOST_COOKIE" | sed 's/^__Host-feorge_session=//')"
 check "the old bare cookie name is still accepted over https" 200 \
   -H 'X-Forwarded-Proto: https' -H "Cookie: $BARE_COOKIE" "$BASE/"
 body_has "and resolves to the same user" '>owner<'
@@ -2893,7 +2893,7 @@ PASS=$((PASS+1)); echo "ok: repository deletion removed its LFS objects"
 
 CI_REPO="$TMP/cirepo"
 git init -q -b main "$CI_REPO"
-mkdir -p "$CI_REPO/.github/workflows" "$CI_REPO/.cofferdam/workflows"
+mkdir -p "$CI_REPO/.github/workflows" "$CI_REPO/.feorge/workflows"
 
 cat > "$CI_REPO/.github/workflows/build.yml" <<'YML'
 name: Build
@@ -2935,9 +2935,9 @@ jobs:
 YML
 
 # Shadowed by name: this .github copy must never run, because a file with the
-# same basename exists under .cofferdam/workflows.
+# same basename exists under .feorge/workflows.
 cat > "$CI_REPO/.github/workflows/shadowed.yml" <<'YML'
-name: Shadowed by cofferdam
+name: Shadowed by feorge
 on: [push]
 jobs:
   ghost:
@@ -2945,14 +2945,14 @@ jobs:
     steps:
       - run: echo "this must not run"
 YML
-cat > "$CI_REPO/.cofferdam/workflows/shadowed.yml" <<'YML'
-name: Cofferdam override
+cat > "$CI_REPO/.feorge/workflows/shadowed.yml" <<'YML'
+name: Feorge override
 on: [push]
 jobs:
   real:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "the cofferdam copy runs"
+      - run: echo "the feorge copy runs"
 YML
 
 cat > "$CI_REPO/.github/workflows/tagsonly.yml" <<'YML'
@@ -3031,9 +3031,9 @@ PASS=$((PASS+1)); echo "ok: push created run state in the vault"
 
 [ -n "$(runs_named 'Build')" ] || { echo "FAIL: the push did not plan the Build workflow"; exit 1; }
 PASS=$((PASS+1)); echo "ok: a matching push trigger plans a run"
-[ -n "$(runs_named 'Cofferdam override')" ] || { echo "FAIL: .cofferdam/workflows copy did not run"; exit 1; }
-PASS=$((PASS+1)); echo "ok: .cofferdam/workflows shadows .github/workflows by basename"
-[ -z "$(runs_named 'Shadowed by cofferdam')" ] || { echo "FAIL: the shadowed .github copy ran"; exit 1; }
+[ -n "$(runs_named 'Feorge override')" ] || { echo "FAIL: .feorge/workflows copy did not run"; exit 1; }
+PASS=$((PASS+1)); echo "ok: .feorge/workflows shadows .github/workflows by basename"
+[ -z "$(runs_named 'Shadowed by feorge')" ] || { echo "FAIL: the shadowed .github copy ran"; exit 1; }
 PASS=$((PASS+1)); echo "ok: the shadowed .github copy does not run"
 [ -z "$(runs_named 'Tags only')" ] || { echo "FAIL: a tags-only workflow ran on a branch push"; exit 1; }
 PASS=$((PASS+1)); echo "ok: branch push does not fire a tags-only trigger"
@@ -3205,7 +3205,7 @@ check "a runner needs an allow list" 400 -b "$JAR" "$BASE/admin/runners" \
 check "register a runner" 200 -b "$JAR" "$BASE/admin/runners" \
   --data-urlencode "csrf=$CSRF" --data-urlencode name=smoke --data-urlencode labels=ubuntu-latest \
   --data-urlencode "allow=demo/*"
-RUNNER_TOKEN="$({ grep -o 'cofferdam_runner_[0-9a-f]\{64\}' "$BODY" || true; } | head -1)"
+RUNNER_TOKEN="$({ grep -o 'feorge_runner_[0-9a-f]\{64\}' "$BODY" || true; } | head -1)"
 [ -n "$RUNNER_TOKEN" ] || { echo "FAIL: no runner token shown after registration"; exit 1; }
 PASS=$((PASS+1)); echo "ok: registering a runner shows its token once"
 [ -f "$VAULT/runners.json" ] || { echo "FAIL: runners.json not written"; exit 1; }
@@ -3217,7 +3217,7 @@ PASS=$((PASS+1)); echo "ok: only the runner token's hash is stored"
 # not recoverable from the registry.
 check "runner detail page" 200 -b "$JAR" "$BASE/admin/runners/smoke"
 body_has "naming the repositories it serves" 'demo/\*'
-body_has "with the start command" 'cofferdam runner run --host'
+body_has "with the start command" 'feorge runner run --host'
 body_has "and a placeholder for the unrecoverable token" '&lt;token&gt;'
 body_has "offering to regenerate the token" 'Regenerate token'
 check "an unknown runner is a 404" 404 -b "$JAR" "$BASE/admin/runners/nosuchrunner"
@@ -3228,13 +3228,13 @@ body_has "linking each runner to its detail page" 'href="/admin/runners/smoke"'
 check "register a second runner" 200 -b "$JAR" "$BASE/admin/runners" \
   --data-urlencode "csrf=$CSRF" --data-urlencode name=spare --data-urlencode labels=ubuntu-latest \
   --data-urlencode "allow=demo/*"
-SPARE_TOKEN="$({ grep -o 'cofferdam_runner_[0-9a-f]\{64\}' "$BODY" || true; } | head -1)"
+SPARE_TOKEN="$({ grep -o 'feorge_runner_[0-9a-f]\{64\}' "$BODY" || true; } | head -1)"
 [ -n "$SPARE_TOKEN" ] || { echo "FAIL: no token shown for the second runner"; exit 1; }
 check "the second runner can authenticate" 200 -H "Authorization: Bearer $SPARE_TOKEN" "$BASE/api/runner/whoami"
 check "regenerate its token" 200 -b "$JAR" "$BASE/admin/runners/spare/token" --data-urlencode "csrf=$CSRF"
 body_has "saying the old one is gone" 'previous token no longer works'
-body_has "and giving the command to start with the new one" 'cofferdam runner run --host'
-SPARE_TOKEN2="$({ grep -o 'cofferdam_runner_[0-9a-f]\{64\}' "$BODY" || true; } | head -1)"
+body_has "and giving the command to start with the new one" 'feorge runner run --host'
+SPARE_TOKEN2="$({ grep -o 'feorge_runner_[0-9a-f]\{64\}' "$BODY" || true; } | head -1)"
 [ -n "$SPARE_TOKEN2" ] || { echo "FAIL: no new token shown after regeneration"; exit 1; }
 [ "$SPARE_TOKEN2" != "$SPARE_TOKEN" ] || { echo "FAIL: regeneration reissued the same token"; exit 1; }
 PASS=$((PASS+1)); echo "ok: regeneration issues a different token"
@@ -3292,7 +3292,7 @@ node -e '
   const [port, log, secret] = process.argv.slice(1);
   http
     .createServer((req, res) => {
-      const ok = req.headers["x-cofferdam-wake"] === secret;
+      const ok = req.headers["x-feorge-wake"] === secret;
       fs.appendFileSync(log, req.method + " " + req.url + " " + (ok ? "ok" : "bad-secret") + "\n");
       res.writeHead(ok ? 204 : 401).end();
     })
@@ -3300,7 +3300,7 @@ node -e '
 ' "$WAKE_PORT" "$WAKE_LOG" "$WAKE_OK_SECRET" &
 WAKE_PID=$!
 for _ in $(seq 1 40); do
-  curl -fsS -o /dev/null -H "x-cofferdam-wake: $WAKE_OK_SECRET" "http://127.0.0.1:$WAKE_PORT/wake" 2>/dev/null && break
+  curl -fsS -o /dev/null -H "x-feorge-wake: $WAKE_OK_SECRET" "http://127.0.0.1:$WAKE_PORT/wake" 2>/dev/null && break
   sleep 0.25
 done
 : > "$WAKE_LOG"
@@ -3356,7 +3356,7 @@ body_has "and offering to send one now" 'Send a wake request now'
 CSRF="$(csrf_of)"
 check "save a wake address from the admin page" 200 -b "$JAR" "$BASE/admin/runners/smoke/wake" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "wakeUrl=http://127.0.0.1:$WAKE_PORT/wake"
-body_has "showing the secret it generated, once" 'COFFERDAM_WAKE_SECRET='
+body_has "showing the secret it generated, once" 'FEORGE_WAKE_SECRET='
 check "a wake address that is not a URL is refused" 400 -b "$JAR" "$BASE/admin/runners/smoke/wake" \
   --data-urlencode "csrf=$CSRF" --data-urlencode "wakeUrl=not a url"
 check "clearing it is saving an empty one" 302 -b "$JAR" "$BASE/admin/runners/smoke/wake" \
@@ -3370,7 +3370,7 @@ run_ok "runner wake sends the request" node dist/index.js runner wake smoke --ho
 body_has "saying it woke, and how long that took" 'Woke smoke'
 grep -q 'POST /wake ok' "$WAKE_LOG" || {
   echo "FAIL: the CLI wake did not arrive"; exit 1; }
-PASS=$((PASS+1)); echo "ok: cofferdam runner wake sends the request the vault would have sent"
+PASS=$((PASS+1)); echo "ok: feorge runner wake sends the request the vault would have sent"
 run_ok "runner list notes a runner that is woken on demand" rcli
 body_has "rather than reporting it as simply absent" 'woken on demand'
 run_ok "runner wake --clear removes the address" node dist/index.js runner wake smoke --clear \
@@ -3416,7 +3416,7 @@ check "acquire with an unmatched label yields nothing" 204 -X POST \
   -d '{"labels":["windows-latest"]}' "$BASE/api/runner/acquire"
 check "status with a bogus lease is refused" 409 -X POST \
   -H "Authorization: Bearer $RUNNER_TOKEN" -H 'Content-Type: application/json' \
-  -H 'X-Cofferdam-Lease: nonsense' -d '{"lease":"nonsense","status":"completed","conclusion":"success"}' \
+  -H 'X-Feorge-Lease: nonsense' -d '{"lease":"nonsense","status":"completed","conclusion":"success"}' \
   "$BASE/api/runner/jobs/demo/ci/$BUILD_RUN/build/status"
 
 # ---- cancelling a run ----
@@ -3812,7 +3812,7 @@ jobs:
           echo "<h1>built by a workflow</h1>" > _site/index.html
           echo "body{}" > _site/css/style.css
       - uses: actions/configure-pages@v5
-      - run: echo "base path is $COFFERDAM_SITE_BASE_PATH (was $COFFERDAM_PAGES_BASE_PATH)"
+      - run: echo "base path is $FEORGE_SITE_BASE_PATH (was $FEORGE_PAGES_BASE_PATH)"
       - uses: actions/upload-artifact@v4
         with:
           name: site
@@ -3835,7 +3835,7 @@ YML
   ACT_LOG="$RUNS/$ACT_RUN/jobs/act.log"
   grep -q "already checked out" "$ACT_LOG" || {
     echo "FAIL: actions/checkout was not substituted"; exit 1; }
-  PASS=$((PASS+1)); echo "ok: actions/checkout is substituted by cofferdam's own"
+  PASS=$((PASS+1)); echo "ok: actions/checkout is substituted by feorge's own"
   grep -q "hello world from node v20" "$ACT_LOG" || {
     echo "FAIL: the JavaScript action did not run on node 20"; cat "$ACT_LOG"; exit 1; }
   PASS=$((PASS+1)); echo "ok: a JavaScript action runs, on the node version it asks for"
@@ -3895,7 +3895,7 @@ YML
   # every file it creates - some containers give /tmp one that leaves no
   # execute bit for others - the runner cannot walk back into the directory the
   # job just filled. The artifact would then be empty for a reason that is the
-  # filesystem's and not cofferdam's, so probe for it the way the checks above
+  # filesystem's and not feorge's, so probe for it the way the checks above
   # probe for docker and for git-lfs, and say what is being skipped.
   ART_PROBE="$TMP/artifact-probe"
   mkdir -p "$ART_PROBE"
@@ -3937,7 +3937,7 @@ jobs:
     steps:
       - id: pages
         uses: actions/configure-pages@v5
-      - run: echo "base path is [$COFFERDAM_SITE_BASE_PATH] at ${{ steps.pages.outputs.base_url }}"
+      - run: echo "base path is [$FEORGE_SITE_BASE_PATH] at ${{ steps.pages.outputs.base_url }}"
 YML
   push_ci "Add a sites-host workflow"
   run_workflow sitehost.yml SiteHost
@@ -4018,7 +4018,7 @@ check "the removed runner's token stops working" 401 -H "Authorization: Bearer $
 # vault leaves the deleted thing in a snapshot and nowhere else.
 
 # The suite logged out further up, so these name the vault and the token. After a
-# `cofferdam login` neither is needed, which is what makes a cron entry the
+# `feorge login` neither is needed, which is what makes a cron entry the
 # command and a directory.
 cofferbk() { cli "$@" --host "$BASE" --token "$OWNER_TOKEN"; }
 
@@ -4078,10 +4078,10 @@ check "its pull requests too" 200 "$BACKUP_BASE/demo/proj/pulls/1"
 check "and a release" 200 "$BACKUP_BASE/demo/proj/releases/tag/v2.0.0"
 check "a published site is in the backup" 200 "$BACKUP_BASE/pushed/created/site/"
 body_has "with its content" 'site ok'
-# A mirror clone does not carry cofferdam.json, so the backup fetches it
+# A mirror clone does not carry feorge.json, so the backup fetches it
 # beside the mirror; a restore that lost it would serve every private
 # repository as public.
-[ -f "$BK/current/collections/vaulted/repos/hidden.git/cofferdam.json" ] \
+[ -f "$BK/current/collections/vaulted/repos/hidden.git/feorge.json" ] \
   || { echo "FAIL: the backup did not carry the repository's access file"; exit 1; }
 PASS=$((PASS+1)); echo "ok: the access file came across"
 check "a private repository is still private in the backup" 404 "$BACKUP_BASE/vaulted/hidden"
@@ -4258,7 +4258,7 @@ no_trace_of "deletion removed the repository and every sibling of it" demo proj
 
 # ---- an owner token supplied to a new vault ----
 
-# What `cofferdam deploy` relies on: a fresh vault adopts the owner token given
+# What `feorge deploy` relies on: a fresh vault adopts the owner token given
 # to it, rather than minting one and printing it. The token is then already in
 # the operator's hands, so the server has no reason to log it, and this asserts
 # that it does not.
@@ -4267,10 +4267,10 @@ PRESET_VAULT="$TMP/preset-vault"
 PRESET_LOG="$TMP/preset.log"
 PRESET_PORT=$((PORT + 2))
 PRESET_BASE="http://127.0.0.1:$PRESET_PORT"
-PRESET_TOKEN="cofferdam_$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+PRESET_TOKEN="feorge_$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 mkdir -p "$PRESET_VAULT"
 
-COFFERDAM_OWNER_TOKEN="$PRESET_TOKEN" node dist/index.js serve "$PRESET_VAULT" \
+FEORGE_OWNER_TOKEN="$PRESET_TOKEN" node dist/index.js serve "$PRESET_VAULT" \
   --port "$PRESET_PORT" > "$PRESET_LOG" 2>&1 &
 PRESET_PID=$!
 
@@ -4284,10 +4284,10 @@ done
 check "supplied owner token works" 200 -H "authorization: Bearer $PRESET_TOKEN" "$PRESET_BASE/api/whoami"
 body_has "it belongs to the owner" '"username":"owner"'
 body_has "and the owner may do anything" '"siteAdmin":true'
-check "another token is still refused" 401 -H "authorization: Bearer cofferdam_wrong" "$PRESET_BASE/api/whoami"
+check "another token is still refused" 401 -H "authorization: Bearer feorge_wrong" "$PRESET_BASE/api/whoami"
 grep -q "$PRESET_TOKEN" "$PRESET_LOG" && { echo "FAIL: the server logged the supplied owner token"; exit 1; }
 PASS=$((PASS+1)); echo "ok: the supplied token was not echoed into the log"
-grep -q "COFFERDAM_OWNER_TOKEN" "$PRESET_LOG" || { echo "FAIL: the log did not say where the owner token came from"; cat "$PRESET_LOG"; exit 1; }
+grep -q "FEORGE_OWNER_TOKEN" "$PRESET_LOG" || { echo "FAIL: the log did not say where the owner token came from"; cat "$PRESET_LOG"; exit 1; }
 PASS=$((PASS+1)); echo "ok: the log says the token came from the environment"
 
 kill "$PRESET_PID" 2>/dev/null || true
@@ -4296,7 +4296,7 @@ PRESET_PID=""
 # A token too short to resist guessing is refused rather than accepted quietly:
 # it would otherwise become the owner's credential on a public vault.
 mkdir -p "$TMP/short-vault"
-if COFFERDAM_OWNER_TOKEN=short node dist/index.js serve "$TMP/short-vault" \
+if FEORGE_OWNER_TOKEN=short node dist/index.js serve "$TMP/short-vault" \
      --port $((PORT + 3)) > "$TMP/short.log" 2>&1; then
   echo "FAIL: a too-short owner token was accepted"; cat "$TMP/short.log"; exit 1
 fi
@@ -4306,7 +4306,7 @@ PASS=$((PASS+1)); echo "ok: a too-short supplied owner token is refused"
 
 # ---- deploy finds flyctl under either of its names ----
 
-# `cofferdam deploy fly` drives flyctl as a child process, and flyctl answers to
+# `feorge deploy fly` drives flyctl as a child process, and flyctl answers to
 # two names: a normal install provides `fly` and `flyctl`, while its own GitHub
 # Action unpacks a tarball carrying `flyctl` alone. A deploy that insisted on
 # `fly` would fail on a CI runner following the recipe in docs/deploying.md,
@@ -4405,9 +4405,9 @@ check "and again, past the failure limit" 302 "$LIMIT_BASE/login" \
   --data-urlencode username=owner --data-urlencode "token=$OWNER_TOKEN" --data-urlencode next=/
 
 # The API path, where there is no username in the request at all.
-check "a wrong bearer token is refused" 401 -H 'authorization: Bearer cofferdam_wrong' "$LIMIT_BASE/api/whoami"
-check "a second wrong bearer token too" 401 -H 'authorization: Bearer cofferdam_wrong' "$LIMIT_BASE/api/whoami"
-check "the third is throttled" 429 -D "$TMP/headers" -H 'authorization: Bearer cofferdam_wrong' "$LIMIT_BASE/api/whoami"
+check "a wrong bearer token is refused" 401 -H 'authorization: Bearer feorge_wrong' "$LIMIT_BASE/api/whoami"
+check "a second wrong bearer token too" 401 -H 'authorization: Bearer feorge_wrong' "$LIMIT_BASE/api/whoami"
+check "the third is throttled" 429 -D "$TMP/headers" -H 'authorization: Bearer feorge_wrong' "$LIMIT_BASE/api/whoami"
 header_has "with a Retry-After" 'retry-after: [0-9]'
 body_has "and an error object" '"error"'
 # A request with no Authorization header presented no credential, so there was

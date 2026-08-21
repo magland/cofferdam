@@ -24,7 +24,7 @@ import { AuthResult, TokenRecord, loadVault } from './vault';
 // the vault.
 
 // Cookies are not scoped by origin, so any document on any host under a shared
-// parent domain can set a cookie named cofferdam_session with
+// parent domain can set a cookie named feorge_session with
 // Domain=<parent>, which the browser then also sends here. With several vaults
 // on sibling subdomains of one domain, that lets one of them shadow another's
 // session. Browsers refuse a __Host--prefixed cookie that carries a Domain
@@ -33,8 +33,8 @@ import { AuthResult, TokenRecord, loadVault } from './vault';
 // The prefix also requires Secure and Path=/, so the name is conditional on
 // exactly when the prefix is legal: setSessionCookie already sets path '/' and
 // sets secure from req.protocol, and a plain-http vault keeps the bare name.
-const HOST_COOKIE_NAME = '__Host-cofferdam_session';
-const COOKIE_NAME = 'cofferdam_session';
+const HOST_COOKIE_NAME = '__Host-feorge_session';
+const COOKIE_NAME = 'feorge_session';
 const cookieName = (req: Request) => (req.protocol === 'https' ? HOST_COOKIE_NAME : COOKIE_NAME);
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 

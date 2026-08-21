@@ -9,7 +9,7 @@ import { Externals, defaultExternalsDir } from './externals';
 import { JobResult, defaultWorkDir, runJob } from './job';
 import { startWakeListener } from './wake';
 
-// `cofferdam runner run`: acquire a job, execute it, report back, repeat. The
+// `feorge runner run`: acquire a job, execute it, report back, repeat. The
 // transport is plain HTTP with a long poll, so it works through any proxy
 // that passes ordinary requests, and a runner behind NAT needs no inbound
 // connectivity at all.
@@ -54,7 +54,7 @@ export const DEFAULT_IMAGES: Record<string, string> = {
 
 export function configPath(): string {
   const base = process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config');
-  return path.join(base, 'cofferdam', 'runner.json');
+  return path.join(base, 'feorge', 'runner.json');
 }
 
 export function loadRunnerConfig(file = configPath()): RunnerConfig | null {
@@ -92,7 +92,7 @@ class JobClient {
   private headers(extra: Record<string, string> = {}): Record<string, string> {
     return {
       authorization: `Bearer ${this.runner.token}`,
-      'x-cofferdam-lease': this.spec.lease,
+      'x-feorge-lease': this.spec.lease,
       ...extra,
     };
   }
@@ -317,7 +317,7 @@ export class Runner {
           },
         })
       : null;
-    console.log(`cofferdam runner ${identity.name} ready`);
+    console.log(`feorge runner ${identity.name} ready`);
     console.log(`  server:  ${this.host}`);
     console.log(`  docker:  ${docker}`);
     console.log(`  workdir: ${this.workDir}`);

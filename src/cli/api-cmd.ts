@@ -97,10 +97,10 @@ route. The response body is printed verbatim on stdout, whatever its type; a
 non-2xx status prints the body on stderr instead and exits non-zero, with the
 same exit codes every other command uses (4 for 404, 5 for 409).
 
-  cofferdam api repos/demo/proj/issues
-  cofferdam api repos/demo/proj/issues -X POST --field title=Bug --field 'body=It broke'
-  cofferdam api repos/demo/proj/issues/1/state -X POST --field state=closed
-  cofferdam api repos/demo/proj/contents/README.md --input patch.json -X PUT`,
+  feorge api repos/demo/proj/issues
+  feorge api repos/demo/proj/issues -X POST --field title=Bug --field 'body=It broke'
+  feorge api repos/demo/proj/issues/1/state -X POST --field state=closed
+  feorge api repos/demo/proj/contents/README.md --input patch.json -X PUT`,
   args: [{ name: 'path', required: true }],
   options: [...FIELD_OPTIONS, ...TARGET_OPTIONS],
   async run(inv) {

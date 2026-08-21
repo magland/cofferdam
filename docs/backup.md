@@ -2,19 +2,19 @@
 
 How to keep a copy of a vault on a disk of your own, updated incrementally, with snapshots you can go back to.
 
-A vault is a plain directory, so on a machine you have a shell on, a backup is `cp -a` and a move is `rsync`. That remains true and remains the shortest answer. It is not true of the deployment `cofferdam deploy fly` produces: the vault is on a Fly volume, where there is no shell in the ordinary sense, no rsync at the far end, and no filesystem access except through `fly ssh`. The supported ways to get a copy of such a vault used to be a hand-written `tar` pipeline over `fly ssh console`, which transfers everything every time and is specific to one host, and Fly's own volume snapshots, which live at the same provider as the thing they protect.
+A vault is a plain directory, so on a machine you have a shell on, a backup is `cp -a` and a move is `rsync`. That remains true and remains the shortest answer. It is not true of the deployment `feorge deploy fly` produces: the vault is on a Fly volume, where there is no shell in the ordinary sense, no rsync at the far end, and no filesystem access except through `fly ssh`. The supported ways to get a copy of such a vault used to be a hand-written `tar` pipeline over `fly ssh console`, which transfers everything every time and is specific to one host, and Fly's own volume snapshots, which live at the same provider as the thing they protect.
 
-Here we describe `cofferdam backup`, which pulls a whole vault over HTTP into a directory on your own machine. It needs no shell on the server and no flyctl, and it works identically against a Fly app, a VPS, a Docker deployment, and `127.0.0.1:3000`.
+Here we describe `feorge backup`, which pulls a whole vault over HTTP into a directory on your own machine. It needs no shell on the server and no flyctl, and it works identically against a Fly app, a VPS, a Docker deployment, and `127.0.0.1:3000`.
 
 ```bash
-cofferdam backup ~/backups/myvault              # incremental sync
-cofferdam backup ~/backups/myvault --snapshot   # ...then snapshot, then prune
+feorge backup ~/backups/myvault              # incremental sync
+feorge backup ~/backups/myvault --snapshot   # ...then snapshot, then prune
 ```
 
 The token needs to belong to a site admin, and must not be a token-scoped one, because the copy includes `vault.json`. The vault URL, the exclusions, and the retention policy are recorded in the backup directory, so after the first run a cron entry is the command and a directory:
 
 ```cron
-17 3 * * *  cofferdam backup /srv/backups/myvault --snapshot --quiet
+17 3 * * *  feorge backup /srv/backups/myvault --snapshot --quiet
 ```
 
 ## A backup is a vault
@@ -32,12 +32,12 @@ The token needs to belong to a site admin, and must not be a token-scoped one, b
 `current/` has exactly the layout in [The vault](vault.md), with each `<repo>.git` a mirror created by `git clone --mirror`, which is a bare repository like any other. So restoring is one line:
 
 ```bash
-cofferdam serve ~/backups/myvault/current
+feorge serve ~/backups/myvault/current
 ```
 
-That is the whole recovery procedure, whether you want to look at last night's issues or stand the vault back up somewhere else, and it can be rehearsed at any time. To put the vault back on a host, copy `current/` onto that host and serve it there. A snapshot is a vault too, so `cofferdam serve ~/backups/myvault/snapshots/2026-08-18T140256Z` reads the vault as it was that morning, including whatever has since been deleted.
+That is the whole recovery procedure, whether you want to look at last night's issues or stand the vault back up somewhere else, and it can be rehearsed at any time. To put the vault back on a host, copy `current/` onto that host and serve it there. A snapshot is a vault too, so `feorge serve ~/backups/myvault/snapshots/2026-08-18T140256Z` reads the vault as it was that morning, including whatever has since been deleted.
 
-Note that there is no `cofferdam restore`. Reconciling a backup against a running vault is a different and much harder operation, and having one would leave two restore paths of which only one ever gets tested.
+Note that there is no `feorge restore`. Reconciling a backup against a running vault is a different and much harder operation, and having one would leave two restore paths of which only one ever gets tested.
 
 ## How the transfer works
 
@@ -45,7 +45,7 @@ Repositories and everything else travel by different routes, because half the pr
 
 **Repositories** come across as mirrors. `git fetch` is the best incremental transport available for a bare repository: it moves only the objects the far end lacks, it is atomic per ref, and it runs over the same anonymous smart-HTTP endpoint every clone uses. A repository whose refs and default branch have not changed since the last run is skipped without a request at all, which is what keeps a nightly run over a hundred quiet repositories to a single request rather than a hundred handshakes against a machine that has to wake up first.
 
-A few files inside each repository travel by the other route, because a mirror clone does not carry them: the `description`, which every listing shows; the `config`, which holds the fork parent and the `receive.*` protections a repository was created with; and `cofferdam.json`, which holds the private flag and the collaborators, and whose loss would be the worst of the three, since a restore without it would serve every private repository as public. They are copied byte for byte, so a restored repository has its description, its push protections, and its visibility rather than git's defaults. Note that the copy therefore has no `origin` remote, which is right: a restored repository should not point back at where it was restored from.
+A few files inside each repository travel by the other route, because a mirror clone does not carry them: the `description`, which every listing shows; the `config`, which holds the fork parent and the `receive.*` protections a repository was created with; and `feorge.json`, which holds the private flag and the collaborators, and whose loss would be the worst of the three, since a restore without it would serve every private repository as public. They are copied byte for byte, so a restored repository has its description, its push protections, and its visibility rather than git's defaults. Note that the copy therefore has no `origin` remote, which is right: a restored repository should not point back at where it was restored from.
 
 **Everything else** is compared by size and modification time, as rsync does by default, and fetched only where it differs. That is issues, pull requests, releases, sites, run history, LFS objects on the volume, and the state files at the vault root. Two routes carry it, `GET /api/backup/manifest` and `POST /api/backup/fetch`, both described in [The JSON API](api.md).
 
@@ -82,20 +82,20 @@ Run history is included by default. It is the largest churning part of a vault, 
 
 `--snapshot` builds `snapshots/<utc-timestamp>/` by walking `current/` and hardlinking every file. A snapshot of a 5 GB vault costs one inode per file and no data, and it is a directory that can be served, diffed, or copied out with ordinary tools.
 
-This works only because nothing in the backup is ever modified in place. Git rewrites refs, `packed-refs`, and packfiles by rename, cofferdam writes its state files by rename, `cofferdam backup` writes by rename, and reflogs, the one thing git appends to, are turned off on the mirrors. **Anything that opens a file under `current/` for appending corrupts every snapshot that has already hardlinked it**, since they share the inode. Do not edit files under `current/` in place, and if you write code that touches a backup, write by rename. `cofferdam backup verify` reports a file with more hard links than the snapshots can account for, and taking a snapshot refuses such a file outright.
+This works only because nothing in the backup is ever modified in place. Git rewrites refs, `packed-refs`, and packfiles by rename, feorge writes its state files by rename, `feorge backup` writes by rename, and reflogs, the one thing git appends to, are turned off on the mirrors. **Anything that opens a file under `current/` for appending corrupts every snapshot that has already hardlinked it**, since they share the inode. Do not edit files under `current/` in place, and if you write code that touches a backup, write by rename. `feorge backup verify` reports a file with more hard links than the snapshots can account for, and taking a snapshot refuses such a file outright.
 
 Retention is grandfather-father-son: the newest snapshot of each of the last N days, weeks, and months is kept and the rest are removed, evaluated in UTC so the decision does not move with the machine's timezone. The newest snapshot is always kept whatever the numbers say.
 
-Note what "the newest of each day" means for a snapshot taken by hand. Two snapshots on the same UTC day leave one, the later, since only one of them is that day's newest. That is the same rule `restic` and `borg` apply, and it is the rule to remember before taking a snapshot in the morning and expecting it in the evening. `cofferdam backup prune <dir>` applies the policy without syncing.
+Note what "the newest of each day" means for a snapshot taken by hand. Two snapshots on the same UTC day leave one, the later, since only one of them is that day's newest. That is the same rule `restic` and `borg` apply, and it is the rule to remember before taking a snapshot in the morning and expecting it in the evening. `feorge backup prune <dir>` applies the policy without syncing.
 
 The honest cost: a snapshot pins the packfiles that were current when it was taken, so a repack in a busy repository leaves the old pack on disk until the last snapshot referring to it is pruned. Disk use therefore grows faster than the vault does, and pruning is what reclaims it.
 
 ## Checking a backup
 
 ```bash
-cofferdam backup list ~/backups/myvault      # snapshots, sizes, and the last run
-cofferdam backup verify ~/backups/myvault    # against the vault, and against git
-cofferdam backup prune ~/backups/myvault     # retention, without syncing
+feorge backup list ~/backups/myvault      # snapshots, sizes, and the last run
+feorge backup verify ~/backups/myvault    # against the vault, and against git
+feorge backup prune ~/backups/myvault     # retention, without syncing
 ```
 
 `verify` runs `git fsck --connectivity-only` over every mirror, asks the vault for hashes, and reports anything missing, extra, or different, including the hardlink check above. Note that it makes the vault read every byte it holds, so it is a thing to run when something is suspected or on a schedule of its own, not after every sync. It exits non-zero when there is something to report, so cron will tell you. `--connectivity-only` skips re-hashing every blob, which turns an hour into a minute and still catches the failure that matters, an object the history refers to and the backup does not have.
@@ -118,8 +118,8 @@ Re-implementing bucket-to-disk sync here would be a worse `rclone`. LFS objects 
 
 ## On Fly
 
-A Fly machine deployed by `cofferdam deploy fly` stops when idle and starts on the next request, so the first request of a backup wakes it and waits a few seconds. The command says so rather than appearing hung. A backup keeps the machine awake for its duration, which costs a little.
+A Fly machine deployed by `feorge deploy fly` stops when idle and starts on the next request, so the first request of a backup wakes it and waits a few seconds. The command says so rather than appearing hung. A backup keeps the machine awake for its duration, which costs a little.
 
-`cofferdam deploy fly show <app>` names the backup this machine keeps for that app, if it has one, so that "is anything copying this vault off Fly?" is a question with an answer.
+`feorge deploy fly show <app>` names the backup this machine keeps for that app, if it has one, so that "is anything copying this vault off Fly?" is a question with an answer.
 
 Fly's own daily volume snapshots remain useful and are not a substitute: they live at the same provider as the volume they protect, and they cannot be read without Fly. Use both.

@@ -230,7 +230,7 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
    *
    * The web interface has had this since runners did, and the API not having
    * it meant that the one way to give a runner a token nobody holds any more
-   * was a browser. `cofferdam deploy fly runner` needs exactly that: a runner
+   * was a browser. `feorge deploy fly runner` needs exactly that: a runner
    * registered by an earlier deploy has a token that only the machine knows,
    * and a machine being rebuilt has to be given one it can hold.
    */
@@ -259,7 +259,7 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
    * Point a runner's wake address somewhere, or clear it with an empty body.
    *
    * Separate from registration because the app that will run a runner usually
-   * does not exist until after the runner is registered: `cofferdam deploy fly
+   * does not exist until after the runner is registered: `feorge deploy fly
    * runner` needs the token to put in the machine's secrets before it can know
    * the URL that starts the machine.
    */
@@ -407,7 +407,7 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
   }
 
   function leaseOf(req: Request): string {
-    const v = req.get('x-cofferdam-lease');
+    const v = req.get('x-feorge-lease');
     return typeof v === 'string' ? v : '';
   }
 
@@ -651,7 +651,7 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
     }
   });
 
-  // Runner-side liveness check, so `cofferdam runner run` can fail fast with a
+  // Runner-side liveness check, so `feorge runner run` can fail fast with a
   // clear message rather than long-polling against a bad token or host.
   app.get('/api/runner/whoami', (req, res) => {
     const auth = requireRunner(req, res);

@@ -1,4 +1,4 @@
-# Publishes @magland/cofferdam to npm when a push to main touches
+# Publishes feorge to npm when a push to main touches
 # package.json, which is where a version bump lives. Any other push is not a
 # release and does not start this workflow at all.
 #

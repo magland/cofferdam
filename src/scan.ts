@@ -30,7 +30,7 @@ export function isValidName(name: string): boolean {
 /**
  * Whether a name is dot-prefixed. A single leading dot is allowed so that a
  * repository can carry a name the interface reads rather than a name a project
- * chose: `.cofferdam` holds a collection's profile README (see
+ * chose: `.feorge` holds a collection's profile README (see
  * src/profile.ts), and the shape is left open for whatever else the forge
  * later wants to read out of a collection.
  *

@@ -10,7 +10,7 @@ import { encPath } from './views';
  * leaving a visitor to infer it from the names in the list.
  *
  * Where it comes from is a convention rather than a new place in the vault. A
- * repository named `.cofferdam` in the collection holds it at
+ * repository named `.feorge` in the collection holds it at
  * `profile/README.md`, on the repository's default branch. GitHub reads an
  * organization's profile out of a `.github` repository the same way, and the
  * borrowed shape carries a real advantage: the file is edited, reviewed,
@@ -21,7 +21,7 @@ import { encPath } from './views';
  * like any other, its own README shows on its own page, and the write role on it
  * is what decides who may change the profile.
  */
-export const PROFILE_REPO = '.cofferdam';
+export const PROFILE_REPO = '.feorge';
 
 /** The directory inside PROFILE_REPO the README is read from. */
 export const PROFILE_DIR = 'profile';

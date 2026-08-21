@@ -107,7 +107,7 @@ export const releaseCommands: Command[] = [
     path: ['release', 'create'],
     summary: 'Publish notes for a tag that already exists',
     description: `The tag has to be in the repository first: notes for a tag nobody can check out
-are notes about nothing. 'cofferdam tag create' makes one.
+are notes about nothing. 'feorge tag create' makes one.
 
 Creating and editing are the same call underneath, since a release is keyed by its
 tag, so 'release create' on an existing release edits it rather than refusing.`,

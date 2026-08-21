@@ -181,7 +181,7 @@ function readConfig(file: string): VaultConfig {
 /**
  * Hold config.json's lock across a read, an edit, and the write back.
  *
- * `cofferdam config set` and `PATCH /api/config` merge changes into whatever is
+ * `feorge config set` and `PATCH /api/config` merge changes into whatever is
  * on disk, so two of them overlapping keeps one change and drops the other. The
  * cache is dropped on the way in for the same reason it is in the runner
  * registry: an unchanged mtime and size is a good enough guess for a read, and
@@ -211,8 +211,8 @@ export function saveConfig(root: string, changes: Partial<VaultConfig>): VaultCo
 
 /**
  * Record network.trustProxy: true unless the vault has already said something
- * about it. Called by `serve` when COFFERDAM_TRUST_PROXY is set, which is how
- * `cofferdam deploy fly` tells a vault it is behind a proxy: the deploy cannot
+ * about it. Called by `serve` when FEORGE_TRUST_PROXY is set, which is how
+ * `feorge deploy fly` tells a vault it is behind a proxy: the deploy cannot
  * write to the volume itself, since the vault does not exist until the server
  * starts.
  *

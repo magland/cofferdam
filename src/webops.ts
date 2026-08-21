@@ -236,7 +236,7 @@ export function registerWebOps(
   // current home and pushes it here, where push-to-create makes it. The server
   // never fetches from another host, so it needs no outbound access, no stored
   // credentials for other services, and no work that outlives a request. What
-  // performs it is `cofferdam import` on the operator's machine, and this page
+  // performs it is `feorge import` on the operator's machine, and this page
   // only says what to run: no form, since there is nothing here to submit to.
   app.get('/import', (req, res) => {
     const viewer = requireViewerPage(root, req, res);
@@ -454,7 +454,7 @@ export function registerWebOps(
     const collections = listCollections(root).map((o) => o.name);
     const collection = typeof req.query.collection === 'string' ? req.query.collection : '';
     // A name may be suggested too, which is how the prompt to write a
-    // collection's profile README arrives here with .cofferdam already filled
+    // collection's profile README arrives here with .feorge already filled
     // in (see src/profile.ts).
     const name = typeof req.query.name === 'string' ? req.query.name : '';
     res.type('html').send(forms.newRepoPage(viewer, collections, { collection, name }));

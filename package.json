@@ -1,14 +1,14 @@
 {
-  "name": "@magland/cofferdam",
-  "version": "0.2.2",
+  "name": "feorge",
+  "version": "0.3.0",
   "description": "A self-hosted git forge with the shape of GitHub: browsing, in-browser editing, issues, pull requests, Actions-compatible workflows, static sites, and Git LFS, from one small server.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/magland/cofferdam.git"
+    "url": "git+https://github.com/magland/feorge.git"
   },
-  "homepage": "https://github.com/magland/cofferdam#readme",
-  "bugs": "https://github.com/magland/cofferdam/issues",
+  "homepage": "https://github.com/magland/feorge#readme",
+  "bugs": "https://github.com/magland/feorge/issues",
   "keywords": [
     "git",
     "forge",
@@ -20,7 +20,7 @@
     "static-site"
   ],
   "bin": {
-    "cofferdam": "dist/index.js"
+    "feorge": "dist/index.js"
   },
   "main": "dist/index.js",
   "engines": {

@@ -28,7 +28,7 @@ export interface RawResponse {
 }
 
 /**
- * One request, with the body left as text. `cofferdam api` prints it verbatim,
+ * One request, with the body left as text. `feorge api` prints it verbatim,
  * and the routes that answer with a patch, a log, or an archive are not JSON at
  * all.
  */

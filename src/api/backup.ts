@@ -40,12 +40,12 @@ const SECRET_FILES = new Set(['vault.json', 'runners.json', '.secret']);
  * The files inside a bare repository that git's own transport leaves behind. A
  * mirror clone carries objects and refs; it writes its own default description
  * and its own config, so a backup that relied on it alone would lose every
- * repository's description, its `cofferdam.forkedFrom`, and the `receive.*`
- * settings a repository is created with. cofferdam.json is the worst of the
+ * repository's description, its `feorge.forkedFrom`, and the `receive.*`
+ * settings a repository is created with. feorge.json is the worst of the
  * three to lose: it holds the private flag and the collaborators, so a
  * restore without it would serve every private repository as public.
  */
-const REPO_FILES = ['description', 'config', 'cofferdam.json'];
+const REPO_FILES = ['description', 'config', 'feorge.json'];
 
 /** What a caller may ask to have left out, as `?exclude=runs,sites`. */
 const EXCLUDABLE = new Set(['runs', 'sites', 'lfs', 'secrets']);
@@ -379,7 +379,7 @@ export function registerBackupApi(app: Express, root: string, limiter: AuthLimit
             // because a mirror clone does not carry them and they are not git
             // data: the description, which every listing shows; the config,
             // which holds the fork parent and the receive protections a
-            // repository was created with; and cofferdam.json, which holds
+            // repository was created with; and feorge.json, which holds
             // the private flag and the collaborators. Restoring a vault whose
             // private repositories had come back public would be far worse
             // than a poor restore.

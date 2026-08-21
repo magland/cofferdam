@@ -350,7 +350,7 @@ export function createApp(root: string) {
   console.log(`Git LFS storage backend: ${lfs.label}`);
 
   // The CI engine plans and schedules workflow runs; jobs execute on runners
-  // elsewhere (cofferdam runner run), never in this process.
+  // elsewhere (feorge runner run), never in this process.
   const engine = new CiEngine(root, () => loadConfig(root).ci);
 
   // A runner that stops when it has nothing to do cannot be told that it has

@@ -45,11 +45,11 @@ import { bootstrapVault } from './vault';
 // with one help text covering all of them. See src/cli/parse.ts for why.
 
 const FOOTER = `Configuration:
-  cofferdam login https://vault.example.com   once, then the rest need no arguments
+  feorge login https://vault.example.com   once, then the rest need no arguments
 
-The vault URL is kept in ~/.config/cofferdam/login.json and the token in git's
+The vault URL is kept in ~/.config/feorge/login.json and the token in git's
 own credential store. --host and --token override either for a single command,
-and COFFERDAM_HOST and COFFERDAM_TOKEN sit between the two, for a caller with
+and FEORGE_HOST and FEORGE_TOKEN sit between the two, for a caller with
 no keyring and possibly no writable home directory.
 
 Vault layout, where <repos> is <vault>/collections/<collection>/repos:
@@ -66,7 +66,7 @@ A vault laid out the older way, with collections directly in <vault>, is moved
 to this one on the first start of a server that knows it.
 
 Backing up a hosted vault:
-  cofferdam backup ~/backups/myvault --snapshot   incremental, over HTTP; see docs/backup.md
+  feorge backup ~/backups/myvault --snapshot   incremental, over HTTP; see docs/backup.md
 
 Themes: ${themeNames().join(', ')} (default ${DEFAULT_THEME}). Pick one under
 Admin > Appearance in the web interface, or write config.json by hand.`;
@@ -86,21 +86,21 @@ async function serveCmd(args: string[], usage: () => never) {
     else dir = a;
   }
   if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new CliError('Invalid port', EXIT_USAGE);
-  const vault = path.resolve(dir ?? process.env.COFFERDAM_VAULT ?? '.');
+  const vault = path.resolve(dir ?? process.env.FEORGE_VAULT ?? '.');
   if (!fs.existsSync(vault) || !fs.statSync(vault).isDirectory()) {
     throw new CliError(`Vault directory does not exist: ${vault}`);
   }
   // A vault with no vault.json is initialized on first start. The owner token
-  // is normally minted here and printed once; COFFERDAM_OWNER_TOKEN lets the
-  // operator supply it instead, which is how `cofferdam deploy` hands a remote
+  // is normally minted here and printed once; FEORGE_OWNER_TOKEN lets the
+  // operator supply it instead, which is how `feorge deploy` hands a remote
   // vault a token it already holds. A supplied token is not printed: it is
   // already where it needs to be, and a hosted server's log is not a good
   // place to leave a copy.
-  const boot = bootstrapVault(vault, process.env.COFFERDAM_OWNER_TOKEN ?? null);
-  // Set by `cofferdam deploy fly`, which knows there is a TLS proxy in front but
+  const boot = bootstrapVault(vault, process.env.FEORGE_OWNER_TOKEN ?? null);
+  // Set by `feorge deploy fly`, which knows there is a TLS proxy in front but
   // cannot write to the volume before the vault exists. It only seeds the
   // setting; config.json remains the place it lives and can be edited by hand.
-  const seeded = process.env.COFFERDAM_TRUST_PROXY === '1' ? seedTrustProxy(vault) : false;
+  const seeded = process.env.FEORGE_TRUST_PROXY === '1' ? seedTrustProxy(vault) : false;
   // Imported here rather than at the top of the file: the server pulls in express
   // and the whole rendering stack, which is most of what starting this process
   // costs, and no other command needs any of it. A CLI a person or an agent runs
@@ -112,7 +112,7 @@ async function serveCmd(args: string[], usage: () => never) {
     if (boot && boot.preset) {
       console.log('');
       console.log('Initialized a new vault (no vault.json found).');
-      console.log(`Owner '${boot.username}' was given the token from COFFERDAM_OWNER_TOKEN, so it is`);
+      console.log(`Owner '${boot.username}' was given the token from FEORGE_OWNER_TOKEN, so it is`);
       console.log('not repeated here; only its hash is stored.');
       console.log('');
     } else if (boot) {
@@ -123,11 +123,11 @@ async function serveCmd(args: string[], usage: () => never) {
       console.log(`  ${boot.token}`);
       console.log('');
       console.log('Sign in on the web with it, or manage users from anywhere:');
-      console.log(`  cofferdam login ${url}`);
+      console.log(`  feorge login ${url}`);
       console.log('');
     }
-    if (seeded) console.log('Recorded network.trustProxy: true in config.json (COFFERDAM_TRUST_PROXY is set).');
-    console.log(`cofferdam serving vault ${vault}`);
+    if (seeded) console.log('Recorded network.trustProxy: true in config.json (FEORGE_TRUST_PROXY is set).');
+    console.log(`feorge serving vault ${vault}`);
     console.log(`  ${url}`);
   });
 }
@@ -146,7 +146,7 @@ function refuseScopeOptions(inv: Invocation): void {
   if (inv.list('scope').length || inv.list('admin').length) {
     throw new CliError(
       '--scope and --admin are gone: a user owns the collection named after them, and anything more is granted ' +
-        "where it applies. Use 'cofferdam collab add' for a repository, 'cofferdam collection owner add' for a " +
+        "where it applies. Use 'feorge collab add' for a repository, 'feorge collection owner add' for a " +
         'collection, or --site-admin for everything.',
       EXIT_USAGE
     );
@@ -166,7 +166,7 @@ const VAULT_OPTION: OptionSpec = {
 function refuseVaultOption(inv: Invocation): void {
   if (inv.str('vault') !== null) {
     throw new CliError(
-      '--vault is gone: user commands talk to a running server. Run `cofferdam login <url>` first.',
+      '--vault is gone: user commands talk to a running server. Run `feorge login <url>` first.',
       EXIT_USAGE
     );
   }
@@ -222,7 +222,7 @@ async function userGrantCmd(inv: Invocation) {
   if (grant === revoke) {
     throw new CliError(
       `Pass exactly one of --site-admin or --revoke-site-admin. Repository and collection access is granted with ` +
-        `'cofferdam collab add' and 'cofferdam collection owner add'.`,
+        `'feorge collab add' and 'feorge collection owner add'.`,
       EXIT_USAGE
     );
   }
@@ -277,10 +277,10 @@ async function whoamiCmd(inv: Invocation) {
 // ---- login and logout ----
 
 // The vault being logged in to or out of: the URL given, the environment, or
-// the one logged in to last, which is what makes `cofferdam logout` need no
+// the one logged in to last, which is what makes `feorge logout` need no
 // arguments.
 function loginTarget(host: string | null): { host: string; target: CredentialTarget } {
-  const resolved = (host ?? process.env.COFFERDAM_HOST ?? loadLogin()?.host ?? '').replace(/\/+$/, '');
+  const resolved = (host ?? process.env.FEORGE_HOST ?? loadLogin()?.host ?? '').replace(/\/+$/, '');
   if (!resolved) throw new CliError('Which vault? Give its URL, e.g. https://vault.example.com', EXIT_USAGE);
   try {
     return { host: resolved, target: credentialTarget(resolved) };
@@ -343,7 +343,7 @@ async function tokenFor(inv: Invocation): Promise<string | null> {
     if (!value) throw new CliError('--token-stdin was given but stdin was empty.', EXIT_AUTH);
     return value;
   }
-  return flag ?? process.env.COFFERDAM_TOKEN?.trim() ?? null;
+  return flag ?? process.env.FEORGE_TOKEN?.trim() ?? null;
 }
 
 async function loginCmd(inv: Invocation) {
@@ -359,10 +359,10 @@ async function loginCmd(inv: Invocation) {
     console.error('Storing one would silently do nothing, so this is refused rather than reported as success.');
     console.error('');
     console.error('Choose where the token should live and run login again:');
-    console.error('  cofferdam login --helper store        a file at ~/.git-credentials, mode 0600, in plain text');
-    console.error('  cofferdam login --helper cache        memory only, forgotten after 15 minutes');
-    console.error('  cofferdam login --helper libsecret    the desktop keyring, on Linux');
-    console.error('  cofferdam login --helper osxkeychain  the login keychain, on macOS');
+    console.error('  feorge login --helper store        a file at ~/.git-credentials, mode 0600, in plain text');
+    console.error('  feorge login --helper cache        memory only, forgotten after 15 minutes');
+    console.error('  feorge login --helper libsecret    the desktop keyring, on Linux');
+    console.error('  feorge login --helper osxkeychain  the login keychain, on macOS');
     console.error('');
     console.error(`The choice is recorded for ${target.url} alone; other remotes keep whatever they use now.`);
     process.exit(EXIT_FAIL);
@@ -400,8 +400,8 @@ async function loginCmd(inv: Invocation) {
   if (who.tokenScope) console.log(`  this token is restricted to: ${(who.tokenScope as string[]).join(', ')}`);
   console.log('');
   console.log('git clone, fetch, push, and git lfs against this vault will no longer ask for a password,');
-  console.log(`and cofferdam commands talk to it by default (${loginPath()}).`);
-  console.log('Run `cofferdam logout` to remove it again.');
+  console.log(`and feorge commands talk to it by default (${loginPath()}).`);
+  console.log('Run `feorge logout` to remove it again.');
 }
 
 async function logoutCmd(inv: Invocation) {
@@ -449,7 +449,7 @@ const commands: Command[] = [
     ['serve'],
     'Serve a vault over HTTP',
     `Serve a vault: a directory of collections containing bare git repositories.
-The vault defaults to $COFFERDAM_VAULT, then the current directory. On the
+The vault defaults to $FEORGE_VAULT, then the current directory. On the
 first start with no vault.json, the server initializes one and prints an owner
 token once.
 
@@ -461,7 +461,7 @@ Options:
   raw(
     ['import'],
     'Bring an existing repository into the vault',
-    `Usage: cofferdam import <source> <collection>[/<name>] [--lfs]
+    `Usage: feorge import <source> <collection>[/<name>] [--lfs]
 
 Clone the source into a temporary directory, push it here, which creates it,
 and remove the clone again. The source is an https or ssh git URL, owner/repo
@@ -546,7 +546,7 @@ is named after owns it by name and needs no entry.`,
     summary: 'Create a user and print its token once',
     description: `A user owns the collection named after them, the way a GitHub account owns its
 namespace: they create repositories there and administer them. Anything more is
-granted where it applies ('cofferdam collab add' on a repository, 'cofferdam
+granted where it applies ('feorge collab add' on a repository, 'feorge
 collection owner add' on a collection) or with --site-admin. Run again on an
 existing user to mint an additional token. Only a SHA-256 hash of a token is
 ever stored, so the token is shown once and cannot be recovered afterwards.`,
@@ -564,8 +564,8 @@ ever stored, so the token is shown once and cannot be recovered afterwards.`,
   {
     path: ['user', 'grant'],
     summary: 'Grant or withdraw the site-admin bit',
-    description: `Per-repository access is granted on the repository ('cofferdam collab add') and
-per-collection access on the collection ('cofferdam collection owner add');
+    description: `Per-repository access is granted on the repository ('feorge collab add') and
+per-collection access on the collection ('feorge collection owner add');
 this command carries only the one bit that is the vault's own.`,
     args: [{ name: 'username', required: true }],
     options: [
@@ -594,7 +594,7 @@ this command carries only the one bit that is the vault's own.`,
     path: ['login'],
     summary: 'Log in to a vault and hand the token to git',
     description: `Ask for a token, check it, and hand it to git's credential store, so that clone,
-fetch, push, git lfs, and every other cofferdam command stop asking for it. The
+fetch, push, git lfs, and every other feorge command stop asking for it. The
 vault URL is remembered, so later commands need no arguments. The token is read
 back after storing to confirm it was really kept.
 
@@ -627,7 +627,7 @@ nothing when that is nothing.`,
   raw(
     ['deploy', 'fly'],
     'Put a vault on Fly.io, or deploy an update to one',
-    `Usage: cofferdam deploy fly <app> [--region <r>] [--volume <gb>] [--vm-size <s>]
+    `Usage: feorge deploy fly <app> [--region <r>] [--volume <gb>] [--vm-size <s>]
                             [--vm-memory <m>] [--lfs-bucket] [--org <o>]
                             [--image <ref> | --from-source [--local-build]]
 
@@ -635,7 +635,7 @@ Needs flyctl installed, and fly auth login done. The app name is globally
 unique on Fly and becomes the URL, https://<app>.fly.dev. Creating one mints
 the owner token here and hands it to the server as a secret, then prints it once
 the vault answers, with how to sign in on the web and how to store it for the
-CLI and git. Nothing is kept on this machine: cofferdam login with that token is
+CLI and git. Nothing is kept on this machine: feorge login with that token is
 what does that. Run it again to deploy a new version; settings not named by a
 flag keep whatever the live app has, so a single flag changes a single thing. A
 vault is a directory on one volume, so the app runs as exactly one machine: a
@@ -646,14 +646,14 @@ By default the image deployed is the published one for this CLI's own version.
 to deploy a change before it has been released; --local-build uses this machine's
 Docker rather than Fly's builder. --image <ref> deploys some other published tag.
 
-See also: cofferdam deploy fly show <app>, cofferdam deploy fly destroy <app>.
+See also: feorge deploy fly show <app>, feorge deploy fly destroy <app>.
 `,
     deployFlyCmd
   ),
   raw(
     ['deploy', 'fly', 'runner'],
     'Put a workflow runner on Fly.io, which stops when idle',
-    `Usage: cofferdam deploy fly runner <app> [--allow <glob>...] [--labels <l,...>]
+    `Usage: feorge deploy fly runner <app> [--allow <glob>...] [--labels <l,...>]
                                    [--idle <5m>] [--region <r>] [--volume <gb>]
                                    [--vm-size <s>] [--vm-memory <m>] [--org <o>]
                                    [--image <ref> | --from-source [--local-build]]
@@ -672,7 +672,7 @@ it costs while stopped is the volume alone.
 take jobs for; it executes whatever their workflows contain, on this machine.
 Run the same command again to deploy a new version.
 
-See also: cofferdam deploy fly runner show <app>, destroy <app>, cofferdam runner list.
+See also: feorge deploy fly runner show <app>, destroy <app>, feorge runner list.
 `,
     deployFlyRunnerCmd
   ),
@@ -698,7 +698,7 @@ See also: cofferdam deploy fly runner show <app>, destroy <app>, cofferdam runne
   raw(
     ['runner', 'add'],
     'Register a machine that will execute workflow jobs',
-    `Usage: cofferdam runner add <name> --allow <glob>... [--labels <l,...>] [--save]
+    `Usage: feorge runner add <name> --allow <glob>... [--labels <l,...>] [--save]
 
 Prints its token once. --allow says which repositories it may take jobs for, as
 globs over collection/repo; you must own every collection they name (a site admin may name any). Jobs never run on
@@ -708,29 +708,29 @@ the vault's machine, so a vault with no runner queues its runs and waits.`,
   raw(
     ['runner', 'run'],
     'Take jobs and run them, one at a time, each in a Docker container',
-    `Usage: cofferdam runner run [--host <url>] [--runner-token <t>] [--labels <l,...>]
+    `Usage: feorge runner run [--host <url>] [--runner-token <t>] [--labels <l,...>]
 
-Reads ~/.config/cofferdam/runner.json when given no arguments. Needs a working
+Reads ~/.config/feorge/runner.json when given no arguments. Needs a working
 docker command; --image <label>=<image> overrides which image a runs-on label
 maps to. Actions named by uses: are fetched from github.com (--actions-url
-changes that) and cached under ~/.cache/cofferdam (--cache-dir changes that),
+changes that) and cached under ~/.cache/feorge (--cache-dir changes that),
 keyed by the commit the ref resolves to, so a moved branch or tag is picked up
 on the next run; --no-action-cache downloads every time. --work-dir sets where
 job workspaces are made, --network which Docker network the container joins,
-and COFFERDAM_RUNNER_TOKEN supplies the token instead of --runner-token.
+and FEORGE_RUNNER_TOKEN supplies the token instead of --runner-token.
 
 --idle <5m> stops the runner when no job has arrived for that long, which is
 what makes a runner that costs money while it is up affordable: it exits, and
 whatever hosts it stops. Something then has to start it again, so --wake-port
-listens for the vault's wake request and --wake-secret (or COFFERDAM_WAKE_SECRET)
-is what that request must present. See cofferdam runner wake.`,
+listens for the vault's wake request and --wake-secret (or FEORGE_WAKE_SECRET)
+is what that request must present. See feorge runner wake.`,
     runnerRunCmd
   ),
   runnerListCommand,
   raw(
     ['runner', 'wake'],
     'Start a runner that stops when idle, or say where to reach it',
-    `Usage: cofferdam runner wake <name> [--url <url> [--wake-secret <s>]] [--clear]
+    `Usage: feorge runner wake <name> [--url <url> [--wake-secret <s>]] [--clear]
 
 With no flags this sends the wake request now and reports how long the runner
 took to answer, which is the way to test one without queuing a job. --url says
@@ -769,7 +769,7 @@ command set without reading any documentation.`,
 ];
 
 const cli: Cli = {
-  name: 'cofferdam',
+  name: 'feorge',
   groups: [
     { name: 'repo', summary: 'Repositories: what the vault holds' },
     { name: 'branch', summary: 'Branches' },

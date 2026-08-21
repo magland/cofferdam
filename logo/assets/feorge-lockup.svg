@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 326.96 75" width="326.96" height="75" fill="none" role="img" aria-label="feorge">
+  <g transform="translate(0 1.52) scale(0.89)">
+    <path d="M23.57 24.43L17.45 19.29" stroke="#0e7c74" stroke-width="6" stroke-linecap="round"/>
+    <path d="M32 20.5L32 12.5" stroke="#0e7c74" stroke-width="6" stroke-linecap="round"/>
+    <path d="M40.43 24.43L46.55 19.29" stroke="#0e7c74" stroke-width="6" stroke-linecap="round"/>
+    <rect x="25" y="31.5" width="14" height="14" rx="3" fill="#0e7c74"/>
+    <path d="M14 51.5H50" stroke="#0e7c74" stroke-width="6" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(76.96 0)"><g stroke-width="10" stroke-linecap="round" stroke-linejoin="round"><g stroke="#0e7c74"><path d="M12 55V15A10 10 0 0 1 22 5"/><path d="M5 25H22"/><path d="M40 40H70"/><path d="M70 40A15 15 0 1 0 64.64 51.49"/></g><g stroke="#14201f"><circle cx="103" cy="40" r="15"/><path d="M136 25V55"/><path d="M136 38A13 13 0 0 1 149 25"/><path d="M197 25V60A10 10 0 0 1 187 70"/><circle cx="182" cy="40" r="15"/><path d="M215 40H245"/><path d="M245 40A15 15 0 1 0 239.64 51.49"/></g></g></g>
+</svg>

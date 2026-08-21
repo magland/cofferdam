@@ -31,7 +31,7 @@ import { findOverride } from './overrides';
 // work: a composite step is the same machinery with a fresh scope.
 //
 // A step is one of four things: a `run` script, a JavaScript action, a
-// composite action, or an action cofferdam implements itself because the real
+// composite action, or an action feorge implements itself because the real
 // one talks to a service only GitHub has (see overrides.ts).
 
 export interface StepExecContext {
@@ -49,7 +49,7 @@ export interface StepExecContext {
   serverUrl: string;
   runnerToken: string;
   // Translate a path as a step inside the container sees it into the path the
-  // runner sees on the host. Actions that hand cofferdam a path (an artifact to
+  // runner sees on the host. Actions that hand feorge a path (an artifact to
   // upload, a directory to download into) speak in container paths, while the
   // overrides that implement them work on the host side of the bind mounts.
   // Returns null for an absolute path that is not inside any mount.
@@ -357,7 +357,7 @@ function makeLineHandler(
       }
       case 'debug':
         // Actions are chatty at debug level; GitHub hides these unless the
-        // run was started with debug logging, and so does cofferdam.
+        // run was started with debug logging, and so does feorge.
         if (ctx.env.RUNNER_DEBUG === '1') ctx.log(`DEBUG: ${cmd.message}`);
         break;
       case 'set-output':
@@ -375,7 +375,7 @@ function makeLineHandler(
       case 'save-state':
       case 'stop-commands':
         break;
-      // Problem matchers annotate a run's diff on GitHub. cofferdam has no
+      // Problem matchers annotate a run's diff on GitHub. feorge has no
       // equivalent yet, so the commands are consumed rather than printed.
       case 'add-matcher':
       case 'remove-matcher':
@@ -463,7 +463,7 @@ async function runActionStep(
   // including inside someone else's composite action.
   const override = findOverride(ref);
   if (override) {
-    ctx.log(`Using cofferdam's built-in ${override.name} (${ref.raw})`);
+    ctx.log(`Using feorge's built-in ${override.name} (${ref.raw})`);
     try {
       const result = await override.run({
         ctx,

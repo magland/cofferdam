@@ -78,7 +78,7 @@ async function fromGitRemotes(host: string): Promise<RepoRef | null> {
 
 /**
  * Resolve the repository a command is about, in order: the argument or --repo,
- * then COFFERDAM_REPO, then the git remote here that points at this vault.
+ * then FEORGE_REPO, then the git remote here that points at this vault.
  * Failing all three, say so and name all three.
  */
 export async function resolveRepo(
@@ -89,12 +89,12 @@ export async function resolveRepo(
   if (positional) return parseRef(positional, 'a repository');
   const flag = inv.str('repo');
   if (flag) return parseRef(flag, '--repo');
-  const env = process.env.COFFERDAM_REPO?.trim();
-  if (env) return parseRef(env, 'COFFERDAM_REPO');
+  const env = process.env.FEORGE_REPO?.trim();
+  if (env) return parseRef(env, 'FEORGE_REPO');
   const remote = await fromGitRemotes(target.host);
   if (remote) return remote;
   throw new CliError(
-    `Which repository? Name it as <collection>/<repo>, pass --repo <collection>/<repo>, set COFFERDAM_REPO,\n` +
+    `Which repository? Name it as <collection>/<repo>, pass --repo <collection>/<repo>, set FEORGE_REPO,\n` +
       `or run this inside a clone whose remote points at ${target.host}.`,
     EXIT_USAGE
   );

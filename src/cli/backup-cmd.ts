@@ -11,7 +11,7 @@ import { JSON_OPTION, jsonMode, pickObject, printJson, printTable } from './outp
 import { Command, Invocation, OptionSpec } from './parse';
 import { TARGET_OPTIONS, targetFrom } from './target';
 
-// `cofferdam backup <dir>`: an incremental copy of a whole vault onto a disk of
+// `feorge backup <dir>`: an incremental copy of a whole vault onto a disk of
 // your own, over HTTP.
 //
 // The documentation is entitled to say that backing up a vault is `cp -a`, and
@@ -23,13 +23,13 @@ import { TARGET_OPTIONS, targetFrom } from './target';
 //
 // Two things shape everything here.
 //
-// The backup directory is itself a vault, so restoring is `cofferdam serve
+// The backup directory is itself a vault, so restoring is `feorge serve
 // <dir>/current` rather than a program that only gets exercised during a
 // disaster. Each mirror is a bare repository like any other, so the recovery
 // procedure is one line and can be rehearsed at any time.
 //
 // Nothing in the backup is ever modified in place. Git rewrites refs and
-// packfiles by rename, cofferdam writes its state files by rename, this file
+// packfiles by rename, feorge writes its state files by rename, this file
 // writes by rename, and reflogs - the one thing git appends to - are turned off
 // on the mirrors. That is what makes a snapshot a directory of hardlinks
 // costing inodes rather than bytes. Any future code here that opens a file
@@ -356,7 +356,7 @@ async function fetchManifest(target: RemoteTarget, exclude: string[], hash: bool
     // URL and the token, neither of which is the problem.
     if (resp.status === 404) {
       message =
-        `${target.host} has no /api/backup/manifest route, so it is running a cofferdam older than this ` +
+        `${target.host} has no /api/backup/manifest route, so it is running a feorge older than this ` +
         'command. Deploy the vault again from a version that has it, then run this.';
     }
     // The same status-to-code mapping every other command uses, so that a
@@ -730,7 +730,7 @@ const QUIET_OPTION: OptionSpec = { name: 'quiet', type: 'boolean', summary: 'Say
 /** The backup directory a command was given, made if it is not there yet. */
 function backupDirectory(inv: Invocation, create: boolean): string {
   const given = inv.args[0];
-  if (!given) throw new CliError('Which directory? Usage: cofferdam backup <dir>', EXIT_USAGE);
+  if (!given) throw new CliError('Which directory? Usage: feorge backup <dir>', EXIT_USAGE);
   const dir = path.resolve(given);
   if (!fs.existsSync(dir)) {
     if (!create) throw new CliError(`No backup directory at ${dir}.`, EXIT_USAGE);
@@ -746,7 +746,7 @@ function existingBackup(inv: Invocation): { dir: string; state: BackupState } {
   const dir = backupDirectory(inv, false);
   if (!fs.existsSync(statePath(dir))) {
     throw new CliError(
-      `${dir} holds no backup (no ${STATE_FILE}). Make one first: cofferdam backup ${inv.args[0]}`,
+      `${dir} holds no backup (no ${STATE_FILE}). Make one first: feorge backup ${inv.args[0]}`,
       EXIT_USAGE
     );
   }
@@ -1004,7 +1004,7 @@ async function fetchChunk(
 
 /**
  * A mirror's config is one of the files copied from the vault, so after a fetch
- * the mirror's settings are the vault's own, `cofferdam.forkedFrom` and the
+ * the mirror's settings are the vault's own, `feorge.forkedFrom` and the
  * `receive.*` protections included. It is copied byte for byte and not edited
  * afterwards, because an edited copy would differ from the vault for good: every
  * later run would fetch it again and `verify` would report it as wrong.
@@ -1273,7 +1273,7 @@ async function syncCmd(inv: Invocation): Promise<void> {
   if (summary.snapshot) console.log(`Snapshot ${summary.snapshot}`);
   console.log('');
   console.log(`Serve this backup to look at it, or to stand the vault back up:`);
-  console.log(`  cofferdam serve ${path.join(dir, CURRENT)}`);
+  console.log(`  feorge serve ${path.join(dir, CURRENT)}`);
 }
 
 // ---- list, prune, verify ----
@@ -1318,7 +1318,7 @@ function listCmd(inv: Invocation): void {
   }
   console.log('');
   if (snapshots.length === 0) {
-    console.log('No snapshots. `cofferdam backup <dir> --snapshot` takes one after a sync.');
+    console.log('No snapshots. `feorge backup <dir> --snapshot` takes one after a sync.');
     return;
   }
   // Apparent size rather than disk use: a snapshot is hardlinked, so what it
@@ -1441,14 +1441,14 @@ async function verifyCmd(inv: Invocation): Promise<void> {
 // ---- what a machine knows about its backups ----
 
 /**
- * Where this machine's backup directories are remembered, so that `cofferdam
+ * Where this machine's backup directories are remembered, so that `feorge
  * deploy fly show` can say whether the app it is describing has one. It is a
  * convenience and nothing depends on it: the backup itself is entirely
  * described by its own backup.json.
  */
 export function backupsIndexPath(): string {
   const base = process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config');
-  return path.join(base, 'cofferdam', 'backups.json');
+  return path.join(base, 'feorge', 'backups.json');
 }
 
 export function knownBackups(): { dir: string; host: string }[] {
@@ -1507,7 +1507,7 @@ over HTTP: it needs no shell on the server, no flyctl, and no rsync at the far
 end, so it works the same against a Fly app, a VPS, a Docker deployment, and
 127.0.0.1:3000.
 
-  <dir>/current      a servable vault. Restoring is: cofferdam serve <dir>/current
+  <dir>/current      a servable vault. Restoring is: feorge serve <dir>/current
   <dir>/snapshots    hardlinked copies, each one also a servable vault
   <dir>/backup.json  which vault, what is left out, and how each run went
 
@@ -1525,7 +1525,7 @@ There is no vault-wide point-in-time image: the server holds no lock a client
 could take, so a run is a walk of a live tree and can catch a mixed vintage.
 Every individual file in a backup is one that really existed. See docs/backup.md.
 
-Related: cofferdam backup list, verify, prune.`,
+Related: feorge backup list, verify, prune.`,
     args: [{ name: 'dir', required: true }],
     options: [
       { name: 'snapshot', type: 'boolean', summary: 'Take a snapshot after a successful sync, then prune' },

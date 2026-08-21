@@ -1,15 +1,15 @@
 # Deploying a vault
 
-A remote vault is the same server with a persistent disk and TLS in front; there is nothing else to it, since the vault directory is the entire state. On first start the server initializes the vault and prints the owner token; from then on all administration happens from your own machine, on the web or through the CLI after `cofferdam login`.
+A remote vault is the same server with a persistent disk and TLS in front; there is nothing else to it, since the vault directory is the entire state. On first start the server initializes the vault and prints the owner token; from then on all administration happens from your own machine, on the web or through the CLI after `feorge login`.
 
-This document assumes you have already run a vault locally and want one other people can reach; [Getting started](getting-started.md) covers the local step and hands over here. It is organized by how far you intend to take it. `cofferdam deploy fly` puts a vault on the internet in one command, needing no machine of your own and no checkout of this repository. [A domain of your own](#a-domain-of-your-own) is the next step once the vault is something you mean to keep, and is also what gives static sites a hostname each. [A machine of your own](#a-machine-of-your-own) is the same container hosted yourself instead. [Limits](#limits) applies to all of them.
+This document assumes you have already run a vault locally and want one other people can reach; [Getting started](getting-started.md) covers the local step and hands over here. It is organized by how far you intend to take it. `feorge deploy fly` puts a vault on the internet in one command, needing no machine of your own and no checkout of this repository. [A domain of your own](#a-domain-of-your-own) is the next step once the vault is something you mean to keep, and is also what gives static sites a hostname each. [A machine of your own](#a-machine-of-your-own) is the same container hosted yourself instead. [Limits](#limits) applies to all of them.
 
 ## Fly.io, in one command
 
 Fly.io runs the container for you, and the CLI can put it there. Install [flyctl](https://fly.io/docs/flyctl/install/), run `fly auth login` once, then:
 
 ```bash
-cofferdam deploy fly my-vault-name
+feorge deploy fly my-vault-name
 ```
 
 Fly app names are globally unique and the name becomes the URL, so pick your own. That creates the app, a 10GB volume, and a single machine serving the vault over HTTPS at `https://my-vault-name.fly.dev`, and ends by printing the owner token:
@@ -18,7 +18,7 @@ Fly app names are globally unique and the name becomes the URL, so pick your own
 ==> Creating 'my-vault-name' in ewr
 ==> Creating a 10GB volume 'vault' in ewr
 ==> Setting the one-time owner token as a Fly secret
-==> Deploying ghcr.io/magland/cofferdam:0.2.0
+==> Deploying ghcr.io/magland/feorge:0.2.0
 ==> Waiting for the vault to answer
 
 ==> Ready: https://my-vault-name.fly.dev
@@ -27,7 +27,7 @@ The vault is initialized, and 'owner' owns it. This is its token, shown
 here once and nowhere else: the server keeps only its hash, and the Fly secret it
 was staged in cannot be read back. Keep it somewhere safe now.
 
-  cofferdam_7acfa9fa32691cdbb53c3865fed61e59f61ab4eb948b4157d7e7fafc163fcb08
+  feorge_7acfa9fa32691cdbb53c3865fed61e59f61ab4eb948b4157d7e7fafc163fcb08
 
 To administer the vault in a browser, open its sign-in page and give that token as
 'owner':
@@ -39,14 +39,14 @@ To administer the vault in a browser, open its sign-in page and give that token 
 That token is the way in, by either route, and it is the one thing to save before the terminal scrolls away. In the browser, open the `/login` page and sign in as `owner` with the token in the **Token** field: a vault has no passwords, so a username and a token is what the form asks for. From there the Admin page creates the users and the repositories, which is the usual way to bootstrap a fresh vault. To work from the CLI and from git instead, hand the same token to git's credential store once:
 
 ```bash
-cofferdam login https://my-vault-name.fly.dev
+feorge login https://my-vault-name.fly.dev
 ```
 
-That asks for the token without echoing it, checks it against the vault, and remembers the vault, after which `cofferdam whoami`, `cofferdam user add`, and `git push` need no token of their own (see [Not typing the token every time](cli.md#not-typing-the-token-every-time), and note that a login needs a credential helper configured).
+That asks for the token without echoing it, checks it against the vault, and remembers the vault, after which `feorge whoami`, `feorge user add`, and `git push` need no token of their own (see [Not typing the token every time](cli.md#not-typing-the-token-every-time), and note that a login needs a credential helper configured).
 
-The token is minted on your machine, not on the server: the deploy sets it as the `COFFERDAM_OWNER_TOKEN` secret, and the server adopts it when it initializes the empty vault, storing only its hash. So it is printed by the one process that ever had it, rather than read out of a log, and it cannot be recovered afterwards from either the server or the Fly secret, which can be written but never read back. The secret stays set and is ignored on every later start, since a vault is initialized once.
+The token is minted on your machine, not on the server: the deploy sets it as the `FEORGE_OWNER_TOKEN` secret, and the server adopts it when it initializes the empty vault, storing only its hash. So it is printed by the one process that ever had it, rather than read out of a log, and it cannot be recovered afterwards from either the server or the Fly secret, which can be written but never read back. The secret stays set and is ignored on every later start, since a vault is initialized once.
 
-Note that the deploy stores nothing on your machine and logs you in to nothing. That is deliberate: `cofferdam login` is the one command that writes a credential, so a deploy from a machine that is not yours leaves no token behind on it.
+Note that the deploy stores nothing on your machine and logs you in to nothing. That is deliberate: `feorge login` is the one command that writes a credential, so a deploy from a machine that is not yours leaves no token behind on it.
 
 Fly always terminates TLS in front of the app, so the deploy also tells the vault to believe the forwarded headers: it records `network.trustProxy: true` in the vault's `config.json` on the next start. That is what makes the clone URLs, the `Secure` cookies, and the per-address [limits](#limits) read the real scheme and address rather than the internal ones. It is only seeded, so changing it by hand afterwards sticks.
 
@@ -55,15 +55,15 @@ Fly always terminates TLS in front of the app, so the deploy also tells the vaul
 The same command deploys an update:
 
 ```bash
-cofferdam deploy fly my-vault-name
+feorge deploy fly my-vault-name
 ```
 
 Nothing about the deployment is kept on your machine. Fly already knows the region, the volume size, and the machine's shape, so each run reads them back from the live app and applies only what a flag changes. One flag therefore changes one thing:
 
 ```bash
-cofferdam deploy fly my-vault-name --volume 50          # grow the disk
-cofferdam deploy fly my-vault-name --vm-memory 1gb      # a bigger machine
-cofferdam deploy fly my-vault-name --image ghcr.io/magland/cofferdam:main
+feorge deploy fly my-vault-name --volume 50          # grow the disk
+feorge deploy fly my-vault-name --vm-memory 1gb      # a bigger machine
+feorge deploy fly my-vault-name --image ghcr.io/magland/feorge:main
 ```
 
 The flags, all optional: `--region` (default `ewr`, and see `fly platform regions`), `--volume <gb>` (default 10), `--vm-size` (default `shared-cpu-1x`), `--vm-memory` (default `512mb`), `--org` for which Fly organization owns a new app, `--lfs-bucket` (below), and `--image <ref>` or `--from-source` (below) to deploy something other than the published image for your CLI's own version.
@@ -73,21 +73,21 @@ Two of these have limits worth knowing before you rely on them: Fly volumes can 
 To see what is deployed, and whether the vault on it actually answers:
 
 ```bash
-cofferdam deploy fly show my-vault-name
+feorge deploy fly show my-vault-name
 ```
 
 ```
 my-vault-name  https://my-vault-name.fly.dev
 
   machine   1857701b4de389  started  ewr  shared-cpu-1x, 512mb
-  image     ghcr.io/magland/cofferdam:0.2.0
+  image     ghcr.io/magland/feorge:0.2.0
   volume    10GB in ewr (created)
   lfs       objects on the volume
   vault     answering, and you are 'owner' on it
-  login     this is the vault cofferdam commands use
+  login     this is the vault feorge commands use
 ```
 
-`cofferdam deploy fly destroy my-vault-name` removes the app, the volume, and with them the vault; it asks you to type the app name first (`--yes` skips the prompt, for a script that means it), and also drops the stored credential for a vault that no longer exists. Anything else is flyctl's job, and flyctl is already on your machine: `fly logs -a my-vault-name`, `fly ssh console -a my-vault-name` for a shell on the volume, and `fly certs` for [a domain of your own](#a-domain-of-your-own).
+`feorge deploy fly destroy my-vault-name` removes the app, the volume, and with them the vault; it asks you to type the app name first (`--yes` skips the prompt, for a script that means it), and also drops the stored credential for a vault that no longer exists. Anything else is flyctl's job, and flyctl is already on your machine: `fly logs -a my-vault-name`, `fly ssh console -a my-vault-name` for a shell on the volume, and `fly certs` for [a domain of your own](#a-domain-of-your-own).
 
 ### Updating on a schedule
 
@@ -108,12 +108,12 @@ jobs:
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
-      - run: npx --yes @magland/cofferdam@latest deploy fly my-vault-name
+      - run: npx --yes feorge@latest deploy fly my-vault-name
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 ```
 
-Run the newest CLI and pass no `--image`, rather than pinning `--image ...:latest` on an older one. The CLI asks for the image tag matching its own version, and a version tag exists only because the release that produced it was built and smoke-tested first, so what reaches the vault is a version that passed. It also leaves `cofferdam deploy fly show` reporting a version rather than `latest`, which is the difference between knowing what is running and knowing only when it was last deployed.
+Run the newest CLI and pass no `--image`, rather than pinning `--image ...:latest` on an older one. The CLI asks for the image tag matching its own version, and a version tag exists only because the release that produced it was built and smoke-tested first, so what reaches the vault is a version that passed. It also leaves `feorge deploy fly show` reporting a version rather than `latest`, which is the difference between knowing what is running and knowing only when it was last deployed.
 
 flyctl reads `FLY_API_TOKEN` from the environment, so nothing needs to be logged in on the runner. The action installs the binary under the name `flyctl` rather than `fly`; a deploy looks for both, so either install is fine. `fly tokens create deploy -a my-vault-name` mints the narrowest token that can do this. Note that a deploy starts by asking `fly auth whoami` and stops if that cannot answer, so if a deploy-scoped token is refused there, an org-scoped one from `fly tokens create org <org>` is the fallback.
 
@@ -124,7 +124,7 @@ The other cadence is on a build rather than on a clock: deploy when a new image 
 Two costs, worth choosing deliberately rather than discovering. A vault is one machine on one volume, so every update is a restart, and a restart cuts whatever clone or push was in flight; weekly at a quiet hour is the cadence to want, and nightly buys nothing, since the published tags move only when a release is cut. And an unattended deploy has no notion of rolling back, so if a release does break something the repair is a deploy that pins the previous version by hand:
 
 ```bash
-cofferdam deploy fly my-vault-name --image ghcr.io/magland/cofferdam:0.2.0
+feorge deploy fly my-vault-name --image ghcr.io/magland/feorge:0.2.0
 ```
 
 ### Deploying your own build
@@ -132,7 +132,7 @@ cofferdam deploy fly my-vault-name --image ghcr.io/magland/cofferdam:0.2.0
 By default the image deployed is the published one matching the version of the CLI you ran, which means waiting for a release before a change of your own can reach a vault. `--from-source` builds the image from the checkout you are running instead:
 
 ```bash
-git clone https://github.com/magland/cofferdam && cd cofferdam
+git clone https://github.com/magland/feorge && cd feorge
 npm install && npm run build
 node dist/index.js deploy fly my-vault-name --from-source
 ```
@@ -156,7 +156,7 @@ This is meant for trying a change against a real vault. For anything you mean to
 By default Git LFS objects live on the volume with everything else, which is the simplest arrangement and the easiest to back up. Passing `--lfs-bucket` on a deploy provisions a Tigris bucket instead:
 
 ```bash
-cofferdam deploy fly my-vault-name --lfs-bucket
+feorge deploy fly my-vault-name --lfs-bucket
 ```
 
 Tigris' secrets are the ones the server already reads, so there is nothing further to configure (see [Git LFS](lfs.md)). Note that this provisions a billable resource in your Fly organization, and that `deploy fly destroy` leaves the bucket alone: destroying it, and its contents, is `fly storage destroy <name>`.
@@ -170,9 +170,9 @@ There is nothing magic in the above, and no state anywhere but Fly. The equivale
 ```bash
 fly apps create my-vault-name
 fly volumes create vault --app my-vault-name --region ewr --size 10 --yes
-fly secrets set COFFERDAM_OWNER_TOKEN=cofferdam_... --app my-vault-name --stage
-fly deploy --app my-vault-name --config fly.toml --image ghcr.io/magland/cofferdam:0.2.0 --ha=false
-cofferdam login https://my-vault-name.fly.dev
+fly secrets set FEORGE_OWNER_TOKEN=feorge_... --app my-vault-name --stage
+fly deploy --app my-vault-name --config fly.toml --image ghcr.io/magland/feorge:0.2.0 --ha=false
+feorge login https://my-vault-name.fly.dev
 ```
 
 The config the CLI generates for that deploy, and writes to a temporary directory rather than into your project:
@@ -209,7 +209,7 @@ Note `--ha=false`, and `min_machines_running = 0` with auto-start: a vault is a 
 Workflow jobs never execute on the vault's machine, so a vault deployed as above runs no CI until a runner is started somewhere. That somewhere can be a second Fly app:
 
 ```bash
-cofferdam deploy fly runner my-runner --allow 'mycollection/*'
+feorge deploy fly runner my-runner --allow 'mycollection/*'
 ```
 
 The command registers the runner with the vault you are logged in to, creates the app and a 20GB volume for the images jobs run in, hands the machine the vault URL and its runner token as Fly secrets, and tells the vault where to send a request when a job is waiting.
@@ -217,22 +217,22 @@ The command registers the runner with the vault you are logged in to, creates th
 What makes this affordable is that the runner does not stay up. It exits when no job has arrived for five minutes, which stops its machine; the vault starts it again by requesting its wake address, and Fly's proxy delivers that request by starting the machine. Between runs the app costs its volume alone, and a stopped machine reports as `stopped` because that is the resting state rather than a fault. The first job after a stop waits about half a minute for the boot and for the Docker daemon inside the machine to come up.
 
 ```bash
-cofferdam deploy fly runner show my-runner       # what Fly has, and which runner it serves
-cofferdam runner wake my-runner                  # start it now, and time how long that takes
-cofferdam deploy fly runner destroy my-runner    # the app, and the registration with it
+feorge deploy fly runner show my-runner       # what Fly has, and which runner it serves
+feorge runner wake my-runner                  # start it now, and time how long that takes
+feorge deploy fly runner destroy my-runner    # the app, and the registration with it
 ```
 
 The equivalent by hand, if you would rather run it yourself:
 
 ```bash
-cofferdam runner add my-runner --allow 'mycollection/*' \
+feorge runner add my-runner --allow 'mycollection/*' \
   --wake-url https://my-runner.fly.dev/wake
 fly apps create my-runner
 fly volumes create docker --app my-runner --region ewr --size 20 --yes
-fly secrets set COFFERDAM_HOST=https://my-vault-name.fly.dev \
-  COFFERDAM_RUNNER_TOKEN=cofferdam_runner_... \
-  COFFERDAM_WAKE_SECRET=... --app my-runner --stage
-fly deploy --app my-runner --config fly.toml --image ghcr.io/magland/cofferdam-runner:0.2.0 --ha=false
+fly secrets set FEORGE_HOST=https://my-vault-name.fly.dev \
+  FEORGE_RUNNER_TOKEN=feorge_runner_... \
+  FEORGE_WAKE_SECRET=... --app my-runner --stage
+fly deploy --app my-runner --config fly.toml --image ghcr.io/magland/feorge-runner:0.2.0 --ha=false
 ```
 
 with a config whose two decisive lines are the ones the vault's own does not have:
@@ -260,7 +260,7 @@ A runner executes whatever the repositories in its `--allow` globs contain, on t
 
 A vault on `my-vault-name.fly.dev` is a real HTTPS URL and there is nothing wrong with keeping it. Moving to a name you own buys two things. The vault's address stops naming the host it happens to run on, so it can move later without breaking everyone's remotes. And static sites can be given a hostname each, instead of sharing the vault's under a sandbox that costs them cookies, storage, and service workers.
 
-Those are separate pieces of work, in that order, and the second is optional. Both are DNS records and certificates, which is the part the CLI cannot do for you: `cofferdam deploy fly` never touches your domain.
+Those are separate pieces of work, in that order, and the second is optional. Both are DNS records and certificates, which is the part the CLI cannot do for you: `feorge deploy fly` never touches your domain.
 
 The examples below are a vault at `vault.example.org`, on a Fly app named `my-vault-name`, with `example.org` at some DNS provider. Substitute your own throughout.
 
@@ -276,7 +276,7 @@ fly certs check vault.example.org -a my-vault-name
 
 `fly certs setup` is the one that does the work of telling you what to do: it looks at the app and prints the exact DNS records to create for that name. Take them from there rather than guessing, since which records they are depends on the app, and a plausible-looking `CNAME` to `my-vault-name.fly.dev` is not reliably the right answer. Add what it prints at your DNS provider, then run `fly certs check` until the certificate is issued, which is usually a minute or two after the records resolve.
 
-Nothing in the vault has to be told its own name. Clone URLs, redirects, and cookies are all built from the host of the request, so the vault answers correctly on both names at once. That is what makes the change safe to do while people are using it: `.fly.dev` keeps working, and remotes can be re-pointed at leisure with `git remote set-url origin https://vault.example.org/alice/webapp`. Log in again under the new name, `cofferdam login https://vault.example.org`, so that the CLI and git use it too.
+Nothing in the vault has to be told its own name. Clone URLs, redirects, and cookies are all built from the host of the request, so the vault answers correctly on both names at once. That is what makes the change safe to do while people are using it: `.fly.dev` keeps working, and remotes can be re-pointed at leisure with `git remote set-url origin https://vault.example.org/alice/webapp`. Log in again under the new name, `feorge login https://vault.example.org`, so that the CLI and git use it too.
 
 ### A hostname for each site
 
@@ -293,11 +293,11 @@ A wildcard cannot be validated over HTTP-01, since there is no single name for t
 Then tell the vault to use it. This is a setting rather than a deployment, so it is one command from your own machine, against the running vault:
 
 ```bash
-cofferdam config set --sites-host vault-sites.example.org
-cofferdam config view                                    # what the vault thinks now
+feorge config set --sites-host vault-sites.example.org
+feorge config view                                    # what the vault thinks now
 ```
 
-Every reader of that setting consults `config.json` per request, so it is in effect on the next one and no restart is involved. `cofferdam config set --sites-host ''` puts sites back on the vault's own hostname under the sandbox, equally immediately, which is what makes this safe to try: if the certificate turns out not to cover what you thought, one command undoes it.
+Every reader of that setting consults `config.json` per request, so it is in effect on the next one and no restart is involved. `feorge config set --sites-host ''` puts sites back on the vault's own hostname under the sandbox, equally immediately, which is what makes this safe to try: if the certificate turns out not to cover what you thought, one command undoes it.
 
 Set it only once the wildcard resolves to the vault and its certificate is issued. Sites stop being served on the forge hostname the moment it is set, redirecting to the new origin instead, so setting it early means sites that are unreachable until DNS catches up rather than sites that are merely still sandboxed. A value that is not a plausible hostname is refused by the command rather than stored, so a typo costs you a message and not an outage.
 
@@ -312,16 +312,16 @@ Not every repository is eligible for a hostname of its own, because not every le
 On a host that already has Node and git, the published package needs no checkout:
 
 ```bash
-npm install -g @magland/cofferdam
-cofferdam serve /srv/vault --host 0.0.0.0 --port 3000
+npm install -g feorge
+feorge serve /srv/vault --host 0.0.0.0 --port 3000
 ```
 
 That leaves keeping the process alive to the host's service manager. The container recipe in this repository does that part for you, and carries git in the image, so it is the shorter path on a machine with Docker:
 
 ```bash
-docker build -t cofferdam .
-docker run -d --name cofferdam -p 3000:3000 -v ./vault:/vault cofferdam
-docker logs cofferdam    # copy the one-time owner token
+docker build -t feorge .
+docker run -d --name feorge -p 3000:3000 -v ./vault:/vault feorge
+docker logs feorge    # copy the one-time owner token
 ```
 
 This serves plain HTTP, which is fine on a trusted or private network (a Tailscale or WireGuard address, say) but not on the open internet, since tokens travel as Basic-auth passwords and session cookies are only marked `Secure` behind HTTPS.
@@ -329,11 +329,11 @@ This serves plain HTTP, which is fine on a trusted or private network (a Tailsca
 With a domain name pointed at the machine, the included `docker-compose.yml` adds Caddy for automatic HTTPS:
 
 ```bash
-DOMAIN=cofferdam.example.org docker compose up -d
-docker compose logs cofferdam            # the owner token
-cofferdam login https://cofferdam.example.org
-cofferdam user add alice
-git clone https://cofferdam.example.org/alice/some-repo
+DOMAIN=feorge.example.org docker compose up -d
+docker compose logs feorge            # the owner token
+feorge login https://feorge.example.org
+feorge user add alice
+git clone https://feorge.example.org/alice/some-repo
 ```
 
 The server honors `X-Forwarded-*` headers when the vault says a proxy is in front, which is what makes clone URLs, cookies, and the web UI correct behind one. Caddy is such a proxy, so set it:
@@ -344,9 +344,9 @@ The server honors `X-Forwarded-*` headers when the vault says a proxy is in fron
 }
 ```
 
-It is false by default, and deliberately so: `X-Forwarded-For` is supplied by the client, so on a vault exposed directly any visitor could claim any address, which defeats every per-address limit below and lets one attacker fill the limiter's key space. Set it only when a reverse proxy you control is the only way in. `cofferdam deploy fly` sets it for you, since Fly always terminates TLS in front.
+It is false by default, and deliberately so: `X-Forwarded-For` is supplied by the client, so on a vault exposed directly any visitor could claim any address, which defeats every per-address limit below and lets one attacker fill the limiter's key space. Set it only when a reverse proxy you control is the only way in. `feorge deploy fly` sets it for you, since Fly always terminates TLS in front.
 
-Updating a vault hosted this way is a pull and a recreate, and unlike the Fly deployment it can be made to happen on its own. Point the service at a published image rather than at the checkout, by replacing `build: .` with `image: ghcr.io/magland/cofferdam:latest`, and put a container updater beside it:
+Updating a vault hosted this way is a pull and a recreate, and unlike the Fly deployment it can be made to happen on its own. Point the service at a published image rather than at the checkout, by replacing `build: .` with `image: ghcr.io/magland/feorge:latest`, and put a container updater beside it:
 
 ```yaml
   watchtower:
@@ -359,7 +359,7 @@ Updating a vault hosted this way is a pull and a recreate, and unlike the Fly de
 
 That is a genuine automatic update rather than a deploy on a timer, and the reason it can be one here is that a Fly machine pins the digest its deploy resolved where a `latest` tag on a host of your own is resolved again every time the container is recreated. It costs the same restart of the vault, and it costs handing the Docker socket to a container, which is root on the host under another name. On a machine that does anything else, `docker compose pull && docker compose up -d` from a systemd timer is the same effect without that trade. [Updating on a schedule](#updating-on-a-schedule) is the equivalent for a vault on Fly.
 
-Backing up a vault is copying a directory, and moving it to another host is copying it there, on a machine you have a shell on. On a Fly volume you have neither a shell in the ordinary sense nor rsync at the far end, so `cofferdam backup <dir>` pulls the copy over HTTP instead, incrementally, into a directory that is itself a servable vault: see [Backing up a vault](backup.md). It works the same way against a machine of your own, and is worth preferring there too, since it moves only what changed. Note that a vault on the open internet is readable by anyone, so say so in your own deployment notes.
+Backing up a vault is copying a directory, and moving it to another host is copying it there, on a machine you have a shell on. On a Fly volume you have neither a shell in the ordinary sense nor rsync at the far end, so `feorge backup <dir>` pulls the copy over HTTP instead, incrementally, into a directory that is itself a servable vault: see [Backing up a vault](backup.md). It works the same way against a machine of your own, and is worth preferring there too, since it moves only what changed. Note that a vault on the open internet is readable by anyone, so say so in your own deployment notes.
 
 ## Limits
 
@@ -403,7 +403,7 @@ Fly bills for egress and does not cap it. Neither do most hosts, and none of the
 
 `limits.egressGbPerDay` is that budget, **20 GB by default**, and `0` sends without one. Once a day's total reaches it, every ordinary request is answered with `503` and a `Retry-After` naming the next UTC midnight. `/admin`, `/login`, `/api/config`, `/api/egress`, and the stylesheet and icon those pages need keep working, within a further 64 MB, so the cap can be raised from the vault itself rather than by reaching its volume; past that allowance nothing is served at all. That is also why this one setting is read per request and is writable over the API, unlike the rest of the block: the moment it needs changing is the moment the vault has stopped answering.
 
-`/admin/egress` shows today's total against the budget, the breakdown by repository, and up to 30 earlier days, and is where the number is set. `cofferdam config set --egress-gb-per-day 50` and `cofferdam api /api/egress` are the same two things from a shell. A repository's static site is counted against that repository on a row of its own, since a site's traffic behaves nothing like a clone's; everything belonging to no repository (the front page, the API, the administration pages) is counted under `(vault)`.
+`/admin/egress` shows today's total against the budget, the breakdown by repository, and up to 30 earlier days, and is where the number is set. `feorge config set --egress-gb-per-day 50` and `feorge api /api/egress` are the same two things from a shell. A repository's static site is counted against that repository on a row of its own, since a site's traffic behaves nothing like a clone's; everything belonging to no repository (the front page, the API, the administration pages) is counted under `(vault)`.
 
 The counts live in `egress.json` at the root of the vault, written atomically at most every 30 seconds and again on the way out. That is the other difference from the rate limiters: a budget a restart forgives is not a budget, and a crash loop would otherwise send 20 GB per restart. A hard kill loses at most half a minute of counting. Two servers sharing one vault add their counts together at each write, so the budget is shared rather than doubled, though each may send up to 30 seconds past the line before it sees the other's bytes.
 

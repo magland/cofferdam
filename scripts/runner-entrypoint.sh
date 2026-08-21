@@ -44,18 +44,18 @@ if ! docker version >/dev/null 2>&1; then
 fi
 
 # Every setting arrives as an environment variable, because this runs as a
-# machine's entrypoint where there is no command line to edit: COFFERDAM_HOST
-# and COFFERDAM_RUNNER_TOKEN say which vault and which runner,
-# COFFERDAM_WAKE_SECRET what a wake request must present, and the two below
+# machine's entrypoint where there is no command line to edit: FEORGE_HOST
+# and FEORGE_RUNNER_TOKEN say which vault and which runner,
+# FEORGE_WAKE_SECRET what a wake request must present, and the two below
 # have defaults that suit a machine billed by the minute.
 #
 # Started in the background rather than exec'd, so that this shell survives to
 # stop the daemon afterwards; the cost is having to pass on the signals it
 # would otherwise have received directly.
 node /app/dist/index.js runner run \
-  --host "$COFFERDAM_HOST" \
-  --idle "${COFFERDAM_IDLE:-5m}" \
-  --wake-port "${COFFERDAM_WAKE_PORT:-3000}" \
+  --host "$FEORGE_HOST" \
+  --idle "${FEORGE_IDLE:-5m}" \
+  --wake-port "${FEORGE_WAKE_PORT:-3000}" \
   "$@" &
 RUNNER_PID=$!
 

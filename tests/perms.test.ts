@@ -49,7 +49,7 @@ test('a repository with no access file is public with no collaborators', () => {
   assert.ok(!repoIsPrivate(dir));
 });
 
-test('setRepoPrivate and collaborators round-trip through cofferdam.json', () => {
+test('setRepoPrivate and collaborators round-trip through feorge.json', () => {
   const root = makeVaultDir();
   const dir = makeBareRepo(root, 'demo', 'webapp');
   setRepoPrivate(dir, true);
@@ -65,21 +65,21 @@ test('setRepoPrivate and collaborators round-trip through cofferdam.json', () =>
   setRepoPrivate(dir, false);
   assert.ok(!repoIsPrivate(dir));
   // The file is ordinary JSON in the bare repository.
-  const raw = JSON.parse(fs.readFileSync(path.join(dir, 'cofferdam.json'), 'utf8'));
+  const raw = JSON.parse(fs.readFileSync(path.join(dir, 'feorge.json'), 'utf8'));
   assert.equal(raw.collaborators.bob, 'admin');
 });
 
 test('an unreadable access file fails closed: private, nobody in', () => {
   const root = makeVaultDir();
   const dir = makeBareRepo(root, 'demo', 'webapp');
-  fs.writeFileSync(path.join(dir, 'cofferdam.json'), '{broken');
+  fs.writeFileSync(path.join(dir, 'feorge.json'), '{broken');
   assert.deepEqual(repoAccess(dir), { private: true, collaborators: {} });
 });
 
 test('a malformed role in the file is dropped rather than trusted', () => {
   const root = makeVaultDir();
   const dir = makeBareRepo(root, 'demo', 'webapp');
-  fs.writeFileSync(path.join(dir, 'cofferdam.json'), JSON.stringify({ collaborators: { bob: 'owner' } }));
+  fs.writeFileSync(path.join(dir, 'feorge.json'), JSON.stringify({ collaborators: { bob: 'owner' } }));
   assert.deepEqual(repoAccess(dir).collaborators, {});
 });
 

@@ -35,7 +35,7 @@ interface LanguageDef {
 }
 
 // Names and colours are Linguist's (github-linguist/linguist, MIT), copied in
-// rather than depended on, since cofferdam ships no static files. A language
+// rather than depended on, since feorge ships no static files. A language
 // absent from this table is simply not counted, which is the same treatment
 // Linguist gives a file it cannot classify.
 const LANGUAGES: LanguageDef[] = [

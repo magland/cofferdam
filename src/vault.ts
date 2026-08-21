@@ -32,7 +32,7 @@ export interface UserRecord {
    * Site admins hold the admin role on every repository and manage users,
    * runners, and the vault itself. Everything finer-grained lives with the
    * thing it protects: collection owners in collection.json, repository
-   * collaborators in the repository's cofferdam.json; see src/perms.ts.
+   * collaborators in the repository's feorge.json; see src/perms.ts.
    */
   siteAdmin?: boolean;
   /**
@@ -155,7 +155,7 @@ export function hashToken(token: string): string {
 }
 
 export function mintToken(): { token: string; hash: string } {
-  const token = 'cofferdam_' + crypto.randomBytes(32).toString('hex');
+  const token = 'feorge_' + crypto.randomBytes(32).toString('hex');
   return { token, hash: hashToken(token) };
 }
 
@@ -312,12 +312,12 @@ export function finishPermsMigration(root: string, siteAdmins: string[]): void {
 export function setSiteAdmin(root: string, username: string, value: boolean): UserRecord {
   return editVault(root, (file) => {
     if (!fs.existsSync(file)) {
-      throw new Error(`no vault.json at ${file}; create the user first with: cofferdam user add ${username}`);
+      throw new Error(`no vault.json at ${file}; create the user first with: feorge user add ${username}`);
     }
     const vault = readVaultForEdit(file);
     const user = vault.users[username];
     if (!user) {
-      throw new Error(`user ${username} does not exist; create it with: cofferdam user add ${username}`);
+      throw new Error(`user ${username} does not exist; create it with: feorge user add ${username}`);
     }
     if (value) user.siteAdmin = true;
     else delete user.siteAdmin;
@@ -332,7 +332,7 @@ export function setSiteAdmin(root: string, username: string, value: boolean): Us
  * initialized once and everything after that is the operator's own doing.
  *
  * `presetToken` lets the token be handed in rather than minted, which is what
- * `cofferdam deploy` does: it mints the token on the operator's machine and
+ * `feorge deploy` does: it mints the token on the operator's machine and
  * passes it to the server as an environment secret, so a fresh remote vault can
  * be logged in to without reading a token back out of the logs. A preset token
  * is never echoed by the caller, so it does not reach the log at all.

@@ -1,3 +1,3 @@
 {$DOMAIN} {
-	reverse_proxy cofferdam:3000
+	reverse_proxy feorge:3000
 }

@@ -35,7 +35,7 @@ test('a tampered token, a foreign secret, and a non-token all verify as nothing'
   const foreign = mintJobToken(elsewhere, { collection: 'demo', repo: 'webapp', run: '7' }, 60_000);
   assert.equal(verifyJobToken(root, foreign), null);
   // Ordinary user tokens and junk fall out at the prefix.
-  assert.equal(verifyJobToken(root, 'cofferdam_' + 'a'.repeat(64)), null);
+  assert.equal(verifyJobToken(root, 'feorge_' + 'a'.repeat(64)), null);
   assert.equal(verifyJobToken(root, 'not a token at all'), null);
-  assert.equal(verifyJobToken(root, 'cofferdamjob_missingdot'), null);
+  assert.equal(verifyJobToken(root, 'feorgejob_missingdot'), null);
 });

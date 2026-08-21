@@ -212,7 +212,7 @@ export function registerGitHttp(app: Express, root: string, gates: Gates, authLi
   }
 
   function deny(res: Response, status: number, message: string, retryAfter?: number) {
-    if (status === 401) res.setHeader('WWW-Authenticate', 'Basic realm="cofferdam"');
+    if (status === 401) res.setHeader('WWW-Authenticate', 'Basic realm="feorge"');
     if (retryAfter !== undefined) res.setHeader('Retry-After', String(retryAfter));
     res.status(status).type('text/plain').send(message + '\n');
   }

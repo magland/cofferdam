@@ -22,7 +22,7 @@ import { AuthResult, globMatch } from './vault';
 //    the collection itself. The file sits beside repos/, so it moves with the
 //    collection when the collection is renamed.
 //  - A repository may list collaborators, each with a role, in
-//    <repo>.git/cofferdam.json, beside git's own config. The same file carries
+//    <repo>.git/feorge.json, beside git's own config. The same file carries
 //    the private flag. A repository with no such file is public with no
 //    collaborators, which is what every repository was before this existed.
 //  - A site admin (the `siteAdmin` flag in vault.json) holds the admin role
@@ -60,14 +60,14 @@ function isRole(v: unknown): v is Role {
   return v === 'read' || v === 'write' || v === 'admin';
 }
 
-// ---- per-repository state: <repo>.git/cofferdam.json ----
+// ---- per-repository state: <repo>.git/feorge.json ----
 
 export interface RepoAccess {
   private: boolean;
   collaborators: Record<string, Role>;
 }
 
-export const REPO_ACCESS_FILE = 'cofferdam.json';
+export const REPO_ACCESS_FILE = 'feorge.json';
 
 function normalizeRepoAccess(parsed: unknown): RepoAccess {
   const out: RepoAccess = { private: false, collaborators: {} };

@@ -108,16 +108,16 @@ jobs:
       - name: Install the tarball and run the command it provides
         run: |
           npm install -g --prefix "$RUNNER_TEMP/global" "$TARBALL"
-          help="$("$RUNNER_TEMP/global/bin/cofferdam" --help)"
+          help="$("$RUNNER_TEMP/global/bin/feorge" --help)"
           echo "$help"
-          echo "$help" | grep -q 'Usage: cofferdam <command>' || { echo "--help printed no usage line"; exit 1; }
+          echo "$help" | grep -q 'Usage: feorge <command>' || { echo "--help printed no usage line"; exit 1; }
           echo "$help" | grep -qE '^  serve ' || { echo "--help does not list the serve command"; exit 1; }
 
       - name: Serve a fresh vault from the installed package
         run: |
           vault="$RUNNER_TEMP/vault"
           mkdir -p "$vault"
-          "$RUNNER_TEMP/global/bin/cofferdam" serve "$vault" --port 42871 > "$RUNNER_TEMP/serve.log" 2>&1 &
+          "$RUNNER_TEMP/global/bin/feorge" serve "$vault" --port 42871 > "$RUNNER_TEMP/serve.log" 2>&1 &
           pid=$!
           for _ in $(seq 1 60); do
             curl -fsS -o /dev/null "http://127.0.0.1:42871/" && break
@@ -130,7 +130,7 @@ jobs:
           # the one-time owner token printed where the operator can read it.
           [ "$code" = "200" ] || { echo "the installed server did not answer 200"; exit 1; }
           [ -f "$vault/vault.json" ] || { echo "first start did not initialize the vault"; exit 1; }
-          grep -q "cofferdam_" "$RUNNER_TEMP/serve.log" || { echo "first start printed no owner token"; exit 1; }
+          grep -q "feorge_" "$RUNNER_TEMP/serve.log" || { echo "first start printed no owner token"; exit 1; }
 
   # Cheap, and the rot it catches is the kind readers hit first.
   docs:

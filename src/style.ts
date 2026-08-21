@@ -87,11 +87,11 @@ code, pre, .mono { font-family: var(--font-mono); }
 }
 .topbar .container { display: flex; align-items: center; gap: var(--s3); height: 52px; }
 /* The brand is the logotype from logo.ts, which inherits the text colour. Its
-   395 x 60 box runs ascender to baseline with nothing below, and the x-height
-   fills the lower two thirds, so 16px here puts the x-height at 10.7px and the
-   word at 105px wide. */
+   250 x 75 box runs ascender to descender, the g's tail being the one thing
+   below the baseline, and the x-height band spans 20 to 60, so 20px here puts
+   the x-height at 10.7px and the word at 66.7px wide. */
 .brand { display: flex; align-items: center; color: var(--fg); flex: none; }
-.brand svg { display: block; height: 16px; width: auto; }
+.brand svg { display: block; height: 20px; width: auto; }
 .brand:hover { text-decoration: none; }
 /* The address in the bar gives way before anything else does: it shortens to
    an ellipsis rather than pushing the account menu off the side of a phone. */

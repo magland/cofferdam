@@ -120,7 +120,7 @@ listing.`,
         return;
       }
       console.log(`Started run #${data.number} of ${data.workflowName}`);
-      console.log(`  cofferdam run watch ${data.number} --repo ${repo.collection}/${repo.repo}`);
+      console.log(`  feorge run watch ${data.number} --repo ${repo.collection}/${repo.repo}`);
     },
   },
   {

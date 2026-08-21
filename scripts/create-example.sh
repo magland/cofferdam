@@ -332,9 +332,9 @@ sed -i 's/^state: closed$/state: closed\nclosedBy: author\nclosedAt: 2026-02-13T
 # public and write nothing, which is what half of the authorization checks
 # need: a token that is perfectly valid and still not allowed to do the thing
 # being asked.
-DEV_TOKEN="cofferdam_example_dev_token"
+DEV_TOKEN="feorge_example_dev_token"
 DEV_HASH="$(printf %s "$DEV_TOKEN" | sha256sum | cut -d' ' -f1)"
-READER_TOKEN="cofferdam_example_reader_token"
+READER_TOKEN="feorge_example_reader_token"
 READER_HASH="$(printf %s "$READER_TOKEN" | sha256sum | cut -d' ' -f1)"
 cat > "$ROOT/vault.json" <<EOF
 {

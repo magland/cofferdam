@@ -1,4 +1,4 @@
-# The runner image: a cofferdam runner with a Docker daemon of its own.
+# The runner image: a feorge runner with a Docker daemon of its own.
 #
 # The vault's image cannot serve here. A runner executes every job in a
 # container, so it needs a daemon, and the vault image deliberately has none:

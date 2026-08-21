@@ -1,9 +1,9 @@
 # A remote vault with automatic HTTPS.
 # Point a DNS record at this machine, then:
-#   DOMAIN=cofferdam.example.org docker compose up -d
-#   docker compose logs cofferdam   (copy the one-time owner token on first start)
+#   DOMAIN=feorge.example.org docker compose up -d
+#   docker compose logs feorge   (copy the one-time owner token on first start)
 services:
-  cofferdam:
+  feorge:
     build: .
     restart: unless-stopped
     volumes:
@@ -15,7 +15,7 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      DOMAIN: ${DOMAIN:?set DOMAIN to your hostname, e.g. cofferdam.example.org}
+      DOMAIN: ${DOMAIN:?set DOMAIN to your hostname, e.g. feorge.example.org}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

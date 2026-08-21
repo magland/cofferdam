@@ -2,7 +2,7 @@
 
 Every route the vault answers with JSON, what it takes, and what it requires of the caller.
 
-For a shorter introduction aimed at a program rather than a person, see [cofferdam for an agent](agents.md). For the command line over this API, see [The command line](cli.md).
+For a shorter introduction aimed at a program rather than a person, see [feorge for an agent](agents.md). For the command line over this API, see [The command line](cli.md).
 
 ## The rules that hold everywhere
 
@@ -269,7 +269,7 @@ POST /api/repos/:c/:r/dispatches                {workflow, ref?, inputs?}
 
 Cancelling a run that is not in progress is 409. Dispatching requires the workflow to have a `workflow_dispatch` trigger and the ref to be a branch the repository has.
 
-**There is nothing behind `gh pr checks`.** cofferdam has no check suites and no commit statuses. The nearest answer is the runs whose sha matches the pull request's head, which is exactly what `cofferdam pr checks` computes.
+**There is nothing behind `gh pr checks`.** feorge has no check suites and no commit statuses. The nearest answer is the runs whose sha matches the pull request's head, which is exactly what `feorge pr checks` computes.
 
 ## Backing up a vault
 
@@ -278,7 +278,7 @@ GET  /api/backup/manifest?exclude=&hash=1       NDJSON: every file and repositor
 POST /api/backup/fetch                          {paths: [...]}, answered as a length-prefixed stream
 ```
 
-Two routes, together enough to pull a whole vault onto another disk. `cofferdam backup` is the client; [Backing up a vault](backup.md) describes it and what a backup does not promise. Both require a site admin with an unrestricted token, since the manifest necessarily names `vault.json` and `.secret`, and both hold the same concurrency gate a file listing does, so a backup in progress cannot crowd out a push.
+Two routes, together enough to pull a whole vault onto another disk. `feorge backup` is the client; [Backing up a vault](backup.md) describes it and what a backup does not promise. Both require a site admin with an unrestricted token, since the manifest necessarily names `vault.json` and `.secret`, and both hold the same concurrency gate a file listing does, so a backup in progress cannot crowd out a push.
 
 The manifest streams NDJSON, so a large vault costs the server no more memory than a small one:
 
@@ -290,7 +290,7 @@ The manifest streams NDJSON, so a large vault costs the server no more memory th
 {"kind":"end","files":9143,"bytes":1043221,"repos":12}
 ```
 
-Paths are vault-relative and always POSIX-separated, and `mtime` is in milliseconds. `?hash=1` adds `sha256` to each file line, for `--checksum` runs and for `cofferdam backup verify`. `?exclude=` takes any of `runs`, `sites`, `lfs`, `secrets` and leaves those out. A repository is reported as `kind:"repo"` and its contents are deliberately *not* enumerated: git is their transport, and `refs` is a digest over every ref, what it points at, and where `HEAD` points, so a client can skip a repository nothing has changed in. The `end` line is what says the walk completed; a client that does not see one must not treat the manifest as the whole vault.
+Paths are vault-relative and always POSIX-separated, and `mtime` is in milliseconds. `?hash=1` adds `sha256` to each file line, for `--checksum` runs and for `feorge backup verify`. `?exclude=` takes any of `runs`, `sites`, `lfs`, `secrets` and leaves those out. A repository is reported as `kind:"repo"` and its contents are deliberately *not* enumerated: git is their transport, and `refs` is a digest over every ref, what it points at, and where `HEAD` points, so a client can skip a repository nothing has changed in. The `end` line is what says the walk completed; a client that does not see one must not treat the manifest as the whole vault.
 
 `POST /api/backup/fetch` takes `{"paths": [...]}` and answers with the bytes of each, framed by a JSON line rather than packed into a tar:
 
@@ -312,7 +312,7 @@ POST   /api/runners                    register one   {name, labels?, allow}    
 DELETE /api/runners/:name              remove one                                         (the same, over its allow)
 ```
 
-`POST` returns `{name, token, labels, allow}`, and the token once: it is what `cofferdam runner run --token` presents, and only its hash is kept. `allow` is a list of globs saying which repositories the runner serves and is required, since a runner with no allow list could take no job. `labels` defaults to `["ubuntu-latest"]`.
+`POST` returns `{name, token, labels, allow}`, and the token once: it is what `feorge runner run --token` presents, and only its hash is kept. `allow` is a list of globs saying which repositories the runner serves and is required, since a runner with no allow list could take no job. `labels` defaults to `["ubuntu-latest"]`.
 
 Registration takes ownership of every collection the `allow` globs name (a site admin covers any), because a runner executes repository-controlled code on its own machine: granting one a repository is granting that repository's authors the runner. Removing a runner takes the same standing over the allow list it was registered with. A name that is already registered is 409.
 

@@ -27,7 +27,7 @@ export function loginPage(next: string, error?: string): string {
   // thing this page is for, so nothing else is on it.
   const content = html`<div class="signin">
 <div class="signin-mark">${raw(MARK)}</div>
-<h1>Sign in to cofferdam</h1>
+<h1>Sign in to feorge</h1>
 ${errorBanner(error)}
 <div class="form-box">
 <form method="post" action="/login">
@@ -123,7 +123,7 @@ ${csrfField(viewer)}
  * on the server, and what this page does is hand them the command
  * that does it. Earlier it asked for the source in a form and wrote a shell
  * one-liner from the answers, which put a form in front of an operation the
- * page cannot perform; now `cofferdam import` performs it, so the page only has
+ * page cannot perform; now `feorge import` performs it, so the page only has
  * to say what to run, with the collection and the vault's own URL filled in.
  * The git commands remain below for a machine with no Node on it.
  */
@@ -143,13 +143,13 @@ ${copyRow(opts.gitCommand)}`
     : '';
   const content = html`<div class="form-box wide">
 <h1>Import a repository</h1>
-<p class="muted">Importing runs on your machine, not on this server: git reads the source with the credentials you already have there and pushes it here, which creates the repository. The <span class="mono">cofferdam</span> command does both.</p>
+<p class="muted">Importing runs on your machine, not on this server: git reads the source with the credentials you already have there and pushes it here, which creates the repository. The <span class="mono">feorge</span> command does both.</p>
 <hr class="rule">
 <h2>Once per machine</h2>
-${copyRow('npm install -g @magland/cofferdam')}
-${copyRow(`cofferdam login ${opts.vaultUrl}`)}
+${copyRow('npm install -g feorge')}
+${copyRow(`feorge login ${opts.vaultUrl}`)}
 <h2>Then, for each repository</h2>
-${copyRow(`cofferdam import https://github.com/owner/repo ${collection}`)}
+${copyRow(`feorge import https://github.com/owner/repo ${collection}`)}
 <p class="muted small">The source may be an https or ssh git URL, or <span class="mono">owner/repo</span> for GitHub. The repository takes its name from the source; write <span class="mono">${collection}/another-name</span> to choose another. Add <span class="mono">--lfs</span> to carry Git LFS objects too. A collection that does not exist yet is created by the push. A public GitHub source also has its description read from GitHub and set here.</p>
 ${fallback}
 ${back}

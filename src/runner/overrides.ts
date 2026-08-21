@@ -7,13 +7,13 @@ import { isValidArtifactName } from '../ci/artifacts';
 import { filterPatternToRegExp } from '../ci/workflow';
 import type { StepExecContext } from './steps';
 
-// Actions cofferdam implements itself.
+// Actions feorge implements itself.
 //
 // Most actions are ordinary programs and run unmodified. A few are not: they
 // are thin clients for services that exist only inside GitHub, such as the
 // artifact store, the cache service, and the Pages deployment API (which
-// cofferdam answers with a site). Running
-// those verbatim against a cofferdam vault cannot work, so cofferdam substitutes
+// feorge answers with a site). Running
+// those verbatim against a feorge vault cannot work, so feorge substitutes
 // its own implementation of the same interface, chosen by the `uses:` string.
 //
 // Overriding by name rather than implementing GitHub's wire protocols is a
@@ -49,7 +49,7 @@ function git(args: string[], cwd?: string): Promise<string> {
 
 // ---- actions/checkout ----
 
-// cofferdam checks the repository out before the job starts, so this is usually
+// feorge checks the repository out before the job starts, so this is usually
 // a no-op that reports what is already there. It does real work when the step
 // asks for something different: another repository, another ref, another
 // directory, full history, or submodules.
@@ -70,7 +70,7 @@ const checkout: Override = {
     const samePath = target === '' || target === '.' || target === './';
 
     if (sameRepo && sameRef && samePath) {
-      ctx.log(`${current} is already checked out at ${ctx.spec.sha.slice(0, 8)} (cofferdam checks out before the job starts)`);
+      ctx.log(`${current} is already checked out at ${ctx.spec.sha.slice(0, 8)} (feorge checks out before the job starts)`);
       if (depth === 0) {
         ctx.log('fetch-depth: 0 requested; fetching the full history');
         try {
@@ -146,7 +146,7 @@ const checkout: Override = {
       // bare git error.
       if (/not found|does not exist|could not read/i.test(msg) && !sameRepo) {
         ctx.log(
-          `Note: on cofferdam, repository: ${repoSpec} names a repository in this vault, not on github.com.`
+          `Note: on feorge, repository: ${repoSpec} names a repository in this vault, not on github.com.`
         );
         ctx.log(
           `If you meant github.com, check it out with git instead:  run: git clone --depth 1${
@@ -353,7 +353,7 @@ const uploadArtifact: Override = {
         method: 'PUT',
         headers: {
           authorization: `Bearer ${ctx.runnerToken}`,
-          'x-cofferdam-lease': ctx.spec.lease,
+          'x-feorge-lease': ctx.spec.lease,
           'content-type': 'application/x-tar',
           'content-length': String(size),
         },
@@ -397,7 +397,7 @@ const downloadArtifact: Override = {
       ctx.log(`path: ${target} resolves outside the workspace`);
       return { ok: false };
     }
-    const headers = { authorization: `Bearer ${ctx.runnerToken}`, 'x-cofferdam-lease': ctx.spec.lease };
+    const headers = { authorization: `Bearer ${ctx.runnerToken}`, 'x-feorge-lease': ctx.spec.lease };
 
     let names: string[];
     if (name !== '') {
@@ -456,7 +456,7 @@ const downloadArtifact: Override = {
 //
 // These two keep GitHub's spelling in their `uses:` keys and in the
 // `github-pages` artifact name, because those are somebody else's interface.
-// cofferdam's own noun for what they publish is a site.
+// feorge's own noun for what they publish is a site.
 
 function siteUrls(ctx: StepExecContext): { origin: string; basePath: string; baseUrl: string; host: string } {
   const a = ctx.spec.address;
@@ -495,10 +495,10 @@ const configurePages: Override = {
   async run({ ctx }) {
     const u = siteUrls(ctx);
     ctx.log(`This site will be served at ${u.baseUrl}/`);
-    ctx.rt.env.COFFERDAM_SITE_BASE_PATH = u.basePath;
+    ctx.rt.env.FEORGE_SITE_BASE_PATH = u.basePath;
     // The former name of the same variable, kept so workflows written against
     // it keep working; remove it once they have moved.
-    ctx.rt.env.COFFERDAM_PAGES_BASE_PATH = u.basePath;
+    ctx.rt.env.FEORGE_PAGES_BASE_PATH = u.basePath;
     return {
       ok: true,
       outputs: { base_url: u.baseUrl, origin: u.origin, host: u.host, base_path: u.basePath },
@@ -520,7 +520,7 @@ const deployPages: Override = {
       method: 'POST',
       headers: {
         authorization: `Bearer ${ctx.runnerToken}`,
-        'x-cofferdam-lease': ctx.spec.lease,
+        'x-feorge-lease': ctx.spec.lease,
         'content-type': 'application/json',
       },
       body: JSON.stringify({ artifact }),

@@ -132,7 +132,7 @@ export function runsPage(
 
   const body = runs.length
     ? html`<table class="listing runs"><tbody>${rows}</tbody></table>`
-    : html`<div class="empty-state"><p><b>No workflow runs yet.</b></p><p class="muted">Runs appear here when a push matches a workflow in <code>.github/workflows</code> or <code>.cofferdam/workflows</code>.</p><p class="muted small">Workflows run without credentials: this vault holds no secrets, and a workflow that references <code>secrets.*</code> is refused with a message saying so.</p></div>`;
+    : html`<div class="empty-state"><p><b>No workflow runs yet.</b></p><p class="muted">Runs appear here when a push matches a workflow in <code>.github/workflows</code> or <code>.feorge/workflows</code>.</p><p class="muted small">Workflows run without credentials: this vault holds no secrets, and a workflow that references <code>secrets.*</code> is refused with a message saying so.</p></div>`;
 
   const content = html`${repoHeader(ctx, 'actions')}
 ${flash ? html`<div class="flash">${flash}</div>` : ''}
@@ -411,7 +411,7 @@ export function runnersPage(viewer: Viewer, runners: RunnerView[], flash?: strin
   const content = html`<div class="page-head"><h1>Runners</h1></div>
 ${flash ? html`<div class="flash">${flash}</div>` : ''}
 ${error ? html`<div class="form-error">${error}</div>` : ''}
-<p class="muted">A runner is a machine that executes workflow jobs. Jobs never run on the vault's own machine: register a runner, then start it with <code>cofferdam runner run</code> somewhere with Docker.</p>
+<p class="muted">A runner is a machine that executes workflow jobs. Jobs never run on the vault's own machine: register a runner, then start it with <code>feorge runner run</code> somewhere with Docker.</p>
 ${
   runners.length
     ? html`<table class="listing"><tbody>${rows}</tbody></table>`
@@ -469,9 +469,9 @@ ${flash ? html`<div class="flash">${flash}</div>` : ''}
 ${facts}
 <div class="form-box wide" style="margin-top:24px">
 <h2>Start this runner</h2>
-<p class="muted">On the machine that will execute the jobs, with Docker installed and running, and the <code>cofferdam</code> CLI on the path (<code>npm install -g @magland/cofferdam</code>):</p>
-${copyRow(`cofferdam runner run --host ${host} --runner-token <token>`)}
-<p class="muted small">The token is shown only when it is issued, so if you no longer have it, regenerate it below and the command will be filled in for you. Adding <code>--save</code> writes the host and token to <code>~/.config/cofferdam/runner.json</code>, after which <code>cofferdam runner run</code> needs no arguments; <code>COFFERDAM_RUNNER_TOKEN</code> supplies the token where a command line is the wrong place for it, as in a systemd unit. Leave the process running; it polls for work and exits only when you stop it.</p>
+<p class="muted">On the machine that will execute the jobs, with Docker installed and running, and the <code>feorge</code> CLI on the path (<code>npm install -g feorge</code>):</p>
+${copyRow(`feorge runner run --host ${host} --runner-token <token>`)}
+<p class="muted small">The token is shown only when it is issued, so if you no longer have it, regenerate it below and the command will be filled in for you. Adding <code>--save</code> writes the host and token to <code>~/.config/feorge/runner.json</code>, after which <code>feorge runner run</code> needs no arguments; <code>FEORGE_RUNNER_TOKEN</code> supplies the token where a command line is the wrong place for it, as in a systemd unit. Leave the process running; it polls for work and exits only when you stop it.</p>
 <p class="muted small">Jobs are matched by label, so this runner will be offered jobs whose <code>runs-on</code> names ${
     r.labels.length
       ? joinHtml(
@@ -544,8 +544,8 @@ export function runnerTokenPage(
 ${copyRow(token)}
 <h2>Start it</h2>
 <p class="muted">On a machine with Docker:</p>
-${copyRow(`cofferdam runner run --host ${host} --runner-token ${token}`)}
-<p class="muted small">Adding <code>--save</code> keeps the host and token in <code>~/.config/cofferdam/runner.json</code>, so <code>cofferdam runner run</code> needs no arguments afterwards.${
+${copyRow(`feorge runner run --host ${host} --runner-token ${token}`)}
+<p class="muted small">Adding <code>--save</code> keeps the host and token in <code>~/.config/feorge/runner.json</code>, so <code>feorge runner run</code> needs no arguments afterwards.${
     regenerated ? ' If the runner is already running with the old token, restart it now.' : ''
   }</p>
 <p><a class="btn" href="/admin/runners/${encodeURIComponent(
@@ -567,8 +567,8 @@ export function runnerWakePage(viewer: Viewer, name: string, url: string, secret
 ${copyRow(secret)}
 <h2>Start it</h2>
 <p class="muted">With an idle timeout, so that there is something to wake, and a port for the request to arrive on:</p>
-${copyRow(`COFFERDAM_WAKE_SECRET=${secret} cofferdam runner run --idle 5m --wake-port 3000`)}
-<p class="muted small">A runner deployed with <code>cofferdam deploy fly runner</code> is given all of this already; this page is for a runner you start yourself. Saving an address again issues a new secret, so the runner has to be restarted with it.</p>
+${copyRow(`FEORGE_WAKE_SECRET=${secret} feorge runner run --idle 5m --wake-port 3000`)}
+<p class="muted small">A runner deployed with <code>feorge deploy fly runner</code> is given all of this already; this page is for a runner you start yourself. Saving an address again issues a new secret, so the runner has to be restarted with it.</p>
 <p><a class="btn" href="/admin/runners/${encodeURIComponent(
     name
   )}">Back to ${name}</a> <a class="btn" href="/admin/runners">All runners</a></p>

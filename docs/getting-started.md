@@ -1,6 +1,6 @@
 # Getting started
 
-There are three points at which cofferdam becomes useful, and each is a small step from the one before. Running a vault on your own machine takes two commands and answers the question of whether you want any of this. Putting one on the internet, where other people can reach it, is one more command and a Fly.io account. Giving it a domain of your own is DNS work, and worth doing once the vault is something you intend to keep.
+There are three points at which feorge becomes useful, and each is a small step from the one before. Running a vault on your own machine takes two commands and answers the question of whether you want any of this. Putting one on the internet, where other people can reach it, is one more command and a Fly.io account. Giving it a domain of your own is DNS work, and worth doing once the vault is something you intend to keep.
 
 This document walks the first two in full and hands the third to [Deploying a vault](deploying.md), which is the reference for everything about a hosted vault.
 
@@ -10,7 +10,7 @@ A vault is a directory, and the server is one Node process pointed at it. Nothin
 
 ```bash
 mkdir myvault
-npx @magland/cofferdam serve myvault
+npx feorge serve myvault
 ```
 
 Finding no `vault.json` in the directory, the server initializes one and prints an owner token:
@@ -19,12 +19,12 @@ Finding no `vault.json` in the directory, the server initializes one and prints 
 Initialized a new vault (no vault.json found).
 Owner token for user 'owner' (shown once; only its hash is stored):
 
-  cofferdam_a86e77f29b4715949d27949ea576fbdccdf4b391979af150226e35b481f27868
+  feorge_a86e77f29b4715949d27949ea576fbdccdf4b391979af150226e35b481f27868
 
 Sign in on the web with it, or manage users from anywhere:
-  cofferdam login http://127.0.0.1:3000
+  feorge login http://127.0.0.1:3000
 
-cofferdam serving vault /home/you/myvault
+feorge serving vault /home/you/myvault
   http://127.0.0.1:3000
 ```
 
@@ -61,22 +61,22 @@ The interface is deliberately GitHub-shaped, so most of it needs no instructions
 - **Editing in the browser.** Open a file and edit it, or add one; the commit is authored as you and lands on the branch you were reading.
 - **Issues and pull requests.** Both are stored as markdown files in the vault, beside the repository. Open an issue, then look in `myvault/collections/alice/repos/myproject.issues/` to see it as a file.
 - **A static site.** Create `myvault/collections/alice/repos/myproject.site/` and put an `index.html` in it. A Site tab appears in the repository's navigation, serving it at `/alice/myproject/site/`. See [Sites](sites.md).
-- **The command line.** `cofferdam login http://127.0.0.1:3000` hands the same token to the CLI, after which `cofferdam repo list`, `cofferdam issue list`, and the rest work against this vault (see [The command line](cli.md)).
+- **The command line.** `feorge login http://127.0.0.1:3000` hands the same token to the CLI, after which `feorge repo list`, `feorge issue list`, and the rest work against this vault (see [The command line](cli.md)).
 
 Two things behave differently on a laptop vault, and are worth knowing about rather than debugging: [workflows](workflows.md) do nothing until a runner is started separately with Docker, and other machines cannot reach the server, because it binds `127.0.0.1` unless told otherwise. `--host 0.0.0.0` opens it to your network, which is reasonable on a trusted network and not on the open internet, since tokens travel as Basic-auth passwords over plain HTTP.
 
 Stop the server with Ctrl-C, and start it again with the same command; the vault is whatever is in the directory. To throw the experiment away, delete the directory.
 
-If you would rather see a populated vault than build one, clone this repository and run `npm install && npm run example && npm run dev`, which creates `example-root/` with sample collections, repositories, issues, and a user `dev` whose token is `cofferdam_example_dev_token`.
+If you would rather see a populated vault than build one, clone this repository and run `npm install && npm run example && npm run dev`, which creates `example-root/` with sample collections, repositories, issues, and a user `dev` whose token is `feorge_example_dev_token`.
 
 ## 2. A vault on the internet
 
-The step from a laptop vault to a real one is a persistent disk and TLS in front, and `cofferdam deploy fly` arranges both. Fly.io runs the container; you need an account there, [flyctl](https://fly.io/docs/flyctl/install/) installed, and `fly auth login` run once. Nothing is needed on your machine but the CLI, and no checkout of this repository:
+The step from a laptop vault to a real one is a persistent disk and TLS in front, and `feorge deploy fly` arranges both. Fly.io runs the container; you need an account there, [flyctl](https://fly.io/docs/flyctl/install/) installed, and `fly auth login` run once. Nothing is needed on your machine but the CLI, and no checkout of this repository:
 
 ```bash
-npm install -g @magland/cofferdam
+npm install -g feorge
 fly auth login
-cofferdam deploy fly my-vault-name
+feorge deploy fly my-vault-name
 ```
 
 Fly app names are globally unique and the name becomes the URL, so pick your own. That creates the app, a 10GB volume, and a single machine serving the vault over HTTPS at `https://my-vault-name.fly.dev`, and ends by printing the owner token once. Save it: it is minted on your machine and only its hash reaches the server.
@@ -84,15 +84,15 @@ Fly app names are globally unique and the name becomes the URL, so pick your own
 Then log in, from your own machine, and create the users:
 
 ```bash
-cofferdam login https://my-vault-name.fly.dev    # asks for the token, without echo
-cofferdam user add alice
+feorge login https://my-vault-name.fly.dev    # asks for the token, without echo
+feorge user add alice
 ```
 
-`cofferdam user add` prints that user's token, which is what you hand them; it is the credential for both `git push` and signing in on the web. Users do not register themselves. A new user owns the collection named after them, `alice/` here, and nothing else, which is what most people should have; `cofferdam collab add` and `cofferdam collection owner add` grant more where it applies, and `--site-admin` is what delegates running the vault. The same work can be done in the browser, if you would rather see it.
+`feorge user add` prints that user's token, which is what you hand them; it is the credential for both `git push` and signing in on the web. Users do not register themselves. A new user owns the collection named after them, `alice/` here, and nothing else, which is what most people should have; `feorge collab add` and `feorge collection owner add` grant more where it applies, and `--site-admin` is what delegates running the vault. The same work can be done in the browser, if you would rather see it.
 
-What you now have is a vault anyone can read and only your users can write, at a URL you can send to someone. `cofferdam deploy fly my-vault-name` again deploys an update, `cofferdam deploy fly show my-vault-name` says what is running, and the disk, the machine size, and LFS objects in a bucket are flags on the deploy. All of that, and the costs and limits of running one machine against one volume, is in [Deploying a vault](deploying.md).
+What you now have is a vault anyone can read and only your users can write, at a URL you can send to someone. `feorge deploy fly my-vault-name` again deploys an update, `feorge deploy fly show my-vault-name` says what is running, and the disk, the machine size, and LFS objects in a bucket are flags on the deploy. All of that, and the costs and limits of running one machine against one volume, is in [Deploying a vault](deploying.md).
 
-Two things about a hosted vault are worth being deliberate about. It is readable by anyone who finds the URL, since reads are anonymous by design, so put in it what you are content for a stranger to read, and mark a repository private (at creation or in its settings) when you are not. And the vault directory, `/vault` on the volume, is the entire state: a backup is a copy of that directory, and `cofferdam backup ~/backups/myvault` makes one over HTTP without a shell on the machine ([Backing up a vault](backup.md)). There is nothing else to arrange.
+Two things about a hosted vault are worth being deliberate about. It is readable by anyone who finds the URL, since reads are anonymous by design, so put in it what you are content for a stranger to read, and mark a repository private (at creation or in its settings) when you are not. And the vault directory, `/vault` on the volume, is the entire state: a backup is a copy of that directory, and `feorge backup ~/backups/myvault` makes one over HTTP without a shell on the machine ([Backing up a vault](backup.md)). There is nothing else to arrange.
 
 ## 3. A domain of your own
 
@@ -105,6 +105,6 @@ Both, with the exact records and commands, are in [A domain of your own](deployi
 ## Where to go next
 
 - [The vault](vault.md): the layout on disk, and how signing in relates to the tokens git uses
-- [The command line](cli.md): the `cofferdam` command, roles and tokens, importing existing repositories, and the JSON API
+- [The command line](cli.md): the `feorge` command, roles and tokens, importing existing repositories, and the JSON API
 - [Deploying a vault](deploying.md): Fly.io in detail, a domain of your own, Docker and Caddy on a machine of your own, and the built-in limits
 - [Workflows](workflows.md): GitHub Actions workflows, and the runner that executes them

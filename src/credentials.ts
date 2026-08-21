@@ -147,12 +147,12 @@ export async function rejectCredential(target: CredentialTarget, username?: stri
 
 // Where the CLI remembers which vault it is talking to. The token itself is
 // never written here: it lives in git's credential store, put there by
-// `cofferdam login`, so there is one place a token is kept rather than two.
+// `feorge login`, so there is one place a token is kept rather than two.
 // This file records only the vault URL of the most recent login, which is what
-// makes `cofferdam user list` work with no arguments and no environment.
+// makes `feorge user list` work with no arguments and no environment.
 export function loginPath(): string {
   const base = process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config');
-  return path.join(base, 'cofferdam', 'login.json');
+  return path.join(base, 'feorge', 'login.json');
 }
 
 export function loadLogin(file = loginPath()): { host: string } | null {
@@ -184,27 +184,27 @@ export function clearLogin(host: string, file = loginPath()): void {
 }
 
 // The vault a command should talk to, and the token to talk with. Precedence is
-// the same for both: the option, then the environment, then what `cofferdam
+// the same for both: the option, then the environment, then what `feorge
 // login` left behind (the URL in login.json, the token in git's credential
 // store).
 //
 // The environment is here for a caller that has no keyring and possibly no
 // writable home directory, which is an agent in a container rather than a
-// person at a laptop. `cofferdam login` remains the one thing a person
+// person at a laptop. `feorge login` remains the one thing a person
 // configures, and the runner already took this shape with
-// COFFERDAM_RUNNER_TOKEN.
+// FEORGE_RUNNER_TOKEN.
 export async function vaultTarget(args: {
   host?: string | null;
   token?: string | null;
 }): Promise<{ host: string; token: string }> {
-  const envHost = process.env.COFFERDAM_HOST?.trim() || null;
-  const envToken = process.env.COFFERDAM_TOKEN?.trim() || null;
+  const envHost = process.env.FEORGE_HOST?.trim() || null;
+  const envToken = process.env.FEORGE_TOKEN?.trim() || null;
   const host = (args.host ?? envHost ?? loadLogin()?.host ?? '').replace(/\/+$/, '');
   if (!host) {
     throw new CredentialError(
       'No vault. Log in to one first:\n\n' +
-        '  cofferdam login https://vault.example.com\n\n' +
-        'or pass --host <url>, or set COFFERDAM_HOST.'
+        '  feorge login https://vault.example.com\n\n' +
+        'or pass --host <url>, or set FEORGE_HOST.'
     );
   }
   if (args.token) return { host, token: args.token };
@@ -214,8 +214,8 @@ export async function vaultTarget(args: {
   if (!stored) {
     throw new CredentialError(
       `No stored token for ${target.url}. Log in again:\n\n` +
-        `  cofferdam login ${target.url}\n\n` +
-        'or pass --token <token>, or set COFFERDAM_TOKEN.'
+        `  feorge login ${target.url}\n\n` +
+        'or pass --token <token>, or set FEORGE_TOKEN.'
     );
   }
   return { host, token: stored.password };

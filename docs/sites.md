@@ -60,7 +60,7 @@ A sandbox is the right default because it needs no configuration and works on a 
 Set one on the vault, from wherever you administer it:
 
 ```bash
-cofferdam config set --sites-host vault-sites.example.org
+feorge config set --sites-host vault-sites.example.org
 ```
 
 That writes `sites.host` in the vault's `config.json`, which is read per request, so it is in effect on the next one; `--sites-host ''` clears it again. Hand-editing the file does the same thing, and is what a vault with no CLI to hand still supports.
@@ -87,4 +87,4 @@ The vault's own session cookie is not affected: it is set only on the forge's ho
 
 The DNS records and certificates this needs are in [A domain of your own](deploying.md#a-domain-of-your-own).
 
-GitHub calls this feature Pages, and earlier versions of cofferdam did too, with the directory named `<repo>.pages`. We renamed it because "pages" already means something else in a web interface made of pages. A vault created before the rename needs one command per site: `mv <repo>.pages <repo>.site`.
+GitHub calls this feature Pages, and earlier versions of feorge did too, with the directory named `<repo>.pages`. We renamed it because "pages" already means something else in a web interface made of pages. A vault created before the rename needs one command per site: `mv <repo>.pages <repo>.site`.

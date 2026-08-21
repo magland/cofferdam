@@ -129,9 +129,9 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
         send404(res, `Collection ${collection} not found`, viewer);
         return;
       }
-      // The profile lives in the .cofferdam repository, so a private one
+      // The profile lives in the .feorge repository, so a private one
       // introduces the collection only to viewers who could read it.
-      const profileRepo = findRepo(root, collection, '.cofferdam');
+      const profileRepo = findRepo(root, collection, '.feorge');
       const profileVisible = profileRepo === null || repoRole(root, viewer?.auth ?? null, profileRepo) !== null;
       const [cards, profile] = await Promise.all([
         repoCards(req, collection, viewer),

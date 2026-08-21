@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="cofferdam">
-  <rect width="64" height="64" rx="14" fill="#0e7c74"/>
-  <g transform="translate(9.6 9.6) scale(0.7)" fill="none">
-    <path d="M43.47 15.62A20 20 0 1 1 18.32 17.41" stroke="#fbf8f3" stroke-width="6" stroke-linecap="round"/>
-    <path d="M28.01 10.91 14.52 11.38 21.67 22.83Z" fill="#fbf8f3"/>
-    <rect x="25" y="25" width="14" height="14" rx="3" fill="#fbf8f3"/>
-  </g>
-</svg>

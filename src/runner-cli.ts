@@ -7,8 +7,8 @@ import { DEFAULT_IMAGES, Runner, RunnerConfig, configPath, loadRunnerConfig, sav
 import { newWakeSecret } from './ci/wake';
 import { globMatch } from './vault';
 
-// The `cofferdam runner ...` subcommands. Registration talks to the server with
-// an admin token, exactly like `cofferdam user add`; running needs only the
+// The `feorge runner ...` subcommands. Registration talks to the server with
+// an admin token, exactly like `feorge user add`; running needs only the
 // runner's own token and a working Docker.
 
 interface RunnerArgs {
@@ -119,12 +119,12 @@ function parseArgs(args: string[], usage: () => never): RunnerArgs {
 }
 
 // Registration is an ordinary admin operation, so it uses the same login as
-// `cofferdam user add` rather than any arrangement of its own.
+// `feorge user add` rather than any arrangement of its own.
 
 export async function runnerAddCmd(args: string[], usage: () => never): Promise<void> {
   const a = parseArgs(args, usage);
   if (!a.name) {
-    console.error('A runner name is required: cofferdam runner add <name> --allow <glob>');
+    console.error('A runner name is required: feorge runner add <name> --allow <glob>');
     process.exit(1);
   }
   if (a.allow.length === 0) {
@@ -163,11 +163,11 @@ export async function runnerAddCmd(args: string[], usage: () => never): Promise<
     saveRunnerConfig(config);
     console.log(`Saved to ${configPath()}. Start it with:`);
     console.log('');
-    console.log('  cofferdam runner run');
+    console.log('  feorge runner run');
   } else {
     console.log('On the machine that will run jobs (with Docker installed):');
     console.log('');
-    console.log(`  cofferdam runner run --host ${target.host} --runner-token ${data.token}`);
+    console.log(`  feorge runner run --host ${target.host} --runner-token ${data.token}`);
   }
   if (wake) {
     console.log('');
@@ -175,14 +175,14 @@ export async function runnerAddCmd(args: string[], usage: () => never): Promise<
     console.log('waiting and nothing is polling. Start it with the matching secret, and with an');
     console.log('idle timeout, or there will be nothing to wake:');
     console.log('');
-    console.log(`  COFFERDAM_WAKE_SECRET=${wake.secret} \\`);
-    console.log(`    cofferdam runner run --idle 5m --wake-port 3000`);
+    console.log(`  FEORGE_WAKE_SECRET=${wake.secret} \\`);
+    console.log(`    feorge runner run --idle 5m --wake-port 3000`);
   }
   console.log('');
 }
 
 /**
- * `cofferdam runner wake <name>`: send the wake request, or change where it goes.
+ * `feorge runner wake <name>`: send the wake request, or change where it goes.
  *
  * Sending it is the useful default, because the question an operator has is
  * almost always "does this actually start" rather than "what is stored". The
@@ -193,7 +193,7 @@ export async function runnerAddCmd(args: string[], usage: () => never): Promise<
 export async function runnerWakeCmd(args: string[], usage: () => never): Promise<void> {
   const a = parseArgs(args, usage);
   if (!a.name) {
-    console.error('Which runner? Usage: cofferdam runner wake <name> [--url <url>] [--clear]');
+    console.error('Which runner? Usage: feorge runner wake <name> [--url <url>] [--clear]');
     process.exit(1);
   }
   if (a.clear && a.wakeUrl) {
@@ -218,7 +218,7 @@ export async function runnerWakeCmd(args: string[], usage: () => never): Promise
       console.log('');
       console.log(`  ${secret}`);
       console.log('');
-      console.log('  COFFERDAM_WAKE_SECRET=<that> cofferdam runner run --idle 5m --wake-port 3000');
+      console.log('  FEORGE_WAKE_SECRET=<that> feorge runner run --idle 5m --wake-port 3000');
     }
     return;
   }
@@ -297,7 +297,7 @@ is the usual reason a run sits at queued forever.`,
       return;
     }
     if (runners.length === 0) {
-      console.log('No runners registered. Runs will queue and wait: cofferdam runner add <name> --allow <glob>');
+      console.log('No runners registered. Runs will queue and wait: feorge runner add <name> --allow <glob>');
     } else {
       printTable(
         runners.map((r) => [
@@ -341,7 +341,7 @@ is the usual reason a run sits at queued forever.`,
 export async function runnerRemoveCmd(args: string[], usage: () => never): Promise<void> {
   const a = parseArgs(args, usage);
   if (!a.name) {
-    console.error('A runner name is required: cofferdam runner remove <name>');
+    console.error('A runner name is required: feorge runner remove <name>');
     process.exit(1);
   }
   const target = await remoteTarget(a);
@@ -355,11 +355,11 @@ export async function runnerRunCmd(args: string[], usage: () => never): Promise<
   // A runner's token is its own, not a user's, so it is not something login
   // stored; only the vault URL can be borrowed from a login on this machine.
   const host = (a.host ?? saved?.host ?? loadLogin()?.host ?? '').replace(/\/+$/, '');
-  const token = a.runnerToken ?? process.env.COFFERDAM_RUNNER_TOKEN ?? saved?.token ?? '';
+  const token = a.runnerToken ?? process.env.FEORGE_RUNNER_TOKEN ?? saved?.token ?? '';
   if (!host || !token) {
     console.error(
       `No runner credentials. Register one with:\n\n` +
-        `  cofferdam runner add <name> --allow 'mycollection/*' --save\n\n` +
+        `  feorge runner add <name> --allow 'mycollection/*' --save\n\n` +
         `or pass --host and --runner-token, or write ${configPath()}.`
     );
     process.exit(1);
@@ -379,11 +379,11 @@ export async function runnerRunCmd(args: string[], usage: () => never): Promise<
     // From the environment by preference, like the runner token above: this is
     // the credential a wake request must present, and a secret in argv is
     // readable by every other user on the machine.
-    wakeSecret: a.wakeSecret ?? process.env.COFFERDAM_WAKE_SECRET ?? saved?.wakeSecret,
+    wakeSecret: a.wakeSecret ?? process.env.FEORGE_WAKE_SECRET ?? saved?.wakeSecret,
   };
   if (config.wakePort && !config.wakeSecret) {
     console.error(
-      'A wake port needs a secret to check against: pass --wake-secret, or set COFFERDAM_WAKE_SECRET.\n' +
+      'A wake port needs a secret to check against: pass --wake-secret, or set FEORGE_WAKE_SECRET.\n' +
         'Without one, anything that can reach this port could start this runner.'
     );
     process.exit(1);
@@ -394,7 +394,7 @@ export async function runnerRunCmd(args: string[], usage: () => never): Promise<
     // other arrangement, and a runner that stops with nothing able to start it
     // looks exactly like a runner that has failed.
     console.log('Note: this runner will stop when idle, and has no wake port, so nothing can start it.');
-    console.log('      Add --wake-port to let the vault do it: cofferdam runner wake --help');
+    console.log('      Add --wake-port to let the vault do it: feorge runner wake --help');
   }
   if (a.save) {
     saveRunnerConfig(config);

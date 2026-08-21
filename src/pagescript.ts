@@ -30,16 +30,16 @@ const PAGE_JS = `
 // The vault's own theme and the dark one it pairs with are stamped on <html>
 // by the server, so this file is the same bytes for every vault and every
 // theme and can be cached for good.
-var cofferdamRoot = document.documentElement;
-var cofferdamTheme = {
-  vault: cofferdamRoot.getAttribute('data-theme-vault') || 'paper',
-  dark: cofferdamRoot.getAttribute('data-theme-dark') || 'midnight',
+var feorgeRoot = document.documentElement;
+var feorgeTheme = {
+  vault: feorgeRoot.getAttribute('data-theme-vault') || 'paper',
+  dark: feorgeRoot.getAttribute('data-theme-dark') || 'midnight',
 };
 function applyTheme() {
   var pick = null;
-  try { pick = localStorage.getItem('cofferdam.theme'); } catch (e) {}
+  try { pick = localStorage.getItem('feorge.theme'); } catch (e) {}
   var auto = !pick || pick === 'auto';
-  if (auto) pick = matchMedia('(prefers-color-scheme: dark)').matches ? cofferdamTheme.dark : cofferdamTheme.vault;
+  if (auto) pick = matchMedia('(prefers-color-scheme: dark)').matches ? feorgeTheme.dark : feorgeTheme.vault;
   document.documentElement.setAttribute('data-theme', pick);
   var hl = document.getElementById('hl-css');
   var href = '/assets/hl.css?t=' + encodeURIComponent(pick);
@@ -51,7 +51,7 @@ function applyTheme() {
   }
 }
 function setTheme(name) {
-  try { localStorage.setItem('cofferdam.theme', name); } catch (e) {}
+  try { localStorage.setItem('feorge.theme', name); } catch (e) {}
   applyTheme();
   if (typeof closeMenus === 'function') closeMenus(null);
 }
@@ -149,11 +149,11 @@ var jumpSel = 0;
 function loadJumpRepos() {
   if (jumpRepos) return Promise.resolve(jumpRepos);
   var cached = null;
-  try { cached = sessionStorage.getItem('cofferdam.repos'); } catch (e) {}
+  try { cached = sessionStorage.getItem('feorge.repos'); } catch (e) {}
   if (cached) { try { jumpRepos = JSON.parse(cached); return Promise.resolve(jumpRepos); } catch (e) {} }
   return fetch('/assets/repos.json').then(function (r) { return r.json(); }).then(function (list) {
     jumpRepos = list;
-    try { sessionStorage.setItem('cofferdam.repos', JSON.stringify(list)); } catch (e) {}
+    try { sessionStorage.setItem('feorge.repos', JSON.stringify(list)); } catch (e) {}
     return list;
   }, function () { jumpRepos = []; return jumpRepos; });
 }
