@@ -71,7 +71,7 @@ No database, no state outside the directory. Backup is `cp -a`, migration is `rs
 - [The command line](docs/cli.md) - the `mochi` command and its subcommands
 - [The vault](docs/vault.md) - the on-disk layout, tokens, and sessions
 - [Deploying a vault](docs/deploying.md) | [Backing up a vault](docs/backup.md)
-- [Workflows](docs/workflows.md) | [Sites](docs/sites.md) | [Git LFS](docs/lfs.md) | [Themes](docs/themes.md) | [Issues and pull requests](docs/issues-and-pull-requests.md)
+- [Workflows](docs/workflows.md) | [Sites](docs/sites.md) | [Git LFS](docs/lfs.md) | [Themes](docs/themes.md) | [Issues and pull requests](docs/issues-and-pull-requests.md) | [Encrypted files](docs/encrypted-files.md)
 - [The JSON API](docs/api.md) - every route, body, and response
 - [Mochi Forge for an agent](docs/agents.md) - short enough to paste into a context window
 

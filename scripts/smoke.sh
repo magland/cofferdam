@@ -404,6 +404,71 @@ check "an unnamed new branch is refused" 400 -b "$JAR" "$BASE/demo/proj/edit/mai
   --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" --data-urlencode "content=x" \
   --data-urlencode "newBranchWanted=1" --data-urlencode "newBranch="
 
+# ---- age-encrypted files ----
+
+# A real armored ciphertext, encrypted to the passphrase "smoke test" with a
+# low scrypt work factor. What these checks exercise is the server's side of
+# the feature: the card page, the locked editor, the extra script, and the
+# backstop that refuses plaintext under a .age name. The cryptography itself
+# is exercised in tests/agescript.test.ts, where the vendored bundle runs for
+# real; decrypting here would need a browser.
+AGE_FIXTURE='-----BEGIN AGE ENCRYPTED FILE-----
+YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IHNjcnlwdCBrbTlBalgraU5PaG44LzUw
+dmJDdU1BIDEwCnJ1ZGQwSzBlREE4TXgvTVZ2ME9PMjRjbWFyWDlHaGE4cDhXK0tq
+RUVwcmMKLS0tIHN3M1lUdzRNVDVUb1dETzJYVWl4N0hJdTljZVJVc1FWZFVFckJM
+SkF5NkUKLltgYVgJmMJc+rR6xXqoGzCbhMhUsXJCMjbed4aWKXrtxkxEarG1CnkR
+p5sYBriTPg==
+-----END AGE ENCRYPTED FILE-----'
+
+check "new file form for the age file" 200 -b "$JAR" "$BASE/demo/proj/new/main"
+CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
+body_has "the new-file form is wired for .age names" 'data-age-new'
+body_has "and the page carries the age script" '/assets/age.js'
+check "a .age name refuses plaintext content" 400 -b "$JAR" "$BASE/demo/proj/new/main" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
+  --data-urlencode filename=secrets.md.age --data-urlencode "content=a plaintext token" \
+  --data-urlencode "message="
+check "and accepts a ciphertext" 302 -b "$JAR" "$BASE/demo/proj/new/main" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
+  --data-urlencode filename=secrets.md.age --data-urlencode "content=$AGE_FIXTURE" \
+  --data-urlencode "message="
+check "the blob page is the decrypt card" 200 -b "$JAR" "$BASE/demo/proj/blob/main/secrets.md.age"
+body_has "which offers to decrypt in the page" 'data-age-view'
+body_has "renders the inner name as markdown" 'data-age-inner="markdown"'
+body_has "says what it is" 'Encrypted with age'
+body_has "and carries the age script" '/assets/age.js'
+body_lacks "the ciphertext page never holds the plaintext" 'plaintext token'
+check "?plain=1 shows the armored source" 200 -b "$JAR" "$BASE/demo/proj/blob/main/secrets.md.age?plain=1"
+body_has "as text, headers and all" 'BEGIN AGE ENCRYPTED FILE'
+check "the editor for it opens locked" 200 -b "$JAR" "$BASE/demo/proj/edit/main/secrets.md.age"
+body_has "with the decrypt-then-edit form" 'data-age-edit'
+CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
+check "editing it to plaintext is refused" 400 -b "$JAR" "$BASE/demo/proj/edit/main/secrets.md.age" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
+  --data-urlencode "content=now in the clear"
+# A different ciphertext of the same passphrase: re-encrypting always makes
+# fresh bytes (a fresh scrypt salt), so posting the identical ciphertext back,
+# which the vault would rightly refuse as no change, is not what the editor
+# ever does.
+AGE_FIXTURE_2='-----BEGIN AGE ENCRYPTED FILE-----
+YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IHNjcnlwdCBHcEQ3azdKeC82cjh6dGp4
+Sk9jM0x3IDEwCkJRbEVETmd2aGtTZ3ZpYzViMkhCdU9ncXBSdCtLWlhJWC9pcWFq
+aVpqUk0KLS0tIGRDaFR6NE0wdDI5ZWxSdXpCOTBWcjJQdTFDQnhtTWphM29uTUJt
+WkQ1OHMK1M/AOzzOrvBgeVQd0BSquiLO1CSe2aALEBhTP1ivTs4HWEVNI/87ZP2Y
+cwdWwcP7ENlbvPdYMe8ovg==
+-----END AGE ENCRYPTED FILE-----'
+check "editing it to a fresh ciphertext commits" 302 -b "$JAR" "$BASE/demo/proj/edit/main/secrets.md.age" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED" \
+  --data-urlencode "content=$AGE_FIXTURE_2"
+check "the age script serves" 200 "$BASE/assets/age.js"
+body_has "and is the vendored bundle plus the glue" 'MochiAge'
+check "an ordinary page does not carry it" 200 -b "$JAR" "$BASE/demo/proj"
+body_lacks "the 300 KB rides only where it is needed" '/assets/age.js'
+check "delete the age file's confirm form" 200 -b "$JAR" "$BASE/demo/proj/delete/main/secrets.md.age"
+CSRF="$(csrf_of)"; EXPECTED="$(expected_of)"
+check "delete the age file" 302 -b "$JAR" "$BASE/demo/proj/delete/main/secrets.md.age" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "expected=$EXPECTED"
+
 # ---- create and delete a file ----
 
 check "new file form" 200 -b "$JAR" "$BASE/demo/proj/new/main"

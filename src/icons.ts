@@ -63,6 +63,7 @@ const PATHS: Record<string, string> = {
     '<path d="M3.2 7.2 12 2.4l8.8 4.8v9.6L12 21.6l-8.8-4.8Z"/><path d="M3.2 7.2 12 12l8.8-4.8M12 12v9.6"/>',
   tag: '<path d="M13.6 3.6A2 2 0 0 0 12.2 3H5a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l7.2 7.2a2 2 0 0 0 2.8 0l7.2-7.2a2 2 0 0 0 0-2.8Z"/><circle cx="7.6" cy="7.6" r="1.4"/>',
   law: '<path d="M12 4V21M8 21h8M4.5 7.5 12 6l7.5 1.5"/><path d="M4.5 7.5 2 13a2.5 2.5 0 0 0 5 0Z"/><path d="M19.5 7.5 17 13a2.5 2.5 0 0 0 5 0Z"/>',
+  lock: `<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8.5 11V7.5a3.5 3.5 0 0 1 7 0V11"/>${DOT(12, 15.5)}`,
 
   // The git graph.
   'git-commit': '<circle cx="12" cy="12" r="3.6"/><path d="M2.5 12h5.9M15.6 12h5.9"/>',

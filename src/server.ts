@@ -30,6 +30,7 @@ import { registerSiteHost } from './site';
 import { isUnderSitesHost } from './siteshost';
 import { styleSheet } from './assets';
 import { pageScript } from './pagescript';
+import { ageScript } from './agescript';
 import { activeTheme, findTheme, setActiveTheme } from './themes';
 import * as views from './views';
 import { registerWebOps } from './webops';
@@ -270,6 +271,19 @@ export function createApp(root: string) {
   // be a different tag and so a different URL.
   app.get('/assets/page.js', (req, res) => {
     const script = pageScript();
+    const fresh = String(req.query.v ?? '') === script.tag;
+    res
+      .type('text/javascript')
+      .set('Cache-Control', fresh ? 'public, max-age=31536000, immutable' : 'no-cache')
+      .set('X-Content-Type-Options', 'nosniff')
+      .send(script.body);
+  });
+  // The encrypted-file script, on the same terms again. It is ~300 KB of
+  // vendored cryptography plus its glue, which is why only the pages that
+  // need it link it (see PageOpts.ageScript) and why the immutable caching
+  // matters more here than anywhere.
+  app.get('/assets/age.js', (req, res) => {
+    const script = ageScript();
     const fresh = String(req.query.v ?? '') === script.tag;
     res
       .type('text/javascript')

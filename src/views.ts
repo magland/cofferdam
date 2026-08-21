@@ -5,6 +5,7 @@ import { esc, formatDateFull, formatDay, formatSize, highlightedLines, timeTag }
 import { Viewer, viewerIsAdmin } from './session';
 import { styleSheet } from './assets';
 import { pageScript } from './pagescript';
+import { ageScript } from './agescript';
 import { THEMES, activeTheme, darkFor } from './themes';
 import { WORDMARK } from './logo';
 import { IconName, icon } from './icons';
@@ -54,6 +55,10 @@ export interface PageOpts {
   // repositories: where a repository page's own sections are, and where its
   // search and file finder take a query.
   jump?: JumpContext;
+  // Load /assets/age.js too: only the pages that show or write an
+  // age-encrypted file, so the vendored cryptography is never fetched by a
+  // page that cannot need it.
+  ageScript?: boolean;
 }
 
 export interface JumpContext {
@@ -196,6 +201,9 @@ export function layout(title: string, content: Html, opts: PageOpts = {}): strin
   const theme = activeTheme().name;
   const sheet = styleSheet(activeTheme()).tag;
   const script = pageScript().tag;
+  // Deferred: nothing on it is needed before the DOM exists, and the page's
+  // own script must not wait behind 300 KB of cryptography.
+  const age = opts.ageScript ? html`<script src="/assets/age.js?v=${ageScript().tag}" defer></script>` : '';
   // The theme pair rides on <html> rather than in the script, which is what
   // lets /assets/page.js be one cacheable file for every vault: the script
   // reads these two attributes instead of being generated around them.
@@ -209,7 +217,7 @@ export function layout(title: string, content: Html, opts: PageOpts = {}): strin
 <link id="hl-css" rel="stylesheet" href="/assets/hl.css?t=${encodeURIComponent(theme)}">
 <link rel="stylesheet" href="/assets/katex/katex.css">
 <link rel="icon" href="/favicon.svg?t=${encodeURIComponent(theme)}" type="image/svg+xml">
-<script src="/assets/page.js?v=${script}"></script>
+<script src="/assets/page.js?v=${script}"></script>${age}
 </head>
 <body>
 <header class="topbar"><div class="container"><a class="brand" href="/">${raw(WORDMARK)}</a><span class="crumbs">${opts.crumbs}</span><div class="userbox">${jumpButton()}${aboutLink()}${themeMenu()}${userBox(opts)}</div></div></header>
@@ -1007,13 +1015,14 @@ export function blobPage(
     | { kind: 'image'; rawUrl: string; size: number }
     | { kind: 'binary'; rawUrl: string; size: number }
     | { kind: 'too-large'; rawUrl: string; size: number }
-    | { kind: 'lfs'; rawUrl: string; size: number; oid: string },
+    | { kind: 'lfs'; rawUrl: string; size: number; oid: string }
+    | { kind: 'age'; rawUrl: string; size: number; editable: boolean; markdownInner: boolean },
   isMarkdown = false
 ): string {
   const base = repoUrl(ctx);
   const blobUrl = `${base}/blob/${encPath(ctx.ref)}/${encPath(path)}`;
   const rawUrl = `${base}/raw/${encPath(ctx.ref)}/${encPath(path)}`;
-  const editable = (view.kind === 'code' || view.kind === 'markdown') && view.editable;
+  const editable = (view.kind === 'code' || view.kind === 'markdown' || view.kind === 'age') && view.editable;
   const editBtns = editable
     ? html`<a class="btn" href="${base}/edit/${encPath(ctx.ref)}/${encPath(path)}" title="Edit this file">${icon(
         'pencil'
@@ -1077,6 +1086,23 @@ export function blobPage(
 <p class="muted small mono">sha256:${view.oid}</p>
 <p><a class="btn btn-primary" href="${rawUrl}">${icon('download')}<span>Download</span></a></p>
 </div>`;
+  } else if (view.kind === 'age') {
+    // The card is inert markup; /assets/age.js (loaded by this page alone)
+    // wires the form, fetches the ciphertext from the raw URL, and decrypts
+    // in the page. The passphrase inputs never carry a name, so no form
+    // mishap can post one.
+    body = html`${meta(formatSize(view.size))}
+<div class="age-box" data-age-view data-age-raw="${rawUrl}" data-age-inner="${view.markdownInner ? 'markdown' : 'text'}">
+<div class="blob-binary age-card">
+<p class="age-head">${icon('lock')}<b>Encrypted with age</b></p>
+<p class="muted small">The vault stores this file as ciphertext it cannot read. The passphrase decrypts it here, in this page, and is sent nowhere.</p>
+<form class="age-unlock"><input type="password" placeholder="Passphrase" aria-label="Passphrase" autocomplete="off" required><button type="submit" class="btn btn-primary">Decrypt</button></form>
+<p class="age-error form-error" hidden></p>
+<button type="button" class="btn" data-age-lock hidden>${icon('lock')}<span>Lock again</span></button>
+<noscript><p class="muted small">Decrypting in the browser needs JavaScript. Without it, take the raw file and the age CLI.</p></noscript>
+</div>
+<div class="age-output" hidden></div>
+</div>`;
   } else {
     body = html`${meta(formatSize(view.size))}<div class="blob-binary">Binary file. <a href="${rawUrl}">View raw</a></div>`;
   }
@@ -1085,7 +1111,8 @@ export function blobPage(
   <div class="left">${refPicker(ctx, (ref) => `${base}/blob/${encPath(ref)}/${encPath(path)}`)}${breadcrumb(ctx, path)}</div>
 </div>
 ${body}`;
-  return layout(`${path} at ${ctx.ref} - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, blobUrl));
+  const opts = view.kind === 'age' ? { ...repoOpts(ctx, blobUrl), ageScript: true } : repoOpts(ctx, blobUrl);
+  return layout(`${path} at ${ctx.ref} - ${ctx.collection}/${ctx.repo}`, content, opts);
 }
 
 /**

@@ -496,6 +496,16 @@ table.listing.tree td.tree-age { width: 1%; white-space: nowrap; }
 .blob-binary { padding: 32px; text-align: center; color: var(--fg-muted); }
 .rendered { padding: 24px 12px 28px; background: var(--bg); }
 
+/* Age-encrypted files: the unlock card on the blob page and in the editor,
+   and the passphrase pair the new-file form reveals for a .age name. */
+.age-card { text-align: center; }
+.age-head { display: inline-flex; align-items: center; gap: 8px; color: var(--fg); margin-bottom: 4px; }
+.age-unlock { display: flex; justify-content: center; gap: 8px; margin: 12px 0 4px; flex-wrap: wrap; }
+.age-unlock input[type='password'] { width: min(320px, 100%); }
+.age-card .form-error { display: inline-block; margin-top: 10px; }
+.age-card .field { max-width: 360px; margin-left: auto; margin-right: auto; text-align: left; }
+.age-output .age-plain { padding: 16px; overflow-x: auto; background: var(--bg); font-size: 13px; line-height: 1.5; }
+
 /* Segmented Preview/Code switch on rendered files. */
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .seg a { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: 13px; line-height: 1.5; color: var(--fg-muted); background: var(--surface); }

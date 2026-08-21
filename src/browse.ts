@@ -6,6 +6,7 @@ import { languageBreakdown } from './languages';
 import { Gates } from './limit';
 import { LfsContext } from './lfsstore';
 import { isMarkdownFile, renderMarkdown } from './markdown';
+import { ageInnerName, isAgeFile } from './agefile';
 import { parsePointer } from './pointer';
 import { collectionProfile } from './profile';
 import { esc, highlightCode, isBinary } from './render';
@@ -310,6 +311,22 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
             },
             true
           )
+        );
+        return;
+      }
+      // An age ciphertext renders as a decrypt-in-the-browser card, whatever
+      // its framing: armored files are text and binary ones are not, and the
+      // card treats both alike. ?plain=1 falls through, so the armored source
+      // is inspectable the way a markdown file's is.
+      if (isAgeFile(filePath) && req.query.plain !== '1') {
+        res.type('html').send(
+          views.blobPage(ctx, filePath, {
+            kind: 'age',
+            rawUrl,
+            size: buf.length,
+            editable: ctx.canPush && ctx.refIsBranch,
+            markdownInner: isMarkdownFile(ageInnerName(filePath)),
+          })
         );
         return;
       }

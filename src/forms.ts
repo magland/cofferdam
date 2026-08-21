@@ -304,6 +304,44 @@ ${commitFields(ctx.viewer!, expectedHead, `Update ${filePath.split('/').pop()}`,
   return layout(`Editing ${filePath} - ${ctx.collection}/${ctx.repo}`, body, repoOpts(ctx));
 }
 
+/**
+ * The editor for an age-encrypted file. The server cannot fill the textarea,
+ * so the page opens on a passphrase form instead: /assets/age.js fetches the
+ * ciphertext, decrypts it in the page, and only then reveals the editor. The
+ * commit posts fresh ciphertext through the same route and guards as any
+ * other edit; the unlock form stands outside the commit form (forms do not
+ * nest), and its passphrase input carries no name, so nothing can post it.
+ */
+export function editAgeFilePage(ctx: RepoCtx, filePath: string, expectedHead: string, error?: string): string {
+  const base = repoUrl(ctx);
+  const action = `${base}/edit/${encPath(ctx.ref)}/${encPath(filePath)}`;
+  const cancel = `${base}/blob/${encPath(ctx.ref)}/${encPath(filePath)}`;
+  const rawUrl = `${base}/raw/${encPath(ctx.ref)}/${encPath(filePath)}`;
+  const body = html`${repoHeader(ctx, 'code')}
+<h2 class="file-head">Editing <span class="mono">${filePath}</span> on <span class="mono">${ctx.ref}</span></h2>
+${errorBanner(error)}
+<div class="age-card blob-binary">
+<p class="age-head">${icon('lock')}<b>Encrypted with age</b></p>
+<p class="muted small">The passphrase decrypts the file here, in this page, and encrypts it again when you commit. It is sent nowhere.</p>
+<form class="age-unlock" data-age-for-edit><input type="password" placeholder="Passphrase" aria-label="Passphrase" autocomplete="off" required><button type="submit" class="btn btn-primary">Decrypt</button><p class="age-error form-error" hidden></p></form>
+<noscript><p class="muted small">Editing in the browser needs JavaScript. Without it, edit a clone with the age CLI.</p></noscript>
+</div>
+<form method="post" action="${action}" data-age-edit data-age-raw="${rawUrl}" hidden>
+<div class="field"><label for="path">Path</label><input type="text" id="path" name="path" value="${filePath}" spellcheck="false"><p class="muted small">Changing it renames or moves the file in the same commit. A name that keeps the <span class="mono">.age</span> ending keeps this page working on it.</p></div>
+<textarea class="code-editor" rows="18" spellcheck="false" disabled></textarea>
+<input type="hidden" name="content" value="">
+<p class="age-error form-error" hidden></p>
+<div class="commit-box">
+${commitFields(ctx.viewer!, expectedHead, `Update ${filePath.split('/').pop()}`, ctx.ref)}
+<div class="actions"><button type="submit" class="btn btn-primary" disabled>Commit changes</button><a class="btn" href="${cancel}">Cancel</a></div>
+</div>
+</form>`;
+  return layout(`Editing ${filePath} - ${ctx.collection}/${ctx.repo}`, body, {
+    ...repoOpts(ctx),
+    ageScript: true,
+  });
+}
+
 export function newFilePage(
   ctx: RepoCtx,
   branch: string,
@@ -324,17 +362,26 @@ export function newFilePage(
 <h2 class="file-head">New file in <span class="mono">${prefix || '/'}</span> on <span class="mono">${branch}</span></h2>
 ${branchNote}
 ${errorBanner(error)}
-<form method="post" action="${action}">
+<form method="post" action="${action}" data-age-new>
 <div class="field"><label for="filename">File name</label><div class="filename-row"><span class="mono muted">${prefix}</span><input type="text" id="filename" name="filename" value="${
     preset.filename ?? ''
   }" placeholder="path/to/file.md" required></div></div>
+<div class="age-pass-fields blob-binary age-card" hidden>
+<p class="age-head">${icon('lock')}<b>A name ending in <span class="mono">.age</span> makes an encrypted file</b></p>
+<p class="muted small">The content below is encrypted in this page before it is committed; the vault stores only ciphertext, and the passphrase is sent nowhere and stored nowhere. A forgotten passphrase is not recoverable.</p>
+<div class="field"><label for="age-pass">Passphrase</label><input type="password" id="age-pass" autocomplete="new-password"></div>
+<div class="field"><label for="age-pass2">Repeat passphrase</label><input type="password" id="age-pass2" autocomplete="new-password"></div>
+<p class="age-error form-error" hidden></p>
+</div>
 <textarea class="code-editor" name="content" rows="18" spellcheck="false">${preset.content ?? ''}</textarea>
 <div class="commit-box">
 ${commitFields(ctx.viewer!, expectedHead, 'Create new file', expectedHead === null ? undefined : branch)}
 <div class="actions"><button type="submit" class="btn btn-primary">Commit new file</button><a class="btn" href="${cancel}">Cancel</a></div>
 </div>
 </form>`;
-  return layout(`New file - ${ctx.collection}/${ctx.repo}`, body, repoOpts(ctx));
+  // The age script rides on every new-file page, because whether it is
+  // needed is decided by the name the user has yet to type.
+  return layout(`New file - ${ctx.collection}/${ctx.repo}`, body, { ...repoOpts(ctx), ageScript: true });
 }
 
 /**

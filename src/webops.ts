@@ -13,6 +13,7 @@ import { THEMES, findTheme, setActiveTheme } from './themes';
 import * as forms from './forms';
 import * as ops from './ops';
 import { MAX_EDIT_SIZE, MAX_UPLOAD_SIZE, OpError, opErrorStatus } from './ops';
+import { isAgeFile, looksLikeAge } from './agefile';
 import {
   displayName,
   findRepo,
@@ -619,6 +620,19 @@ export function registerWebOps(
         );
         return;
       }
+      // An age file gets the decrypt-in-the-browser editor, whichever framing
+      // it is in: the ciphertext may be binary, but what the editor holds and
+      // what the commit posts are text. The size cap still applies, since the
+      // posted ciphertext travels the same form as any other edit.
+      if (isAgeFile(filePath)) {
+        if (buf.length > MAX_EDIT_SIZE) {
+          fail(res, 400, 'Only files up to 1 MB can be edited in the browser.', viewer, urlOf(loaded.repo));
+          return;
+        }
+        const ctx = await makeCtx(root, req, loaded, branch, viewer);
+        res.type('html').send(forms.editAgeFilePage(ctx, filePath, target.tip!));
+        return;
+      }
       if (isBinary(buf) || buf.length > MAX_EDIT_SIZE) {
         fail(res, 400, 'Only text files up to 1 MB can be edited in the browser.', viewer, urlOf(loaded.repo));
         return;
@@ -650,6 +664,23 @@ export function registerWebOps(
       const retryUrl = `${urlOf(loaded.repo)}/edit/${encPath(branch)}/${encPath(filePath)}`;
       if (toPath !== undefined && !isValidRepoPath(toPath)) {
         fail(res, 400, `${toPath} is not a usable path.`, viewer, retryUrl);
+        return;
+      }
+      // What stands between a failed script and a plaintext commit: a .age
+      // path only ever receives age-shaped bytes through this form. The
+      // browser editor encrypts before posting, so ordinary use never sees
+      // this; a page where that script did not run must not quietly write
+      // the secret it was meant to protect. Byte-exact writes that are not
+      // age files remain possible over git and the API, where nothing is
+      // encrypting on the caller's behalf.
+      if (isAgeFile(toPath ?? filePath) && !looksLikeAge(Buffer.from(content, 'utf8'))) {
+        fail(
+          res,
+          400,
+          'A .age file holds an age ciphertext, and this content is not one. The editor encrypts in the browser before committing; committing this text as-is would store it unencrypted under a name that promises otherwise. To write these bytes anyway, use git or the API.',
+          viewer,
+          retryUrl
+        );
         return;
       }
       const message = commitMessage(
@@ -844,6 +875,17 @@ export function registerWebOps(
         return;
       }
       const content = normalizeContent(field(req, 'content'));
+      // The same backstop the edit form has: see the comment there.
+      if (isAgeFile(fullPath) && !looksLikeAge(Buffer.from(content, 'utf8'))) {
+        fail(
+          res,
+          400,
+          'A .age file holds an age ciphertext, and this content is not one. The form encrypts in the browser before committing; committing this text as-is would store it unencrypted under a name that promises otherwise. To write these bytes anyway, use git or the API.',
+          viewer,
+          retryUrl
+        );
+        return;
+      }
       const message = commitMessage(req, `Create ${filename.split('/').pop()}`);
       let written;
       try {
