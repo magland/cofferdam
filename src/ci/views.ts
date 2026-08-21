@@ -1,11 +1,10 @@
 import { ansiLineHtml, stripAnsi } from '../ansi';
-import { avatar } from '../avatar';
 import { Html, html, joinHtml, raw } from '../html';
 import { IconName, icon } from '../icons';
 import { formatSize, timeTag } from '../render';
 import { Viewer } from '../session';
 import { adminShell } from '../forms';
-import { RepoCtx, copyRow, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from '../views';
+import { RepoCtx, copyRow, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl, userLink } from '../views';
 import { ArtifactInfo } from './artifacts';
 import { DispatchableWorkflow } from './engine';
 import { isManualJob } from './manual';
@@ -92,9 +91,7 @@ export function runsPage(
       : '';
     return html`<tr>
 <td class="run-cell">${statusIcon(s)}<span><a href="${actionsBase}/runs/${r.number}"><b>${runTitle(r)}</b></a>
-<div class="muted small run-sub">${r.workflowName} #${r.number}: ${r.event} by ${avatar(r.actor, 16)}${
-      r.actor
-    }${sha}</div></span></td>
+<div class="muted small run-sub">${r.workflowName} #${r.number}: ${r.event} by ${userLink(r.actor, { face: 16 })}${sha}</div></span></td>
 <td class="right muted small"><span class="chip">${icon('git-branch')}${r.refName}</span></td>
 <td class="right muted small">${when}${dur ? html` &middot; ${dur}` : ''}</td>
 </tr>`;
@@ -357,7 +354,7 @@ ${summaryBox}`;
 <div class="run-meta muted small">
   <a href="${actionsBase}?workflow=${encodeURIComponent(run.workflowPath)}">${run.workflowName}</a>
   &middot; #${run.number}
-  &middot; ${run.event} by <span class="run-actor">${avatar(run.actor, 16)}${run.actor}</span>
+  &middot; ${run.event} by <span class="run-actor">${userLink(run.actor, { face: 16 })}</span>
   &middot; <span class="chip">${run.refName}</span>
   ${run.sha ? html`&middot; <a class="sha" href="${base}/commit/${run.sha}">${run.sha.slice(0, 7)}</a>` : ''}
   &middot; <a href="${base}/blob/${encPath(run.refName)}/${encPath(run.workflowPath)}">${run.workflowPath}</a>

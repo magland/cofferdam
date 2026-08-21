@@ -499,6 +499,7 @@ ${releaseCard(ctx, release, ref, latest, notesHtml(ctx, release))}`;
       blobBase: `${base}/blob/${encPath(release.tag)}`,
       issueBase: `${base}/issues`,
       commitBase: `${base}/commit`,
+      mentions: ctx.hasUser,
     });
   }
 }

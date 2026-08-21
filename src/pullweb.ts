@@ -13,7 +13,7 @@ import * as pulls from './pulls';
 import { Pull, PullSummary } from './pulls';
 import { timeTag } from './render';
 import { Viewer, getViewer } from './session';
-import { RepoCtx, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from './views';
+import { RepoCtx, csrfField, encPath, gitAuthor, layout, repoHeader, repoOpts, repoUrl, userLink } from './views';
 import {
   ah,
   fail,
@@ -57,6 +57,7 @@ function body(ctx: RepoCtx, text: string): Html {
       blobBase: `${base}/blob/${ref}`,
       issueBase: `${base}/issues`,
       commitBase: `${base}/commit`,
+      mentions: ctx.hasUser,
     })
   );
 }
@@ -96,7 +97,7 @@ function listPage(
       html`<tr>
 <td class="issue-cell">${stateIcon(p.state)}<span>
 <a class="issue-link" href="${base}/${p.number}">${p.title}</a>
-<div class="muted small">#${p.number} opened ${timeTag(p.created)} by ${p.author} &middot; ${branchPair(
+<div class="muted small">#${p.number} opened ${timeTag(p.created)} by ${userLink(p.author)} &middot; ${branchPair(
         ctx,
         p
       )}</div></span></td>
@@ -140,7 +141,7 @@ ${
 
 function commentCard(author: string, when: string, rendered: Html, note = ''): Html {
   return html`<article class="issue-comment">
-<div class="issue-comment-head">${avatar(author, 24)}<b>${author}</b><span class="muted small">${
+<div class="issue-comment-head">${userLink(author, { face: 24, bold: true })}<span class="muted small">${
     note || 'commented'
   } ${timeTag(when)}</span></div>
 <div class="issue-comment-body markdown-body">${rendered}</div>
@@ -252,7 +253,7 @@ ${markdownEditor({ name: 'body', rows: 6, placeholder: 'Leave a comment', previe
     (c) =>
       html`<div class="commit-row"><span class="commit-main"><a class="title" href="${repo}/commit/${c.sha}">${
         c.subject
-      }</a><div class="muted small">${c.author} committed ${timeTag(
+      }</a><div class="muted small">${gitAuthor(ctx, c.author, c.email)} committed ${timeTag(
         c.date
       )}</div></span><a class="sha" href="${repo}/commit/${c.sha}">${c.sha.slice(0, 7)}</a></div>`
   );
@@ -262,9 +263,9 @@ ${markdownEditor({ name: 'body', rows: 6, placeholder: 'Leave a comment', previe
   <h1 class="issue-title">${pull.title} <span class="muted">#${pull.number}</span></h1>
   <span class="right-group"><a class="btn" href="${base}">Back to pull requests</a></span>
 </div>
-<div class="issue-sub">${stateBadge(pull.state)}<span class="muted"><b>${
-    pull.author
-  }</b> wants to merge ${view.ahead} commit${view.ahead === 1 ? '' : 's'} into </span>${branchPair(ctx, pull)}</div>
+<div class="issue-sub">${stateBadge(pull.state)}<span class="muted">${userLink(pull.author, {
+    bold: true,
+  })} wants to merge ${view.ahead} commit${view.ahead === 1 ? '' : 's'} into </span>${branchPair(ctx, pull)}</div>
 ${mergeBox(ctx, pull, view.preview, ctx.canPush)}
 <div class="issue-thread">
 ${commentCard(

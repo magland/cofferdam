@@ -15,10 +15,10 @@ import { latestRun } from './ci/runs';
 import { renderDiff } from './diff';
 import { collectionDir, repoPath } from './layout';
 import { canAdminCollection, repoIsPrivate, repoRole } from './perms';
-import { displayName, findRepo, isValidName, listCollections, listRepoDirs, repoDescription, siteDir } from './scan';
+import { displayName, findRepo, isValidName, isValidUserName, listCollections, listRepoDirs, repoDescription, siteDir } from './scan';
 import { Viewer, getViewer } from './session';
 import { serveSite, siteHostUrl } from './site';
-import { loadVault, mergeContributors } from './vault';
+import { loadVault, mergeContributors, userExists } from './vault';
 import * as views from './views';
 import { encPath, repoUrl } from './views';
 import { LoadedRepo, ah, baseUrlOf, loadRepo, makeCtx, send404, sendBusy, wildcard } from './web';
@@ -126,7 +126,13 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
       } catch {
         collectionIsDir = false;
       }
-      if (!isValidName(collection) || !collectionIsDir) {
+      // A vault user's namespace page exists as soon as the user does: the
+      // collection directory only appears with their first repository, and a
+      // profile that 404s until then would say the user does not exist.
+      const state = loadVault(root);
+      const userRecord =
+        isValidUserName(collection) && state.status === 'ok' ? (state.vault.users[collection] ?? null) : null;
+      if (!isValidName(collection) || (!collectionIsDir && !userRecord)) {
         send404(res, `Collection ${collection} not found`, viewer);
         return;
       }
@@ -135,15 +141,27 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
       const profileRepo = findRepo(root, collection, '.mochi');
       const profileVisible = profileRepo === null || repoRole(root, viewer?.auth ?? null, profileRepo) !== null;
       const [cards, profile] = await Promise.all([
-        repoCards(req, collection, viewer),
+        collectionIsDir ? repoCards(req, collection, viewer) : Promise.resolve([]),
         profileVisible
           ? collectionProfile(root, collection)
           : Promise.resolve({ readme: null, addUrl: `/new?collection=${encodeURIComponent(collection)}` }),
       ]);
-      const canSettings = viewer !== null && canAdminCollection(root, viewer.auth, collection);
+      const canSettings = collectionIsDir && viewer !== null && canAdminCollection(root, viewer.auth, collection);
+      // What the page shows of the user behind the name. The links were held
+      // to http(s) where the profile was saved; the filter here keeps a
+      // hand-edited vault.json from linking the page anywhere else.
+      const owner: views.ProfileOwner | null = userRecord
+        ? {
+            displayName: userRecord.profile?.name ?? null,
+            bio: userRecord.profile?.bio ?? null,
+            links: (userRecord.profile?.links ?? []).filter((l) => /^https?:\/\//i.test(l)),
+            siteAdmin: userRecord.siteAdmin === true,
+            isViewer: viewer !== null && viewer.auth.username === collection,
+          }
+        : null;
       res
         .type('html')
-        .send(views.collectionPage(collection, cards, sortParam(req), viewer, canSettings, profile));
+        .send(views.collectionPage(collection, cards, sortParam(req), viewer, canSettings, profile, owner));
     })
   );
 
@@ -197,6 +215,7 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
             blobBase: `${base}/blob/${encPath(ref)}${dirSuffix}`,
             issueBase: `${base}/issues`,
             commitBase: `${base}/commit`,
+            mentions: (name) => userExists(root, name),
           });
         } else {
           readmeHtml = `<pre>${esc(text)}</pre>`;
@@ -353,6 +372,7 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
           blobBase: `${repoUrl(ctx)}/blob/${encPath(ref)}${dir}`,
           issueBase: `${repoUrl(ctx)}/issues`,
           commitBase: `${repoUrl(ctx)}/commit`,
+          mentions: ctx.hasUser,
         });
         res
           .type('html')

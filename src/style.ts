@@ -1303,6 +1303,23 @@ a.chip.label:hover { text-decoration: none; filter: brightness(1.1); }
 .profile-box { margin-bottom: var(--s6); }
 .profile-hint { margin: 0 0 var(--s5); }
 
+/* A username linked to its profile page. It keeps the colour and weight of
+   the text around it, so a linked name reads exactly as an unlinked one and
+   only hover says it goes somewhere; the flex is for the identicon some
+   carry. */
+.user-link { display: inline-flex; align-items: center; gap: 6px; color: inherit; }
+.user-link:hover { color: var(--accent); text-decoration: underline; }
+
+/* The user behind a namespace collection, on their page at /<username>: the
+   username beside the chosen name, then the bio and links under the heading,
+   above the profile README and the repositories. */
+.profile-username { color: var(--fg-muted); font-weight: 400; font-size: var(--t-lg); }
+.profile-bio { margin: calc(-1 * var(--s3)) 0 var(--s4); max-width: 720px; }
+.profile-links { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: calc(-1 * var(--s3)) 0 var(--s4); font-size: var(--t-sm); }
+.profile-links a { display: inline-flex; align-items: center; gap: 4px; color: var(--fg-muted); }
+.profile-links a:hover { color: var(--accent); }
+.profile-links .icon { margin-right: 0; }
+
 /* --- what a finger has to hit ---
 
    Under a coarse pointer every control grows to --touch, which is the one

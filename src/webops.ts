@@ -64,6 +64,7 @@ import {
   setPasskeyCounter,
   setSiteAdmin,
   setUserEmails,
+  setUserProfile,
   tokenId,
 } from './vault';
 import {
@@ -565,6 +566,53 @@ export function registerWebOps(
     res.json({ next: safeNext(field(req, 'next')) });
   });
 
+  // ---- the signed-in user's own profile ----
+
+  // The profile a user's page at /<username> shows. The name "settings" is
+  // reserved as a collection name, so this path can never shadow one, and the
+  // route registers before the generic /:collection/:repo browse routes.
+  app.get('/settings/profile', (req, res) => {
+    const viewer = requireViewerPage(root, req, res);
+    if (!viewer) return;
+    const msg = typeof req.query.msg === 'string' ? req.query.msg : undefined;
+    res.type('html').send(forms.profileSettingsPage(viewer, viewer.auth.user.profile, msg));
+  });
+
+  app.post('/settings/profile', form, (req, res) => {
+    const viewer = requireViewerPost(root, req, res);
+    if (!viewer) return;
+    const rerender = (status: number, error: string) => {
+      res.status(status).type('html').send(forms.profileSettingsPage(viewer, viewer.auth.user.profile, undefined, error));
+    };
+    const displayName = field(req, 'displayName').trim();
+    const bio = field(req, 'bio').trim();
+    if (displayName.length > 80 || /[\r\n]/.test(displayName)) {
+      rerender(400, 'The display name must be one line of at most 80 characters.');
+      return;
+    }
+    if (bio.length > 500) {
+      rerender(400, 'The bio must be at most 500 characters.');
+      return;
+    }
+    const links = field(req, 'links')
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l !== '');
+    if (links.length > 5) {
+      rerender(400, 'At most five links.');
+      return;
+    }
+    // http(s) only: these render as hyperlinks on a page other people read,
+    // and nothing else belongs in an href there.
+    const bad = links.find((l) => l.length > 200 || !/^https?:\/\/\S+$/i.test(l));
+    if (bad !== undefined) {
+      rerender(400, `That does not look like an http(s) URL: ${bad}`);
+      return;
+    }
+    setUserProfile(root, viewer.auth.username, { name: displayName, bio, links });
+    res.redirect(`/settings/profile?msg=${encodeURIComponent('Profile saved.')}`);
+  });
+
   // ---- new repository, new collection, import ----
 
   // Importing is a client-side operation: git copies the repository from its
@@ -986,6 +1034,7 @@ export function registerWebOps(
               blobBase: at('blob'),
               issueBase: `${base}/issues`,
               commitBase: `${base}/commit`,
+              mentions: ctx.hasUser,
             });
       res.type('html').send(rendered);
     })

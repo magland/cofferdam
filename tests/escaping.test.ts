@@ -91,6 +91,15 @@ test('a collection name is escaped in its own page and its breadcrumb', () => {
   assertSafe(page, 'collectionPage');
 });
 
+test('a user profile is escaped on their namespace page and its settings form', () => {
+  const owner = { displayName: XSS, bio: XSS, links: ['https://example.org/' + ATTR], siteAdmin: true, isViewer: true };
+  assertSafe(views.collectionPage('someone', [], 'recent', viewer, true, null, owner), 'collectionPage with owner');
+  assertSafe(
+    forms.profileSettingsPage(viewer, { name: XSS, bio: XSS, links: [`https://example.org/?${ATTR}`] }, XSS, XSS),
+    'profileSettingsPage'
+  );
+});
+
 test('a branch name is escaped in the ref picker and the breadcrumb', () => {
   const ctx = ctxFor({
     ref: ATTR,
@@ -104,7 +113,7 @@ test('a file path and a commit subject are escaped in a tree listing', () => {
   const ctx = ctxFor();
   const view = treeView({
     entries: [{ name: XSS, type: 'blob', sha: 'c'.repeat(40), size: 1, mode: '100644' }],
-    latest: { sha: 'c'.repeat(40), subject: XSS, author: XSS, date: '' },
+    latest: { sha: 'c'.repeat(40), subject: XSS, author: XSS, email: XSS, date: '' },
     description: XSS,
   });
   assertSafe(views.treePage(ctx, view), 'treePage with entries');

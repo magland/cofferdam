@@ -15,7 +15,9 @@ import {
   revokeToken,
   setSiteAdmin,
   setUserEmails,
+  setUserProfile,
   tokenId,
+  userExists,
   Vault,
 } from '../src/vault';
 import { makeVaultDir } from './helpers';
@@ -183,6 +185,28 @@ test('setUserEmails stores a list and an empty list clears the field', () => {
   setUserEmails(root, 'alice', []);
   const cleared = JSON.parse(fs.readFileSync(path.join(root, 'vault.json'), 'utf8'));
   assert.equal(cleared.users.alice.emails, undefined);
+});
+
+test('setUserProfile stores trimmed fields, drops empty ones, and clears an empty profile', () => {
+  const root = makeVaultDir();
+  addUserToken(root, 'alice');
+  setUserProfile(root, 'alice', { name: '  Alice A.  ', bio: '', links: [' https://example.org ', ''] });
+  const raw = JSON.parse(fs.readFileSync(path.join(root, 'vault.json'), 'utf8'));
+  assert.deepEqual(raw.users.alice.profile, { name: 'Alice A.', links: ['https://example.org'] });
+  const state = loadVault(root);
+  assert.ok(state.status === 'ok' && state.vault.users.alice.profile?.name === 'Alice A.');
+  setUserProfile(root, 'alice', { name: '', bio: '', links: [] });
+  const cleared = JSON.parse(fs.readFileSync(path.join(root, 'vault.json'), 'utf8'));
+  assert.equal(cleared.users.alice.profile, undefined);
+  assert.throws(() => setUserProfile(root, 'nobody', { name: 'x' }), /no user nobody/);
+});
+
+test('userExists answers from vault.json and never throws without one', () => {
+  const root = makeVaultDir();
+  assert.equal(userExists(root, 'alice'), false);
+  addUserToken(root, 'alice');
+  assert.equal(userExists(root, 'alice'), true);
+  assert.equal(userExists(root, 'bob'), false);
 });
 
 test('removeUser takes the user and answers whether there was one', () => {

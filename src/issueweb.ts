@@ -10,7 +10,7 @@ import { markdownEditor, previewUrl } from './mdedit';
 import { OpError } from './ops';
 import { timeTag } from './render';
 import { Viewer, getViewer } from './session';
-import { RepoCtx, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from './views';
+import { RepoCtx, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl, userLink } from './views';
 import {
   ah,
   fail,
@@ -51,6 +51,7 @@ function body(ctx: RepoCtx, text: string): Html {
       blobBase: `${base}/blob/${ref}`,
       issueBase: `${base}/issues`,
       commitBase: `${base}/commit`,
+      mentions: ctx.hasUser,
     })
   );
 }
@@ -123,7 +124,7 @@ function listPage(
       html`<tr>
 <td class="issue-cell">${icon(i.state === 'open' ? 'issue-opened' : 'issue-closed', i.state === 'open' ? 'issue-open' : 'issue-closed')}<span>
 <a class="issue-link" href="${base}/${i.number}">${i.title}</a>${labelChips(i.labels, base, filter)}
-<div class="muted small">#${i.number} opened ${timeTag(i.created)} by ${i.author}${
+<div class="muted small">#${i.number} opened ${timeTag(i.created)} by ${userLink(i.author)}${
         i.state === 'closed' && i.closedAt ? html` &middot; closed ${timeTag(i.closedAt)}` : ''
       }</div></span></td>
 <td class="right muted small">${
@@ -242,7 +243,7 @@ ${
 
 function commentCard(author: string, when: string, rendered: Html, note = ''): Html {
   return html`<article class="issue-comment">
-<div class="issue-comment-head">${avatar(author, 24)}<b>${author}</b><span class="muted small">${
+<div class="issue-comment-head">${userLink(author, { face: 24, bold: true })}<span class="muted small">${
     note || 'commented'
   } ${timeTag(when)}</span></div>
 <div class="issue-comment-body markdown-body">${rendered}</div>
@@ -257,9 +258,9 @@ function issuePage(ctx: RepoCtx, issue: Issue, canWrite: boolean): string {
   const comments = issue.commentList.map((c) => commentCard(c.author, c.created, body(ctx, c.body)));
   const closedNote =
     issue.state === 'closed' && issue.closedAt
-      ? html`<div class="issue-event">${icon('issue-closed', 'issue-closed')}<span><b>${
-          issue.closedBy ?? 'someone'
-        }</b> closed this ${timeTag(issue.closedAt)}</span></div>`
+      ? html`<div class="issue-event">${icon('issue-closed', 'issue-closed')}<span>${
+          issue.closedBy ? userLink(issue.closedBy, { bold: true }) : html`<b>someone</b>`
+        } closed this ${timeTag(issue.closedAt)}</span></div>`
       : '';
   let replyBox: Html;
   if (viewer) {
@@ -291,9 +292,9 @@ ${markdownEditor({ name: 'body', rows: 6, placeholder: 'Leave a comment', previe
   <h1 class="issue-title">${issue.title} <span class="muted">#${issue.number}</span></h1>
   <span class="right-group">${edit}<a class="btn" href="${base}">Back to issues</a></span>
 </div>
-<div class="issue-sub">${stateBadge(issue.state)}<span class="muted"><b>${
-    issue.author
-  }</b> opened this ${timeTag(issue.created)} &middot; ${issue.commentList.length} comment${
+<div class="issue-sub">${stateBadge(issue.state)}<span class="muted">${userLink(issue.author, {
+    bold: true,
+  })} opened this ${timeTag(issue.created)} &middot; ${issue.commentList.length} comment${
     issue.commentList.length === 1 ? '' : 's'
   }</span>${labelChips(issue.labels)}</div>
 <div class="issue-thread">

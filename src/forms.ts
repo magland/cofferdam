@@ -9,7 +9,7 @@ import { formatSize, timeTag } from './render';
 import { Viewer } from './session';
 import { Theme } from './themes';
 import { isSiteAdmin } from './perms';
-import { UserRecord, passkeyBinding, tokenId } from './vault';
+import { UserProfile, UserRecord, passkeyBinding, tokenId } from './vault';
 import {
   PageOpts,
   RepoCtx,
@@ -22,6 +22,7 @@ import {
   repoHeader,
   repoOpts,
   repoUrl,
+  userLink,
 } from './views';
 
 // Form pages for the UI operations. Every mutating form embeds the session's
@@ -365,7 +366,7 @@ listed here.</p>
 ${
     owners.length
       ? html`<table class="listing"><tbody><tr><th>User</th><th class="right"></th></tr>${owners.map(
-          (o) => html`<tr><td class="with-avatar">${avatar(o, 24)}<b>${o}</b></td><td class="right">
+          (o) => html`<tr><td class="with-avatar">${userLink(o, { face: 24, bold: true })}</td><td class="right">
 <form method="post" action="${base}/settings/owners/remove" class="inline-form">
 ${csrfField(viewer)}
 <input type="hidden" name="username" value="${o}">
@@ -678,7 +679,7 @@ ${defaultBranchField}
   // Who may see and write the repository. Admin only, like the rename below:
   // access is the repository's own business.
   const collaboratorRows = access.collaborators.map(
-    ({ username, role }) => html`<tr><td class="with-avatar">${avatar(username, 24)}<b>${username}</b></td><td class="muted">${role}</td><td class="right">
+    ({ username, role }) => html`<tr><td class="with-avatar">${userLink(username, { face: 24, bold: true })}</td><td class="muted">${role}</td><td class="right">
 <form method="post" action="${base}/settings/collaborators/remove" class="inline-form">
 ${csrfField(ctx.viewer!)}
 <input type="hidden" name="username" value="${username}">
@@ -764,6 +765,47 @@ ${accessBox}
 ${renameForm}
 ${dangerZone}`;
   return layout(`Settings - ${ctx.collection}/${ctx.repo}`, body, repoOpts(ctx, `${base}/settings`));
+}
+
+/**
+ * Where a user writes the profile their page at /<username> shows: a display
+ * name, a short bio, and links. The longer-form introduction is the profile
+ * README (.mochi/profile/README.md in their collection), which is a file in a
+ * repository rather than a form here, so this page only points at it.
+ */
+export function profileSettingsPage(
+  viewer: Viewer,
+  profile: UserProfile | undefined,
+  msg?: string,
+  error?: string
+): string {
+  const name = viewer.auth.username;
+  const links = (profile?.links ?? []).join('\n');
+  const content = html`<div class="page-head"><h1 class="with-avatar">${avatar(name, 32)}Your profile</h1><span class="right-group"><a class="btn" href="/${encodeURIComponent(
+    name
+  )}">${icon('person')}<span>View profile</span></a></span></div>
+${flashBanner(msg)}
+${errorBanner(error)}
+<div class="form-box wide">
+<form method="post" action="/settings/profile">
+${csrfField(viewer)}
+<div class="field"><label for="displayName">Name</label><input type="text" id="displayName" name="displayName" value="${
+    profile?.name ?? ''
+  }" maxlength="80" placeholder="${name}">
+<p class="muted small">Shown on your profile beside your username, <span class="mono">${name}</span>.</p></div>
+<div class="field"><label for="bio">Bio</label><textarea id="bio" name="bio" rows="3" maxlength="500" placeholder="A sentence or two about yourself">${
+    profile?.bio ?? ''
+  }</textarea></div>
+<div class="field"><label for="links">Links</label><textarea id="links" name="links" rows="3" placeholder="https://example.org">${links}</textarea>
+<p class="muted small">One per line, up to five, each starting with <span class="mono">http://</span> or
+<span class="mono">https://</span>.</p></div>
+<button type="submit" class="btn btn-primary">${icon('check')}<span>Save profile</span></button>
+</form>
+<hr class="rule">
+<p class="muted small">For a longer introduction, your profile page also renders
+<span class="mono">${name}/.mochi/profile/README.md</span>, edited like any other file in a repository.</p>
+</div>`;
+  return layout('Your profile', content, { viewer, path: '/settings/profile' });
 }
 
 export function adminUsersPage(
@@ -926,7 +968,9 @@ ${csrfField(viewer)}
 <button type="submit" class="btn btn-danger">${icon('trash')}<span>Delete this user</span></button>
 </form>
 </div>`;
-  const content = html`<div class="page-head"><div class="with-avatar">${avatar(name, 32)}<h1>${name}</h1></div></div>
+  const content = html`<div class="page-head"><div class="with-avatar">${avatar(name, 32)}<h1>${name}</h1></div><span class="right-group"><a class="btn" href="/${encodeURIComponent(
+    name
+  )}">${icon('person')}<span>Profile</span></a></span></div>
 ${flashBanner(msg)}
 ${errorBanner(error)}
 <p class="muted">${user.siteAdmin ? 'Site admin' : html`Owns the collection <span class="mono">${name}</span> by name`}</p>

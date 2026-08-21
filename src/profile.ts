@@ -2,6 +2,7 @@ import { GitRepo } from './git';
 import { renderMarkdown } from './markdown';
 import { esc, isBinary } from './render';
 import { findRepo } from './scan';
+import { userExists } from './vault';
 import { encPath } from './views';
 
 /**
@@ -73,6 +74,7 @@ export async function collectionProfile(root: string, collection: string): Promi
         blobBase: `${base}/blob/${encPath(branch)}/${PROFILE_DIR}`,
         issueBase: `${base}/issues`,
         commitBase: `${base}/commit`,
+        mentions: (name) => userExists(root, name),
       })
     : `<pre>${esc(readme.text)}</pre>`;
   return {

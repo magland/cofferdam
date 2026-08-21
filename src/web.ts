@@ -10,6 +10,7 @@ import { Role, atLeast, repoIsPrivate, repoRole } from './perms';
 import { findRepo, forkParent, siteDir, upstreamOf } from './scan';
 import { Viewer, checkCsrf, getViewer } from './session';
 import { siteHostUrl } from './site';
+import { accountForEmail, loadVault } from './vault';
 import { RepoCtx } from './views';
 import * as views from './views';
 
@@ -146,6 +147,11 @@ export async function makeCtx(
   // Where the Site tab points. A site with an origin of its own is linked there
   // directly rather than through the forge path that would only redirect.
   const siteOrigin = siteHostUrl(root, req, loaded.repo.collection, loaded.repo.name);
+  // Ties names on the page back to vault users: commit author emails resolve
+  // to accounts, and @mentions resolve to profile links. The vault is read
+  // once per page; a vault that failed to load just resolves nobody.
+  const state = loadVault(root);
+  const vault = state.status === 'ok' ? state.vault : null;
   return {
     collection: loaded.repo.collection,
     repo: loaded.repo.name,
@@ -169,6 +175,8 @@ export async function makeCtx(
     isPrivate: repoIsPrivate(loaded.repo.dir),
     canPush: atLeast(loaded.role, 'write'),
     canAdmin: atLeast(loaded.role, 'admin'),
+    accountFor: (email) => (vault ? accountForEmail(vault, email) : null),
+    hasUser: (name) => (vault ? Object.prototype.hasOwnProperty.call(vault.users, name) : false),
   };
 }
 

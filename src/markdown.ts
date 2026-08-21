@@ -37,6 +37,13 @@ export interface MarkdownOpts {
   issueBase?: string;
   /** Where a commit id points. Cross-referencing commits is off without it. */
   commitBase?: string;
+  /**
+   * Whether `@name` names a user this vault knows, in which case it is linked
+   * to their profile page at `/<name>`. Mentions are off without it, and a
+   * name it answers false for stays plain text: half the strings people write
+   * after an @ are not users, and a link to a 404 would say otherwise.
+   */
+  mentions?: (name: string) => boolean;
 }
 
 // GitHub's cross-references: `#12` is that issue, and a hex string of seven
@@ -44,6 +51,13 @@ export interface MarkdownOpts {
 // of a longer word, and a commit id must contain at least one letter, so that
 // a plain number written in passing is not mistaken for one.
 const CROSS_REF = /(?<![\w#/-])(?:#(\d{1,9})|([0-9a-f]{7,40}))(?![\w-])/g;
+
+// GitHub's @mentions: an @ followed by something shaped like a username (see
+// isValidUserName in src/scan.ts). The pattern refuses an @ that ends a word,
+// so an email address written in passing is not half-linked. The match is
+// greedy over the username characters; trailing punctuation that keeps the
+// name from resolving is peeled off afterwards, so "@bob." mentions bob.
+const MENTION = /(?<![\w@.-])@([A-Za-z0-9][A-Za-z0-9._-]*)/g;
 
 export function isMarkdownFile(filename: string): boolean {
   const base = filename.split('/').pop() ?? filename;
@@ -264,6 +278,69 @@ function buildMarkdownIt(): MarkdownIt {
           const close = new state.Token('link_close', 'a', -1);
           out.push(open, label, close);
           last = m.index + whole.length;
+          changed = true;
+        }
+        if (last === 0) {
+          out.push(token);
+        } else if (last < token.content.length) {
+          const rest = new state.Token('text', '', 0);
+          rest.content = token.content.slice(last);
+          out.push(rest);
+        }
+      }
+      if (changed) block.children = out;
+    }
+  });
+
+  // Mentions ride the same shape as mochi_refs above: a core rule over the
+  // inline token stream, leaving text inside links alone. It runs after the
+  // refs rule, so a mention never lands inside a link that rule just made.
+  md.core.ruler.push('mochi_mentions', (state) => {
+    const mentions = (state.env as RenderEnv).opts.mentions;
+    if (!mentions) return;
+    for (const block of state.tokens) {
+      if (block.type !== 'inline' || !block.children) continue;
+      const out: typeof block.children = [];
+      let inLink = 0;
+      let changed = false;
+      for (const token of block.children) {
+        if (token.type === 'link_open') inLink++;
+        else if (token.type === 'link_close') inLink--;
+        if (token.type !== 'text' || inLink > 0) {
+          out.push(token);
+          continue;
+        }
+        let last = 0;
+        MENTION.lastIndex = 0;
+        for (let m = MENTION.exec(token.content); m; m = MENTION.exec(token.content)) {
+          // Dots, dashes, and underscores are legal in a username and common
+          // as the punctuation right after one: "@bob." at the end of a
+          // sentence means bob. Trailing punctuation is peeled only while the
+          // name does not resolve, so a username that really ends that way
+          // still wins.
+          let name = m[1];
+          while (name !== '' && !mentions(name)) {
+            const cut = name.search(/[._-]+$/);
+            if (cut === -1) {
+              name = '';
+              break;
+            }
+            name = name.slice(0, cut);
+          }
+          if (name === '') continue;
+          if (m.index > last) {
+            const before = new state.Token('text', '', 0);
+            before.content = token.content.slice(last, m.index);
+            out.push(before);
+          }
+          const open = new state.Token('link_open', 'a', 1);
+          open.attrSet('href', `/${encodeURIComponent(name)}`);
+          const label = new state.Token('text', '', 0);
+          label.content = `@${name}`;
+          const close = new state.Token('link_close', 'a', -1);
+          out.push(open, label, close);
+          last = m.index + 1 + name.length;
+          MENTION.lastIndex = last;
           changed = true;
         }
         if (last === 0) {

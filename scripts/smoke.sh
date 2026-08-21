@@ -350,7 +350,8 @@ check "stale edit conflicts" 409 -b "$JAR" "$BASE/demo/proj/edit/main/README.md"
   --data-urlencode "content=clobber" --data-urlencode "message=stale"
 check "commit history shows web commit" 200 -b "$JAR" "$BASE/demo/proj/commits/main"
 body_has "web commit subject" 'Edit README from the web'
-body_has "web commit author" 'owner committed'
+body_has "web commit author links to their profile" 'href="/owner"'
+body_has "web commit author" 'owner</a> committed'
 WEB_SHA="$({ grep -o 'commit/[0-9a-f]\{40\}' "$BODY" || true; } | head -1 | sed 's|commit/||')"
 [ -n "$WEB_SHA" ] || { echo "FAIL: no commit sha on the commits page"; exit 1; }
 check "commit diff page" 200 -b "$JAR" "$BASE/demo/proj/commit/$WEB_SHA"
@@ -1351,11 +1352,35 @@ header_lacks "the 404 is not cacheable" 'immutable'
 
 check "repo home lists contributors" 200 "$BASE/demo/proj"
 body_has "contributors block" '<h3>Contributors'
-body_has "contributor links to their commits" 'commits/main?author='
+# Every commit so far is a web edit by owner, so the one face leads to the
+# owner's profile; an identity the vault does not know is checked after the
+# smoke-test push later.
+body_has "a contributor with an account links to their profile" 'class="contributor" href="/owner"'
 check "history filtered by author" 200 --get "$BASE/demo/proj/commits/main" --data-urlencode "author=owner@example.org"
 body_has "author filter is shown" 'class="filter-chip"'
 check "history by an author with no commits" 200 --get "$BASE/demo/proj/commits/main" --data-urlencode "author=nobody@example.org"
 body_has "empty author history says so" 'No commits here are by'
+
+# ---- user profile pages ----
+
+# A vault user has a page at /<username> as soon as they exist; the collection
+# directory only appears with their first repository.
+check "a user's namespace page doubles as their profile" 200 "$BASE/owner"
+body_has "with an admin badge" '>Admin</span>'
+check "profile settings need a session" 302 "$BASE/settings/profile"
+check "profile settings form" 200 -b "$JAR" "$BASE/settings/profile"
+CSRF="$(csrf_of)"
+check "saving a profile" 302 -b "$JAR" "$BASE/settings/profile" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "displayName=The Owner" \
+  --data-urlencode "bio=Keeps this vault." --data-urlencode "links=https://example.org/owner"
+check "the profile page shows what was saved" 200 "$BASE/owner"
+body_has "the display name" 'The Owner'
+body_has "the username beside it" 'class="profile-username"'
+body_has "the bio" 'Keeps this vault.'
+body_has "the link" 'href="https://example.org/owner"'
+check "a link that is not http(s) is refused" 400 -b "$JAR" "$BASE/settings/profile" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode "links=javascript:alert(1)"
+check "a user the vault does not know still 404s" 404 "$BASE/no-such-user"
 
 # ---- finding things: by name and by content ----
 
@@ -2484,6 +2509,8 @@ PASS=$((PASS+1)); echo "ok: authenticated push and push-to-create"
 
 check "pushed commit visible" 200 "$BASE/demo/proj/blob/main/README.md"
 body_has "pushed content" 'pushed line'
+check "the pushed identity joins the contributors" 200 "$BASE/demo/proj"
+body_has "an identity the vault does not know links to its commits" 'commits/main?author='
 check "push-created repo visible" 200 "$BASE/pushed/created"
 
 # Push-to-create must not hand out a name that would land on another

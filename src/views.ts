@@ -45,6 +45,14 @@ export interface RepoCtx {
   isPrivate: boolean;
   canPush: boolean;
   canAdmin: boolean;
+  /**
+   * The vault user a commit author email belongs to, or null for an identity
+   * the vault does not know. Optional so a page built without a vault (tests,
+   * mostly) simply links nobody.
+   */
+  accountFor?: (email: string) => string | null;
+  /** Whether the vault knows a user by this name, for @mentions. */
+  hasUser?: (name: string) => boolean;
 }
 
 export interface PageOpts {
@@ -84,6 +92,38 @@ export function csrfField(viewer: Viewer): Html {
   return html`<input type="hidden" name="csrf" value="${viewer.csrf}">`;
 }
 
+/**
+ * A vault username as a link to their profile page at /<name>. The link keeps
+ * the weight and colour of the text around it, so a name reads the same
+ * whether or not it is one; only hover says it goes somewhere. `face` puts
+ * the identicon before the name at that size, and `bold` matches the places
+ * that already set the name in bold.
+ */
+export function userLink(name: string, opts: { face?: number; bold?: boolean } = {}): Html {
+  const label = opts.bold ? html`<b>${name}</b>` : html`${name}`;
+  return html`<a class="user-link" href="/${encodeURIComponent(name)}">${
+    opts.face ? avatar(name, opts.face) : ''
+  }${label}</a>`;
+}
+
+/**
+ * A git author identity, linked to a profile when the email resolves to a
+ * vault user and shown exactly as git reported it when it does not. The
+ * identicon is drawn from the account where there is one, so the same person
+ * wears the same face whatever author emails their commits carry.
+ */
+export function gitAuthor(ctx: RepoCtx, name: string, email: string | undefined, opts: { face?: number; bold?: boolean } = {}): Html {
+  const account = email ? (ctx.accountFor?.(email) ?? null) : null;
+  if (account) {
+    const label = opts.bold ? html`<b>${name}</b>` : html`${name}`;
+    return html`<a class="user-link" href="/${encodeURIComponent(account)}" title="${account}">${
+      opts.face ? avatar(account, opts.face) : ''
+    }${label}</a>`;
+  }
+  const label = opts.bold ? html`<b>${name}</b>` : html`${name}`;
+  return html`${opts.face ? avatar(email || name, opts.face) : ''}${label}`;
+}
+
 const FOLDER_ICON = icon('folder', 'icon');
 const FILE_ICON = icon('file', 'icon file');
 // An age-encrypted file wears the lock wherever files are listed, so what is
@@ -109,7 +149,8 @@ function userBox(opts: PageOpts): Html {
 <summary aria-label="Account menu">${avatar(name, 24)}${icon('chevron-down', 'caret')}</summary>
 <div class="dropdown-menu dd-right">
   <div class="dd-section">Signed in as <b>${name}</b></div>
-  <a class="dd-item" href="/account">${icon('person')}<span>Your account</span></a>
+  <a class="dd-item" href="/${encodeURIComponent(name)}">${icon('person')}<span>Your profile</span></a>
+  <a class="dd-item" href="/account">${icon('lock')}<span>Your account</span></a>
   ${admin}
   <form method="post" action="/logout">${csrfField(viewer)}<button type="submit" class="dd-item">${icon(
     'sign-out'
@@ -612,6 +653,23 @@ license.</p>
   return layout('About - Mochi Forge', content, { viewer, path: '/about' });
 }
 
+/**
+ * What the collection page adds when the collection is a user's namespace: the
+ * page doubles as their profile, the way github.com/<user> is both. Everything
+ * here comes from the profile the user wrote (see UserProfile in src/vault.ts)
+ * plus the two facts the page decorates with.
+ */
+export interface ProfileOwner {
+  /** The name the user chose to show; the username stands alone without one. */
+  displayName: string | null;
+  bio: string | null;
+  /** http(s) URLs, enforced where the profile is saved. */
+  links: string[];
+  siteAdmin: boolean;
+  /** Whether the viewer is this user, which is who gets the Edit profile button. */
+  isViewer: boolean;
+}
+
 export function collectionPage(
   collection: string,
   repoList: RepoCard[],
@@ -623,7 +681,10 @@ export function collectionPage(
   // The collection's profile README, read from its .mochi repository; see
   // src/profile.ts. Rendered above the listing, since it is what the page is
   // for once a collection has one.
-  profile: CollectionProfile | null = null
+  profile: CollectionProfile | null = null,
+  // Present when a vault user bears the collection's name: the page is then
+  // their profile page too, and this is what the profile part shows.
+  owner: ProfileOwner | null = null
 ): string {
   const body =
     repoList.length === 0
@@ -657,7 +718,35 @@ export function collectionPage(
           profile.addUrl
         }">Add one</a> at <span class="mono">.mochi/profile/README.md</span> to introduce it here.</p>`
       : '';
-  const content = html`<div class="page-head"><h1 class="with-avatar">${avatar(collection, 28, 'square')}${collection}</h1><span class="right-group">${settingsBtn}${newBtn}</span></div>${profileBox}${body}`;
+  // A user's namespace page opens with who they are; a plain collection's
+  // with what it is called. The avatar keeps the shape it has everywhere
+  // else: round for a person, square for a collection.
+  const editProfileBtn = owner?.isViewer
+    ? html`<a class="btn" href="/settings/profile">${icon('pencil')}<span>Edit profile</span></a>`
+    : '';
+  const head = owner
+    ? html`<div class="page-head"><h1 class="with-avatar">${avatar(collection, 32)}${
+        owner.displayName ?? collection
+      }${
+        owner.displayName ? html` <span class="profile-username">${collection}</span>` : ''
+      }${
+        owner.siteAdmin ? html` <span class="counter" title="Administers this vault">Admin</span>` : ''
+      }</h1><span class="right-group">${editProfileBtn}${settingsBtn}${newBtn}</span></div>${
+        owner.bio ? html`<p class="profile-bio">${owner.bio}</p>` : ''
+      }${
+        owner.links.length
+          ? html`<div class="profile-links">${joinHtml(
+              owner.links.map(
+                (l) => html`<a href="${l}" rel="nofollow noopener noreferrer">${icon('link')}<span>${l.replace(
+                  /^https?:\/\//,
+                  ''
+                )}</span></a>`
+              )
+            )}</div>`
+          : ''
+      }`
+    : html`<div class="page-head"><h1 class="with-avatar">${avatar(collection, 28, 'square')}${collection}</h1><span class="right-group">${settingsBtn}${newBtn}</span></div>`;
+  const content = html`${head}${profileBox}${body}`;
   return layout(collection, content, {
     crumbs: html` / <a href="/${encodeURIComponent(collection)}">${collection}</a>`,
     viewer,
@@ -723,9 +812,9 @@ const SHOWN_CONTRIBUTORS = 12;
 
 /**
  * Who wrote this repository, by commit count, as GitHub lists in its About
- * panel. Each face leads to that person's commits rather than to a profile
- * page, since a vault has no profiles: the history is what it knows about
- * them.
+ * panel. A face with an account behind it leads to that user's profile page;
+ * one without leads to that identity's commits here, which is all the vault
+ * knows about them.
  */
 function contributorsBlock(
   ctx: RepoCtx,
@@ -740,9 +829,11 @@ function contributorsBlock(
     .slice(0, SHOWN_CONTRIBUTORS)
     .map(
       (p) =>
-        html`<a class="contributor" href="${base}/commits/${encPath(ctx.ref)}?author=${encodeURIComponent(
-          p.email || p.name
-        )}" title="${p.name} - ${count(p.commits)} commit${p.commits === 1 ? '' : 's'}">${avatar(
+        html`<a class="contributor" href="${
+          p.account
+            ? `/${encodeURIComponent(p.account)}`
+            : `${base}/commits/${encPath(ctx.ref)}?author=${encodeURIComponent(p.email || p.name)}`
+        }" title="${p.account ?? p.name} - ${count(p.commits)} commit${p.commits === 1 ? '' : 's'}">${avatar(
           p.account ?? (p.email || p.name),
           28
         )}</a>`
@@ -843,7 +934,7 @@ export function treePage(ctx: RepoCtx, view: TreeView): string {
   const latest = view.latest;
   const latestBar = latest
     ? html`<div class="latest-commit">
-  <span class="lc-main"><b>${latest.author}</b> <a href="${base}/commit/${latest.sha}">${latest.subject}</a></span>
+  <span class="lc-main">${gitAuthor(ctx, latest.author, latest.email, { bold: true })} <a href="${base}/commit/${latest.sha}">${latest.subject}</a></span>
   <span class="lc-meta"><a class="sha" href="${base}/commit/${latest.sha}">${latest.sha.slice(
         0,
         7
@@ -1179,9 +1270,11 @@ export function blamePage(ctx: RepoCtx, path: string, highlighted: string, lines
     const about = starts
       ? html`<a class="sha" href="${base}/commit/${l.sha}">${l.sha.slice(0, 7)}</a><a class="blame-subject" href="${base}/commit/${
           l.sha
-        }" title="${l.summary}">${l.summary}</a><span class="blame-when small muted">${l.author} ${timeTag(
-          l.date
-        )}</span>${prior}`
+        }" title="${l.summary}">${l.summary}</a><span class="blame-when small muted">${gitAuthor(
+          ctx,
+          l.author,
+          l.email
+        )} ${timeTag(l.date)}</span>${prior}`
       : '';
     return html`<div class="blame-row${starts ? ' blame-start' : ''}" id="L${n}"><span class="blame-commit">${about}</span><a class="lnum" href="#L${n}" aria-label="Line ${n}">${n}</a><span class="ltext">${raw(
       texts[i] ?? ''
@@ -1222,9 +1315,12 @@ export function commitsPage(
   // Each row carries what a reader might want next from that commit: to read
   // it, to take its id, or to browse the tree as it stood then.
   const row = (c: CommitSummary) =>
-    html`<div class="commit-row"><span class="commit-main">${avatar(c.author, 20)}<span><a class="title" href="${base}/commit/${
+    html`<div class="commit-row"><span class="commit-main">${avatar(
+      (c.email && ctx.accountFor?.(c.email)) || c.email || c.author,
+      20
+    )}<span><a class="title" href="${base}/commit/${
       c.sha
-    }">${c.subject}</a><div class="muted small">${c.author} committed ${timeTag(
+    }">${c.subject}</a><div class="muted small">${gitAuthor(ctx, c.author, c.email)} committed ${timeTag(
       c.date
     )}</div></span></span><span class="commit-actions"><a class="sha" href="${base}/commit/${c.sha}">${c.sha.slice(
       0,
@@ -1302,7 +1398,7 @@ export function commitPage(ctx: RepoCtx, detail: CommitDetail, diffHtml: string)
   <div class="subject">${subject}</div>
   ${body ? html`<div class="body">${body}</div>` : ''}
   <div class="meta">
-    <span><b>${detail.author}</b> &lt;${detail.email}&gt;</span>
+    <span>${gitAuthor(ctx, detail.author, detail.email, { bold: true })} &lt;${detail.email}&gt;</span>
     <span>committed ${timeTag(detail.date, '')}</span>
     <span>commit <span class="sha">${detail.sha.slice(0, 12)}</span></span>
     ${detail.parents.length ? html`<span>parent${detail.parents.length > 1 ? 's' : ''} ${parents}</span>` : ''}

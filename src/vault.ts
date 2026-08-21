@@ -49,6 +49,18 @@ export interface PasskeyRecord {
   name?: string;
 }
 
+/**
+ * What a user chooses to say about themselves on their profile page. Every
+ * field is optional and plain text; the links are the one exception, held to
+ * http(s) URLs where they are written so the page never links anywhere else.
+ */
+export interface UserProfile {
+  /** The name shown beside the username, e.g. "Jeremy Magland". */
+  name?: string;
+  bio?: string;
+  links?: string[];
+}
+
 export interface UserRecord {
   tokens: TokenRecord[];
   /** Passkeys the user may sign in to the web interface with. */
@@ -67,6 +79,8 @@ export interface UserRecord {
    * in the browser is otherwise two contributors with two faces.
    */
   emails?: string[];
+  /** The profile the user wrote for themselves; absent until they write one. */
+  profile?: UserProfile;
   /**
    * The glob scopes a pre-roles vault.json granted this user, carried only
    * from parsing such a file to the migration that rewrites it (see
@@ -177,15 +191,43 @@ function normalizeVault(parsed: unknown): Vault {
       if (typeof pRec.name === 'string' && pRec.name !== '') out.name = pRec.name;
       return out;
     });
+    const profile = normalizeProfile(rec.profile, name);
     users[name] = {
       tokens,
       ...(passkeys.length ? { passkeys } : {}),
       ...(rec.siteAdmin === true ? { siteAdmin: true } : {}),
       ...(emails.length ? { emails } : {}),
+      ...(profile ? { profile } : {}),
       ...(legacy ? { legacy: { scope, admin } } : {}),
     };
   }
   return { users, ...(legacy ? { legacy: true } : {}) };
+}
+
+// A hand-edited vault.json should not take the vault down over a profile, so
+// the check is a shape check: fields that are not strings are refused, and a
+// profile with nothing in it reads as no profile at all.
+function normalizeProfile(raw: unknown, username: string): UserProfile | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'object') {
+    throw new Error(`user ${username}: "profile" must be an object`);
+  }
+  const rec = raw as Record<string, unknown>;
+  const profile: UserProfile = {};
+  if (rec.name !== undefined) {
+    if (typeof rec.name !== 'string') throw new Error(`user ${username}: profile "name" must be a string`);
+    if (rec.name !== '') profile.name = rec.name;
+  }
+  if (rec.bio !== undefined) {
+    if (typeof rec.bio !== 'string') throw new Error(`user ${username}: profile "bio" must be a string`);
+    if (rec.bio !== '') profile.bio = rec.bio;
+  }
+  if (rec.links !== undefined) {
+    const links = asStringArray(rec.links);
+    if (!links) throw new Error(`user ${username}: profile "links" must be a list of strings`);
+    if (links.length) profile.links = links;
+  }
+  return Object.keys(profile).length ? profile : null;
 }
 
 const cache = fileCache<VaultState>({
@@ -540,6 +582,34 @@ export function setUserEmails(root: string, username: string, emails: string[]):
     writeVault(file, vault);
     return user;
   });
+}
+
+/**
+ * Replace a user's profile. Empty fields are dropped rather than stored, and a
+ * profile with nothing left is removed outright, so vault.json never carries an
+ * empty object for a user who cleared theirs.
+ */
+export function setUserProfile(root: string, username: string, profile: UserProfile): UserRecord {
+  return editVault(root, (file) => {
+    const vault = readVaultForEdit(file);
+    const user = vault.users[username];
+    if (!user) throw new Error(`no user ${username}`);
+    const clean: UserProfile = {};
+    if (profile.name?.trim()) clean.name = profile.name.trim();
+    if (profile.bio?.trim()) clean.bio = profile.bio.trim();
+    const links = (profile.links ?? []).map((l) => l.trim()).filter((l) => l !== '');
+    if (links.length) clean.links = links;
+    if (Object.keys(clean).length) user.profile = clean;
+    else delete user.profile;
+    writeVault(file, vault);
+    return user;
+  });
+}
+
+/** Whether the vault knows a user by this name; false when it failed to load. */
+export function userExists(root: string, name: string): boolean {
+  const state = loadVault(root);
+  return state.status === 'ok' && Object.prototype.hasOwnProperty.call(state.vault.users, name);
 }
 
 /**

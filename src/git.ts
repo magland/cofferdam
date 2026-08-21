@@ -78,6 +78,8 @@ export interface TreeEntry {
 export interface CommitSummary {
   sha: string;
   author: string;
+  /** The author's email, which is how a commit is tied back to a vault user. */
+  email: string;
   date: string;
   subject: string;
 }
@@ -93,6 +95,7 @@ export interface SearchHit {
 export interface BlameLine {
   sha: string;
   author: string;
+  email: string;
   date: string;
   summary: string;
   /** The commit and path this line came from before that change, if any. */
@@ -210,7 +213,7 @@ export class GitRepo {
     path?: string,
     author?: string
   ): Promise<CommitSummary[]> {
-    const fmt = '%H%x00%an%x00%aI%x00%s';
+    const fmt = '%H%x00%an%x00%ae%x00%aI%x00%s';
     const args = ['log', `--format=${fmt}`, '-n', String(limit), `--skip=${skip}`];
     // -F makes --author a literal string rather than a pattern, so a name
     // with a dot or a plus in it means itself.
@@ -224,8 +227,8 @@ export class GitRepo {
       return [];
     }
     return ls.map((l) => {
-      const [sha, author, date, subject] = l.split('\0');
-      return { sha, author, date, subject: subject ?? '' };
+      const [sha, author, email, date, subject] = l.split('\0');
+      return { sha, author, email, date, subject: subject ?? '' };
     });
   }
 
@@ -281,7 +284,7 @@ export class GitRepo {
       // Renames are wanted as renames rather than as an add and a delete, so
       // that both names date from the same commit.
       '--find-renames',
-      '--format=%x01%H%x00%an%x00%aI%x00%s',
+      '--format=%x01%H%x00%an%x00%ae%x00%aI%x00%s',
       ref,
       '--',
     ];
@@ -336,12 +339,12 @@ export class GitRepo {
     for (const record of chunk.split('\x01')) {
       if (!record) continue;
       const parts = record.split('\0');
-      const [sha, author, date, subject] = parts;
+      const [sha, author, email, date, subject] = parts;
       if (!sha) continue;
-      const commit: CommitSummary = { sha, author, date, subject: subject ?? '' };
-      // parts[4] onwards is the diff: a status, then the one path it renames
+      const commit: CommitSummary = { sha, author, email, date, subject: subject ?? '' };
+      // parts[5] onwards is the diff: a status, then the one path it renames
       // from and to, or the one path it touches.
-      for (let i = 4; i < parts.length; i++) {
+      for (let i = 5; i < parts.length; i++) {
         const status = parts[i].replace(/^\n/, '');
         if (!status) continue;
         const twoPaths = status[0] === 'R' || status[0] === 'C';
@@ -461,6 +464,7 @@ export class GitRepo {
         lines.push({
           sha: cur.sha ?? '',
           author: cur.author ?? '',
+          email: cur.email ?? '',
           date: cur.time ? new Date(cur.time * 1000).toISOString() : '',
           summary: cur.summary ?? '',
           previous: cur.previous ?? null,
@@ -478,6 +482,9 @@ export class GitRepo {
       const key = sp === -1 ? line : line.slice(0, sp);
       const value = sp === -1 ? '' : line.slice(sp + 1);
       if (key === 'author') cur.author = value;
+      // The porcelain wraps the address in angle brackets; the brackets are
+      // its framing, not part of the address.
+      else if (key === 'author-mail') cur.email = value.replace(/^<|>$/g, '');
       else if (key === 'author-time') cur.time = parseInt(value, 10);
       else if (key === 'summary') cur.summary = value;
       else if (key === 'previous') {
@@ -501,7 +508,7 @@ export class GitRepo {
     head: string,
     limit = 250
   ): Promise<{ ahead: number; behind: number; commits: CommitSummary[]; patch: string; mergeBase: string | null }> {
-    const fmt = '%H%x00%an%x00%aI%x00%s';
+    const fmt = '%H%x00%an%x00%ae%x00%aI%x00%s';
     const [counts, log, patch, mergeBase] = await Promise.all([
       execGit(this.dir, ['rev-list', '--left-right', '--count', `${base}...${head}`])
         .then((b) => b.toString('utf8').trim().split(/\s+/))
@@ -520,8 +527,8 @@ export class GitRepo {
       .split('\n')
       .filter((l) => l !== '')
       .map((l) => {
-        const [sha, author, date, subject] = l.split('\0');
-        return { sha, author, date, subject: subject ?? '' };
+        const [sha, author, email, date, subject] = l.split('\0');
+        return { sha, author, email, date, subject: subject ?? '' };
       });
     return {
       behind: parseInt(counts[0], 10) || 0,

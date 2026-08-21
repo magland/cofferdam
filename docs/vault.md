@@ -80,6 +80,18 @@ The repository is an ordinary one. It is created by pushing to `/alice/.mochi` o
 
 Nothing is required. A collection without the repository, without the file, or with the file empty renders exactly as it did before, and a viewer who could administer the collection is offered a link to write one. Names beginning with a dot are otherwise unusual in a vault, and a leading dot is allowed for a repository alone: a collection or a user may not begin with one.
 
+## A user's profile page
+
+A user owns the collection named after them, so `/<username>` is already their namespace; the same page is their profile, the way `github.com/<user>` is both. The page exists as soon as the user does, before their collection holds anything, and shows the profile they wrote, the profile README described above (in their case `<username>/.mochi/profile/README.md`), and their repositories.
+
+The written part of the profile is a display name, a short bio, and up to five links, edited at `/settings/profile` (reached from the account menu or the Edit profile button on the user's own page) and stored as a `profile` field on the user in `vault.json`:
+
+```json
+{ "profile": { "name": "Alice A.", "bio": "Keeps this vault.", "links": ["https://example.org"] } }
+```
+
+Links are held to `http(s)` URLs where they are saved, since they render as hyperlinks on a page other people read. Usernames elsewhere in the interface lead to these pages: issue, pull request, and comment authors, workflow run actors, contributor faces, and commit authors whose email resolves to a user (the synthetic `<user>@noreply.<host>` address web edits carry, or the emails listed on the user's admin page). Writing `@name` in markdown, in a comment, a README, or release notes, links to that user's profile too, when the vault knows the name; a name it does not know stays plain text.
+
 ## A vault from before this layout
 
 Collections used to sit directly in the vault directory, and repositories directly in a collection. A vault written that way is moved to the current layout the first time a server that knows it starts, and nothing has to be asked for:
