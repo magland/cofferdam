@@ -26,7 +26,6 @@ import {
 } from './scan';
 import {
   Viewer,
-  checkCsrf,
   clearSessionCookie,
   csrfMatches,
   getViewer,
@@ -225,9 +224,11 @@ export function registerWebOps(
     res.redirect(next);
   });
 
-  app.post('/logout', form, (req, res) => {
-    const viewer = getViewer(req, root);
-    if (viewer && checkCsrf(req, viewer)) clearSessionCookie(res);
+  // Cleared without a CSRF check: signing someone out is not an action worth
+  // forging, and requiring a live token would leave a stale form redirecting
+  // to / still signed in with no sign anything went wrong.
+  app.post('/logout', form, (_req, res) => {
+    clearSessionCookie(res);
     res.redirect('/');
   });
 

@@ -110,9 +110,12 @@ export function setSessionCookie(req: Request, res: Response, root: string, auth
 }
 
 // Both names, since a session minted before the prefix existed, or over http
-// on a vault that has since gained TLS, is still a session to clear.
+// on a vault that has since gained TLS, is still a session to clear. The
+// prefix rules apply to the deletion Set-Cookie too: without Secure the
+// browser discards it and the session survives, so sign-out would silently do
+// nothing on an https vault.
 export function clearSessionCookie(res: Response): void {
-  res.clearCookie(HOST_COOKIE_NAME, { path: '/' });
+  res.clearCookie(HOST_COOKIE_NAME, { path: '/', secure: true });
   res.clearCookie(COOKIE_NAME, { path: '/' });
 }
 
