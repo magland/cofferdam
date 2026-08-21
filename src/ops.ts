@@ -5,11 +5,11 @@ import * as path from 'path';
 import { writeFileAtomic } from './atomic';
 import { GitRepo, execGit, execGitStatus, isValidRefName, isValidRepoPath, isValidSha } from './git';
 import type { LfsStore } from './lfsstore';
-import { addCollectionOwner, repoIsPrivate, setRepoPrivate } from './perms';
+import { COLLECTION_FILE, addCollectionOwner, repoIsPrivate, setRepoPrivate } from './perms';
 import { loadVault } from './vault';
 import { looksLikePointer } from './pointer';
 import { parseUpstream } from './source';
-import { forgetRepoRedirects, recordCollectionRename, recordRepoRename } from './redirects';
+import { forgetCollectionRedirects, forgetRepoRedirects, recordCollectionRename, recordRepoRename } from './redirects';
 import { REPOS_DIR, collectionDir, repoPath, reposDir } from './layout';
 import {
   displayName,
@@ -827,6 +827,44 @@ export async function renameCollection(
   // - the collection page and every repository in it - is redirected to the new
   // one until something else is created under that name.
   recordCollectionRename(root, name, toName);
+}
+
+/**
+ * Delete a collection, and only an empty one: deletion is for a name that is
+ * no longer wanted, not a way to remove many repositories at once, so a
+ * collection holding any repository - or anything a repository keeps beside
+ * it - is refused rather than emptied. The collection's own metadata
+ * (collection.json, the owners file) does not count against emptiness: it
+ * describes the collection and goes with it, as a repository's issues go with
+ * the repository. A file this layer does not recognize is refused rather than
+ * deleted, since it is not the collection's to lose.
+ */
+export function deleteCollection(root: string, name: string): void {
+  if (!isValidName(name)) throw new OpError('invalid collection name');
+  const dir = collectionDir(root, name);
+  let isDir = false;
+  try {
+    isDir = fs.statSync(dir).isDirectory();
+  } catch {
+    isDir = false;
+  }
+  if (!isDir) throw new OpError(`collection ${name} not found`, 'notfound');
+  const rootReal = fs.realpathSync(root);
+  if (!containedIn(rootReal, dir)) {
+    throw new OpError('collection directory is outside the vault; refusing to delete it');
+  }
+  const repos = reposDir(root, name);
+  const inRepos = fs.existsSync(repos) ? fs.readdirSync(repos) : [];
+  if (inRepos.length > 0) throw new OpError(`collection ${name} is not empty`, 'conflict');
+  const own = fs.readdirSync(dir).filter((n) => n !== REPOS_DIR && n !== COLLECTION_FILE);
+  if (own.length > 0) {
+    throw new OpError(`collection ${name} holds ${own[0]}, which this server did not put there; refusing to delete it`, 'conflict');
+  }
+  fs.rmSync(dir, { recursive: true });
+  // Any redirect that led here goes with it. A collection created later under
+  // this name would otherwise inherit the traffic a former name of this one
+  // still sends.
+  forgetCollectionRedirects(root, name);
 }
 
 /**

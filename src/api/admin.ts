@@ -5,9 +5,8 @@ import { CiConfig, LimitsConfig, SitesConfig, isPlausibleHostname, loadConfig, s
 import { Egress } from '../egress';
 import { AuthLimiter } from '../limit';
 import { LfsContext } from '../lfsstore';
-import { REPOS_DIR, collectionDir, reposDir } from '../layout';
-import { RepoContext, renameCollection } from '../ops';
-import { forgetCollectionRedirects } from '../redirects';
+import { collectionDir } from '../layout';
+import { RepoContext, deleteCollection, renameCollection } from '../ops';
 import { displayName, isValidName, listRepoDirs } from '../scan';
 import { normalizeHostname } from '../siteshost';
 import { DEFAULT_THEME, findTheme, themeNames } from '../themes';
@@ -97,9 +96,8 @@ export function registerAdminApi(
     }
   });
 
-  // Only an empty one, and only a directory: a collection is a directory, so
-  // removing it is an rmdir and refusing a non-empty one is the filesystem's own
-  // rule rather than a policy invented here.
+  // Only an empty one: what "empty" means, and what goes with the directory,
+  // is deleteCollection's business, shared with the web route.
   app.delete('/api/collections/:name', (req, res) => {
     const auth = requireApiAuth(root, limiter, req, res);
     if (!auth) return;
@@ -108,41 +106,12 @@ export function registerAdminApi(
       apiError(res, 403, `you are not an owner of ${name}`);
       return;
     }
-    if (!isValidName(name)) {
-      apiError(res, 400, 'that is not a usable collection name');
-      return;
-    }
-    const dir = collectionDir(root, name);
-    let isDir = false;
     try {
-      isDir = fs.statSync(dir).isDirectory();
-    } catch {
-      isDir = false;
-    }
-    if (!isDir) {
-      apiError(res, 404, `no collection ${name} in this vault`);
-      return;
-    }
-    // Empty means the collection holds nothing but its own empty repos
-    // directory: no repository, nothing beside one, and nothing of the
-    // collection's own.
-    const repos = reposDir(root, name);
-    const own = fs.readdirSync(dir).filter((n) => n !== REPOS_DIR);
-    const inRepos = fs.existsSync(repos) ? fs.readdirSync(repos) : [];
-    if (own.length > 0 || inRepos.length > 0) {
-      apiError(res, 409, `collection ${name} is not empty`);
-      return;
-    }
-    try {
-      fs.rmSync(dir, { recursive: true });
+      deleteCollection(root, name);
     } catch (e) {
-      apiError(res, 409, `could not remove ${name}: ${e instanceof Error ? e.message : String(e)}`);
+      sendOpError(res, e, 'could not remove the collection');
       return;
     }
-    // Any redirect that led here goes with it. A collection created later
-    // under this name would otherwise inherit the traffic a former name of
-    // this one still sends.
-    forgetCollectionRedirects(root, name);
     res.json({ deleted: name });
   });
 

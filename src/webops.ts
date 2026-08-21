@@ -783,6 +783,30 @@ export function registerWebOps(
     res.redirect(`${backUrl}?msg=${encodeURIComponent(`Removed ${username} from the owners of ${loaded.name}.`)}`);
   });
 
+  // Deletion, confirmed by typing the name as a repository's is. Ownership,
+  // which loadCollection has established, is the whole permission; whether the
+  // collection is empty is the operation's own check, so a repository pushed
+  // between loading the page and clicking the button is a refusal, not a loss.
+  app.post('/:collection/settings/delete', form, (req, res) => {
+    const viewer = requireViewerPost(root, req, res);
+    if (!viewer) return;
+    const loaded = loadCollection(req, res, viewer, true);
+    if (!loaded) return;
+    const backUrl = `/${encodeURIComponent(loaded.name)}/settings`;
+    if (field(req, 'confirm').trim() !== loaded.name) {
+      fail(res, 400, `Type ${loaded.name} exactly to confirm deletion.`, viewer, backUrl);
+      return;
+    }
+    try {
+      ops.deleteCollection(root, loaded.name);
+    } catch (e) {
+      const message = e instanceof OpError ? e.message : 'Could not delete the collection.';
+      fail(res, e instanceof OpError ? opErrorStatus(e.kind) : 400, message, viewer, backUrl);
+      return;
+    }
+    res.redirect('/');
+  });
+
   app.get('/new', (req, res) => {
     const viewer = requireViewerPage(root, req, res);
     if (!viewer) return;

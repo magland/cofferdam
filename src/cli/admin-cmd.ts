@@ -160,8 +160,8 @@ rename is undone by renaming back.`,
   {
     path: ['collection', 'delete'],
     summary: 'Remove an empty collection',
-    description: `A collection is a directory, so this is an rmdir: one holding anything at all is
-refused rather than emptied.`,
+    description: `Only an empty collection: one holding any repository is refused rather than
+emptied. The collection's own owners list goes with it.`,
     args: [{ name: 'name', required: true }],
     options: [YES_OPTION, JSON_OPTION, ...TARGET_OPTIONS],
     async run(inv) {

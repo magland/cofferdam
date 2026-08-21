@@ -326,12 +326,14 @@ ${csrfField(viewer)}
 }
 
 /**
- * A collection's own settings, which today is one operation: its name.
+ * A collection's own settings: its owners, its name, and its deletion.
  *
  * Repository settings live under the repository, so a collection's live under
  * the collection, at the same place in the path. The rename is graded amber
  * rather than red for the same reason a repository's is: what it breaks can be
- * put back by renaming it again.
+ * put back by renaming it again. Deletion takes the red grade and the typed
+ * confirmation, and is offered only when the collection is empty; one holding
+ * repositories shows why the form is absent instead.
  */
 export function collectionSettingsPage(
   viewer: Viewer,
@@ -386,6 +388,23 @@ ${csrfField(viewer)}
 <label for="toName">Collection name</label><input type="text" id="toName" name="name" value="${collection}" required>
 <button type="submit" class="btn">${icon('pencil')}<span>Rename</span></button>
 </form>
+</div>
+<div class="danger-zone">
+<h3>Danger zone</h3>
+${
+    repoCount === 0
+      ? html`<p>Deleting this collection removes its directory and its owners list from the vault permanently. There is no undo.</p>
+<form method="post" action="${base}/settings/delete">
+${csrfField(viewer)}
+<div class="field"><label for="confirm">Type <b class="mono">${collection}</b> to confirm</label><input type="text" id="confirm" name="confirm" autocomplete="off"></div>
+<button type="submit" class="btn btn-danger">${icon('trash')}<span>Delete this collection</span></button>
+</form>`
+      : html`<p>A collection can be deleted only once it is empty. This one holds ${
+          repoCount === 1 ? 'a repository' : `${repoCount} repositories`
+        }; delete ${repoCount === 1 ? 'it' : 'them'}, or move ${
+          repoCount === 1 ? 'it' : 'them'
+        } to another collection, first.</p>`
+  }
 </div>`;
   return layout(`Settings - ${collection}`, content, {
     crumbs: html` / <a href="${base}">${collection}</a>`,

@@ -540,6 +540,23 @@ check "a collection needs a csrf value" 403 -b "$JAR" "$BASE/new/collection" \
   --data-urlencode name=nocsrf
 check "anonymous new collection redirects to login" 302 "$BASE/new/collection"
 
+# ---- deleting a collection: only an empty one, confirmed by typing its name ----
+
+check "a non-empty collection's settings explain why deletion is absent" 200 -b "$JAR" "$BASE/demo/settings"
+body_lacks "no delete form on a non-empty collection" 'Delete this collection'
+body_has "the reason it is absent" 'only once it is empty'
+CSRF="$(csrf_of)"
+check "deleting a non-empty collection is refused" 409 -b "$JAR" "$BASE/demo/settings/delete" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode confirm=demo
+check "the empty collection's settings offer deletion" 200 -b "$JAR" "$BASE/empties/settings"
+body_has "a delete form" 'Delete this collection'
+CSRF="$(csrf_of)"
+check "a wrong confirmation is refused" 400 -b "$JAR" "$BASE/empties/settings/delete" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode confirm=oops
+check "the empty collection deletes" 302 -b "$JAR" "$BASE/empties/settings/delete" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode confirm=empties
+check "and its page is gone" 404 "$BASE/empties"
+
 # ---- markdown rendering ----
 
 MD_DOC="$(cat <<'EOF'
