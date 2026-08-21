@@ -267,6 +267,14 @@ expected_of() { { grep -o 'name="expected" value="[^"]*"' "$BODY" || true; } | h
 # ---- anonymous browsing and auth walls ----
 
 check "home page" 200 "$BASE/"
+# The foot of every page says what the vault is running: the version from
+# package.json, and the build that version was compiled from. The suite runs
+# `npm run build` above, so the stamp is always there to be found, and an
+# operator asking "is my fix live" is asking exactly this question of a
+# deployed vault.
+body_has "the page foot names the version" "feorge <span class=\"mono\">$(node -p "require('./package.json').version")</span>"
+body_has "and the build it was compiled from" 'build <span class="mono">'
+body_has "and when it was built" 'built <time datetime='
 check "login form" 200 "$BASE/login"
 check "bad login rejected" 401 "$BASE/login" --data-urlencode username=owner --data-urlencode token=wrong
 check "anonymous /new redirects to login" 302 "$BASE/new"

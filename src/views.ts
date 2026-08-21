@@ -1,7 +1,7 @@
 import { BlameLine, CommitDetail, CommitSummary, RefInfo, TreeEntry } from './git';
 import { LanguageStat } from './languages';
 import { Html, html, joinHtml, raw } from './html';
-import { esc, formatDay, formatSize, highlightedLines, timeTag } from './render';
+import { esc, formatDateFull, formatDay, formatSize, highlightedLines, timeTag } from './render';
 import { Viewer, viewerIsAdmin } from './session';
 import { styleSheet } from './assets';
 import { pageScript } from './pagescript';
@@ -9,6 +9,7 @@ import { THEMES, activeTheme, darkFor } from './themes';
 import { WORDMARK } from './logo';
 import { IconName, icon } from './icons';
 import { avatar } from './avatar';
+import { buildInfo } from './version';
 // Type only: profile.ts builds its URLs with encPath from here, so a value
 // import in this direction would close a cycle.
 import type { CollectionProfile } from './profile';
@@ -149,6 +150,32 @@ function jumpDialog(jump: JumpContext | null): Html {
 </dialog>`;
 }
 
+/**
+ * What this vault is running, at the foot of every page. An operator who has
+ * just deployed something needs to know whether they are looking at it, and a
+ * version alone cannot say: main carries the last release's version until the
+ * next bump, so several different builds answer to "0.3.0". The commit narrows
+ * it to one and the date says when that one was compiled. A vault running from
+ * source has no build to name and says that instead of showing a date it would
+ * have had to invent. See src/version.ts for where the stamp comes from.
+ */
+function buildStamp(): Html {
+  const build = buildInfo();
+  const parts: Html[] = [html`feorge <span class="mono">${build.version}</span>`];
+  if (build.commit) parts.push(html`build <span class="mono">${build.commit}</span>`);
+  const iso = build.builtAt;
+  const built = iso ? new Date(iso) : null;
+  parts.push(
+    iso && built && !isNaN(built.getTime())
+      ? // The day, not "3 days ago": what this gets compared against is a date
+        // kept somewhere else, a release or a deploy log, and the exact time is
+        // a hover away for anyone telling two builds of one day apart.
+        html`built <time datetime="${built.toISOString()}" title="${formatDateFull(iso)}">${formatDay(iso)}</time>`
+      : html`running from source`
+  );
+  return joinHtml(parts, ' <span class="foot-sep">\u00b7</span> ');
+}
+
 export function layout(title: string, content: Html, opts: PageOpts = {}): string {
   // The theme name rides along as a query parameter so a changed theme busts
   // any cache in front of the stylesheets, and the stylesheet carries a tag of
@@ -177,6 +204,7 @@ export function layout(title: string, content: Html, opts: PageOpts = {}): strin
 <main class="container">
 ${content}
 </main>
+<footer class="pagefoot"><div class="container">${buildStamp()}</div></footer>
 ${jumpDialog(opts.jump ?? null)}
 </body>
 </html>`.text;

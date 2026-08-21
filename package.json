@@ -35,7 +35,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/build-info.js",
     "dev": "tsx src/index.ts serve example-root",
     "start": "node dist/index.js serve",
     "example": "bash scripts/create-example.sh example-root",

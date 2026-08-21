@@ -23,9 +23,11 @@ example-root
 docs
 logo
 scripts
-# Except the one script that is part of an image: the runner's entrypoint,
-# which starts a Docker daemon before the runner and stops it afterwards.
+# Except the two scripts that an image needs: the runner's entrypoint, which
+# starts a Docker daemon before the runner and stops it afterwards, and the one
+# `npm run build` runs to stamp the build.
 !scripts/runner-entrypoint.sh
+!scripts/build-info.js
 README.md
 LICENSE
 SPEC-*.md

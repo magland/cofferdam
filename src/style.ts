@@ -210,6 +210,15 @@ kbd {
 .btn-link { border: none; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
 .btn-link:hover { text-decoration: underline; }
 main { padding: var(--s5) var(--s4) var(--s7); }
+/* The foot of every page, carrying the build stamp and nothing else (see
+   buildStamp in views.ts). It is set small and quiet because it is looked up
+   rather than read: an operator checking which build is live wants it to be
+   there, and everybody else wants it out of the way. Ordinary inline flow, so
+   a narrow screen wraps the line instead of scrolling it. */
+.pagefoot { border-top: 1px solid var(--border); }
+.pagefoot .container { padding-top: var(--s3); padding-bottom: var(--s5); color: var(--fg-subtle); font-size: var(--t-xs); }
+.pagefoot .mono { font-size: 11px; }
+.foot-sep { color: var(--border); }
 /* Titles are set larger than the body by a clear step rather than a nudge, so
    the top of a page announces itself and the reader knows where they are
    before reading a word of the content. */

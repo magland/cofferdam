@@ -87,6 +87,8 @@ my-vault-name  https://my-vault-name.fly.dev
   login     this is the vault feorge commands use
 ```
 
+That says what was deployed. What is running says so itself, at the foot of every page the vault serves: the version, the commit it was built from, and the day it was built. When a deploy has gone out and the question is whether the vault in front of you is the one that has it, that line is the answer, and it does not depend on your machine remembering anything.
+
 `feorge deploy fly destroy my-vault-name` removes the app, the volume, and with them the vault; it asks you to type the app name first (`--yes` skips the prompt, for a script that means it), and also drops the stored credential for a vault that no longer exists. Anything else is flyctl's job, and flyctl is already on your machine: `fly logs -a my-vault-name`, `fly ssh console -a my-vault-name` for a shell on the volume, and `fly certs` for [a domain of your own](#a-domain-of-your-own).
 
 ### Updating on a schedule
