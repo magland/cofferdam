@@ -1,14 +1,14 @@
 {
-  "name": "@magland/feorge",
+  "name": "@magland/mochi",
   "version": "0.3.1",
   "description": "A self-hosted git forge with the shape of GitHub: browsing, in-browser editing, issues, pull requests, Actions-compatible workflows, static sites, and Git LFS, from one small server.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/magland/feorge.git"
+    "url": "git+https://github.com/magland/mochi.git"
   },
-  "homepage": "https://github.com/magland/feorge#readme",
-  "bugs": "https://github.com/magland/feorge/issues",
+  "homepage": "https://github.com/magland/mochi#readme",
+  "bugs": "https://github.com/magland/mochi/issues",
   "keywords": [
     "git",
     "forge",
@@ -20,7 +20,7 @@
     "static-site"
   ],
   "bin": {
-    "feorge": "dist/index.js"
+    "mochi": "dist/index.js"
   },
   "main": "dist/index.js",
   "engines": {

@@ -1,3 +1,3 @@
 {$DOMAIN} {
-	reverse_proxy feorge:3000
+	reverse_proxy mochi:3000
 }

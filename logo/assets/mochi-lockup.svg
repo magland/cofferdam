@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 308.96 60" width="308.96" height="60" fill="none" role="img" aria-label="mochi">
+  <g transform="translate(0 1.52) scale(0.89)">
+    <path d="M23.57 24.43L17.45 19.29" stroke="#0e7c74" stroke-width="6" stroke-linecap="round"/>
+    <path d="M32 20.5L32 12.5" stroke="#0e7c74" stroke-width="6" stroke-linecap="round"/>
+    <path d="M40.43 24.43L46.55 19.29" stroke="#0e7c74" stroke-width="6" stroke-linecap="round"/>
+    <rect x="25" y="31.5" width="14" height="14" rx="3" fill="#0e7c74"/>
+    <path d="M14 51.5H50" stroke="#0e7c74" stroke-width="6" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(76.96 0)"><g stroke="#14201f" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"><path d="M5 25V55"/><path d="M5 40A15 15 0 0 1 35 40"/><path d="M35 40V55"/><path d="M35 40A15 15 0 0 1 65 40"/><path d="M65 40V55"/><circle cx="98" cy="40" r="15"/><path d="M155.64 28.51A15 15 0 1 0 155.64 51.49"/><path d="M179 5V55"/><path d="M179 40A15 15 0 0 1 209 40"/><path d="M209 40V55"/><path d="M227 25V55"/><circle cx="227" cy="5" r="5" stroke="none" fill="#14201f"/></g></g>
+</svg>

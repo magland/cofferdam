@@ -2,7 +2,7 @@ import { Html, raw } from './html';
 
 // The icon set: drawn here, in the same language as the logo.
 //
-// feorge ships no static files, so an icon is a string of SVG markup rather
+// mochi ships no static files, so an icon is a string of SVG markup rather
 // than a sprite sheet or a font. Each entry below is the interior of one glyph
 // on a 24-unit grid. The wrapper is added by icon() so every icon carries the
 // same box, the same class, and the same accessibility treatment.

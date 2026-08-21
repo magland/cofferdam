@@ -16,7 +16,7 @@ import { getSecret } from './session';
 // is read-only by construction: checkReadAuth accepts these and the push
 // path does not.
 
-const PREFIX = 'feorgejob_';
+const PREFIX = 'mochijob_';
 
 export interface JobGrant {
   collection: string;

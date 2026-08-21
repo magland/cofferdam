@@ -6,7 +6,7 @@ import * as path from 'path';
 //
 // The version is read from the running package's own package.json. It is used
 // where the server writes a command for somebody else's machine to run: the
-// pasted `npx @magland/feorge@<version>` pins what that machine executes to
+// pasted `npx @magland/mochi@<version>` pins what that machine executes to
 // what this vault was tested against, rather than to whatever npm serves the
 // day the command is pasted.
 //

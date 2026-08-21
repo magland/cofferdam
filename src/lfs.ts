@@ -118,8 +118,8 @@ export function registerLfs(app: Express, root: string, lfs: LfsContext | null, 
   ): void {
     if (check.status === 401) {
       // LFS-Authenticate is the header git-lfs looks for.
-      res.setHeader('LFS-Authenticate', 'Basic realm="feorge"');
-      res.setHeader('WWW-Authenticate', 'Basic realm="feorge"');
+      res.setHeader('LFS-Authenticate', 'Basic realm="mochi"');
+      res.setHeader('WWW-Authenticate', 'Basic realm="mochi"');
     }
     if (check.retryAfter !== undefined) res.setHeader('Retry-After', String(check.retryAfter));
     lfsError(res, check.status, check.message);

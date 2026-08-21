@@ -49,7 +49,7 @@ import {
 // The CI engine: the server side of workflow execution. It turns pushes and
 // manual dispatches into planned runs, decides which jobs are runnable,
 // leases them to runners, and folds their reports back into run state. It
-// never executes anything itself: execution belongs to `feorge runner run`
+// never executes anything itself: execution belongs to `mochi runner run`
 // on a machine with Docker.
 //
 // The engine keeps an in-memory index of active (queued or running) runs,
@@ -101,12 +101,12 @@ function sameToken(a: string, b: string): boolean {
 
 // ---- workflow discovery ----
 
-// Workflows live in .feorge/workflows and .github/workflows; both are
-// collected, and a file in .feorge/workflows shadows one with the same
+// Workflows live in .mochi/workflows and .github/workflows; both are
+// collected, and a file in .mochi/workflows shadows one with the same
 // basename in .github/workflows, so a repository can adapt a single workflow
-// for feorge without forking the rest.
+// for mochi without forking the rest.
 export async function discoverWorkflows(repo: GitRepo, sha: string): Promise<DiscoveredWorkflow[]> {
-  const dirs = ['.github/workflows', '.feorge/workflows'];
+  const dirs = ['.github/workflows', '.mochi/workflows'];
   const byBase = new Map<string, { path: string }>();
   for (const dir of dirs) {
     let entries;
@@ -1419,7 +1419,7 @@ export class CiEngine {
   /**
    * What each runner is holding, and what is waiting for one.
    *
-   * This is what `feorge runner list` reports beside the registry, because
+   * This is what `mochi runner list` reports beside the registry, because
    * "the run is stuck" nearly always has one of two answers that the registry
    * alone cannot give: no runner is connected, or one is connected but nothing
    * it serves matches the labels the queued jobs asked for.

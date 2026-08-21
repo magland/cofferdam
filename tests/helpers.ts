@@ -8,7 +8,7 @@ import * as path from 'path';
 // keeps these tests at milliseconds.
 
 export function makeVaultDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'feorge-unit-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'mochi-unit-'));
 }
 
 export function makeBareRepo(root: string, collection: string, repo: string): string {

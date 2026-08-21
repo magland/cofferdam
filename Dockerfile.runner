@@ -1,4 +1,4 @@
-# The runner image: a feorge runner with a Docker daemon of its own.
+# The runner image: a mochi runner with a Docker daemon of its own.
 #
 # The vault's image cannot serve here. A runner executes every job in a
 # container, so it needs a daemon, and the vault image deliberately has none:
@@ -18,8 +18,8 @@ COPY scripts/build-info.js ./scripts/
 # no .git (see .dockerignore), so the commit is handed in instead of read, and
 # .github/workflows/image.yml is what hands it in. A build without it is still
 # a build: the stamp then carries the date alone.
-ARG FEORGE_BUILD_COMMIT=""
-ARG FEORGE_BUILD_DATE=""
+ARG MOCHI_BUILD_COMMIT=""
+ARG MOCHI_BUILD_DATE=""
 RUN npm run build && npm prune --omit=dev
 
 FROM docker:28-dind

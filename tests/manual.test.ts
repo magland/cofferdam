@@ -77,14 +77,14 @@ test('a grant mints, redeems once, and the mint token is spent by redemption', (
   createRun(root, 'alice', 'demo', (n) => ({ run: mkRun(n, jobs), jobs }));
 
   const { token, grant } = mintGrant(root, 'alice', 'demo', 1, 'alice');
-  assert.ok(token.startsWith('feorge_run_'));
+  assert.ok(token.startsWith('mochi_run_'));
   const grants = loadGrants(root, 'alice', 'demo', 1);
   assert.equal(grants.length, 1);
   assert.equal(findMintable(grants, token)?.id, grant.id);
-  assert.equal(findMintable(grants, 'feorge_run_' + 'f'.repeat(48)), null);
+  assert.equal(findMintable(grants, 'mochi_run_' + 'f'.repeat(48)), null);
 
   const session = redeemGrant(root, 'alice', 'demo', 1, grant.id, 'myhost');
-  assert.ok(session && session.startsWith('feorge_manual_'));
+  assert.ok(session && session.startsWith('mochi_manual_'));
   const after = loadGrants(root, 'alice', 'demo', 1);
   assert.equal(findMintable(after, token), null); // spent
   assert.equal(findSession(after, session!)?.id, grant.id);

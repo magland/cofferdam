@@ -23,7 +23,7 @@ const NODE_VERSIONS: Record<number, string> = {
   24: '24.10.0',
 };
 
-export const EXTERNALS_MOUNT = '/feorge/externals';
+export const EXTERNALS_MOUNT = '/mochi/externals';
 
 function run(cmd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -36,7 +36,7 @@ function run(cmd: string, args: string[]): Promise<string> {
 
 export function defaultExternalsDir(): string {
   const base = process.env.XDG_CACHE_HOME ?? path.join(os.homedir(), '.cache');
-  return path.join(base, 'feorge', 'externals');
+  return path.join(base, 'mochi', 'externals');
 }
 
 function nodeArch(): string {

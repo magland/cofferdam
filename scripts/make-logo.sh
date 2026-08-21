@@ -9,7 +9,7 @@
 #   bash scripts/make-logo.sh --check  report differences, write nothing
 #
 # src/logo.ts carries inline copies of the mark and the wordmark, because
-# feorge ships no static files. This script does not edit that file, but it
+# mochi ships no static files. This script does not edit that file, but it
 # does check that the geometry there still matches and prints the constants to
 # paste when it does not.
 set -euo pipefail
@@ -21,7 +21,7 @@ const fs = require('fs');
 
 const check = process.argv.includes('--check');
 
-// The palette. Only the icon, the lockup, and the two-tone wordmark carry
+// The palette. Only the icon and the lockup carry
 // fixed colours; the rest paint with currentColor.
 const INK = '#14201f';
 const TEAL = '#0e7c74';
@@ -87,90 +87,95 @@ if (n(M_INK.top) !== n(M.box - M_INK.bottom)) throw new Error('the mark is off c
 
 // ------------------------------------------------------------ the logotype
 //
-// Six letters on one grid, each a monoline stroke and a piece of a circle.
+// Five letters on one grid, each a monoline stroke and a piece of a circle.
 // Letters are strokes rather than outlines, so there is no font dependency
-// and no text-to-path step. The g is the one letter with a descender, so the
-// box is taller below the baseline than the old nine-letter mark's was.
+// and no text-to-path step. No letter in the name descends, so the box ends
+// half a stroke below the baseline; the old name's g is what made the earlier
+// box taller.
 const W = {
-  width: 250,
-  height: 75,
+  width: 232,
+  height: 60,
   stroke: 10,
   asc: 5, // stem top centreline; the box edge is half a stroke above
   xt: 25, // x-height top centreline
-  base: 55, // baseline centreline
-  desc: 70, // descender bottom centreline; the box edge is half a stroke below
-  bowl: 15, // bowl radius, and the radius of o, e and g
+  base: 55, // baseline centreline; the box edge is half a stroke below
+  bowl: 15, // the one radius in the word: o, c, and every arch of m and h
   gap: 8, // air between the outer edges of adjacent letters
-  aperture: 50, // degrees off the bowl's east point where c and e are cut
-  fHead: 10, // radius of f's head curve, and of g's tail, its mirror
-  fStem: 12, // f's stem, from the letter's left edge
-  fWidth: 27, // f is narrow: a stem, a head, and a crossbar
-  shoulder: 13, // r's shoulder radius; less than a bowl, so r stays narrow
+  aperture: 50, // degrees either side of the bowl's east point where c is cut
 };
 
 const HALF = W.stroke / 2;
-const BY = W.base - W.bowl; // 40, the centre line of every bowl
+const BY = W.base - W.bowl; // 40, the centre line of every bowl and every arch
 const WIDE = 2 * W.bowl + W.stroke; // 40, the width of every round letter
 
 // A point on a bowl of radius W.bowl centred at (cx, BY), by angle, with 0
 // degrees due east and positive angles running downwards as in SVG.
 const onBowl = (cx, deg) => [cx + W.bowl * Math.cos(rad(deg)), BY + W.bowl * Math.sin(rad(deg))];
 
+// An arch: the top half of a bowl, springing from one stem at BY and landing
+// on the next. m is two of them and h is one, which is why both letters carry
+// the same curve as o and c rather than a shoulder of their own.
+const arch = (left) => `M${left} ${BY}A${W.bowl} ${W.bowl} 0 0 1 ${left + 2 * W.bowl} ${BY}`;
+
 // Each letter is drawn from its left ink edge. Bowls come back as circles so
-// they stay exact; everything else is a path.
+// they stay exact; everything else is a path. A dot is the one filled shape.
 const LETTERS = {
   o: (x) => ({
     paths: [],
     bowls: [[x + HALF + W.bowl, BY, W.bowl]],
     width: WIDE,
   }),
-  // The curve leaves the east end of the crossbar and comes back round to an
-  // aperture cut either side of due east.
-  e: (x) => {
+  // o cut open on the east, the aperture the same 50 degrees above the
+  // horizon as below it, so the two terminals sit level with each other.
+  c: (x) => {
     const cx = x + HALF + W.bowl;
+    const [sx, sy] = onBowl(cx, -W.aperture);
     const [ex, ey] = onBowl(cx, W.aperture);
     return {
-      paths: [
-        `M${x + HALF} ${BY}H${x + HALF + 2 * W.bowl}`,
-        `M${cx + W.bowl} ${BY}A${W.bowl} ${W.bowl} 0 1 0 ${n(ex)} ${n(ey)}`,
-      ],
+      paths: [`M${n(sx)} ${n(sy)}A${W.bowl} ${W.bowl} 0 1 0 ${n(ex)} ${n(ey)}`],
       width: WIDE,
     };
   },
-  f: (x) => ({
-    paths: [
-      `M${x + W.fStem} ${W.base}V${W.asc + W.fHead}A${W.fHead} ${W.fHead} 0 0 1 ${x + W.fStem + W.fHead} ${W.asc}`,
-      `M${x + HALF} ${W.xt}H${x + W.fWidth - HALF}`,
-    ],
-    width: W.fWidth,
-  }),
-  r: (x) => ({
-    paths: [
-      `M${x + HALF} ${W.xt}V${W.base}`,
-      `M${x + HALF} ${W.xt + W.shoulder}A${W.shoulder} ${W.shoulder} 0 0 1 ${x + HALF + W.shoulder} ${W.xt}`,
-    ],
-    width: W.stroke + W.shoulder,
-  }),
-  // Single-storey: the bowl of an o, a stem down the right, and a tail that
-  // mirrors f's head, the same radius turned the other way at the other end
-  // of the word's height. f opens the word reaching up and right; g answers
-  // it reaching down and left.
-  g: (x) => {
-    const xs = x + HALF + 2 * W.bowl;
+  // Two arches off three stems. The first stem rises to the x-height rather
+  // than to the springing point, so it finishes level with the arches' apex.
+  m: (x) => {
+    const left = x + HALF;
+    const mid = left + 2 * W.bowl;
+    const right = mid + 2 * W.bowl;
     return {
       paths: [
-        `M${xs} ${W.xt}V${W.desc - W.fHead}A${W.fHead} ${W.fHead} 0 0 1 ${xs - W.fHead} ${W.desc}`,
+        `M${left} ${W.xt}V${W.base}`,
+        arch(left),
+        `M${mid} ${BY}V${W.base}`,
+        arch(mid),
+        `M${right} ${BY}V${W.base}`,
       ],
-      bowls: [[x + HALF + W.bowl, BY, W.bowl]],
+      width: WIDE + 2 * W.bowl,
+    };
+  },
+  // One arch off a stem that carries the word's only ascender.
+  h: (x) => {
+    const left = x + HALF;
+    return {
+      paths: [
+        `M${left} ${W.asc}V${W.base}`,
+        arch(left),
+        `M${left + 2 * W.bowl} ${BY}V${W.base}`,
+      ],
       width: WIDE,
     };
   },
+  // A stem and its tittle. The dot is a disc the width of the stroke, centred
+  // on the ascender line, so its top edge lands on h's stem cap and the word
+  // has one ink height above the x-height rather than two.
+  i: (x) => ({
+    paths: [`M${x + HALF} ${W.xt}V${W.base}`],
+    dots: [[x + HALF, W.asc, HALF]],
+    width: W.stroke,
+  }),
 };
 
-// "fe" and "orge": iron and the forge, which is what the two-tone variant
-// colours.
-const NAME = [...'feorge'];
-const SPLIT = 2;
+const NAME = [...'mochi'];
 
 function layoutWord() {
   const out = [];
@@ -185,41 +190,34 @@ function layoutWord() {
   return out;
 }
 
-const drawLetter = (l) =>
+const drawLetter = (l, colour) =>
   [
     ...l.paths.map((d) => `<path d="${d}"/>`),
     ...(l.bowls ?? []).map(([cx, cy, r]) => `<circle cx="${cx}" cy="${cy}" r="${r}"/>`),
+    ...(l.dots ?? []).map(
+      ([cx, cy, r]) => `<circle cx="${cx}" cy="${cy}" r="${r}" stroke="none" fill="${colour}"/>`
+    ),
   ].join('');
 
 const strokeAttrs = `stroke-width="${W.stroke}" stroke-linecap="round" stroke-linejoin="round"`;
 
 function wordmarkBody(colour) {
   const letters = layoutWord();
-  return `<g stroke="${colour}" ${strokeAttrs}>${letters.map(drawLetter).join('')}</g>`;
-}
-
-function wordmarkTwoToneBody() {
-  const letters = layoutWord();
-  return (
-    `<g ${strokeAttrs}>` +
-    `<g stroke="${TEAL}">${letters.slice(0, SPLIT).map(drawLetter).join('')}</g>` +
-    `<g stroke="${INK}">${letters.slice(SPLIT).map(drawLetter).join('')}</g>` +
-    `</g>`
-  );
+  return `<g stroke="${colour}" ${strokeAttrs}>${letters.map((l) => drawLetter(l, colour)).join('')}</g>`;
 }
 
 // ------------------------------------------------------------- the lockup
 //
 // The mark is scaled to 0.89, which takes its 45 ink units to 40.05, within a
 // tenth of the wordmark's 40-unit x-height. It is set flush left by its box
-// and centred on the ascender-to-baseline band rather than the whole box,
-// since the descender below the baseline is one letter's tail and not part
-// of the word's mass.
+// and centred on the ascender-to-baseline band, which with no descender in
+// the name is the middle of the wordmark's box as well.
 const LOCK = { scale: 0.89, clear: 20 };
 const LOCK_BOX = M.box * LOCK.scale; // 56.96
 const LOCK_X = LOCK_BOX + LOCK.clear; // 76.96, where the wordmark starts
 const BAND_MID = (W.base + HALF) / 2; // 30, middle of ink from ascender to baseline
 const LOCK_Y = BAND_MID - (M.box / 2) * LOCK.scale; // 1.52
+if (n(BAND_MID) !== n(W.height / 2)) throw new Error('the wordmark box is no longer centred on its ink');
 
 // -------------------------------------------------------------- the icon
 //
@@ -230,17 +228,17 @@ const ICON = { scale: 0.7, radius: 14 };
 const ICON_OFFSET = M.cx * (1 - ICON.scale); // 9.6
 
 const svg = (viewBox, w, h, body, extra = '') =>
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" width="${w}" height="${h}"${extra} role="img" aria-label="feorge">\n  ${body}\n</svg>\n`;
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" width="${w}" height="${h}"${extra} role="img" aria-label="mochi">\n  ${body}\n</svg>\n`;
 
 const FILES = {
-  'feorge-mark.svg': svg(
+  'mochi-mark.svg': svg(
     `0 0 ${M.box} ${M.box}`,
     M.box,
     M.box,
     markParts('currentColor').join('\n  '),
     ' fill="none"'
   ),
-  'feorge-icon.svg': svg(
+  'mochi-icon.svg': svg(
     `0 0 ${M.box} ${M.box}`,
     M.box,
     M.box,
@@ -249,28 +247,21 @@ const FILES = {
       markParts(PAPER).join('\n    ') +
       `\n  </g>`
   ),
-  'feorge-wordmark.svg': svg(
+  'mochi-wordmark.svg': svg(
     `0 0 ${W.width} ${W.height}`,
     W.width,
     W.height,
     wordmarkBody('currentColor'),
     ' fill="none"'
   ),
-  'feorge-wordmark-two-tone.svg': svg(
-    `0 0 ${W.width} ${W.height}`,
-    W.width,
-    W.height,
-    wordmarkTwoToneBody(),
-    ' fill="none"'
-  ),
-  'feorge-lockup.svg': svg(
+  'mochi-lockup.svg': svg(
     `0 0 ${n(LOCK_X + W.width)} ${W.height}`,
     n(LOCK_X + W.width),
     W.height,
     `<g transform="translate(0 ${n(LOCK_Y)}) scale(${LOCK.scale})">\n    ` +
       markParts(TEAL).join('\n    ') +
       `\n  </g>\n` +
-      `  <g transform="translate(${n(LOCK_X)} 0)">${wordmarkTwoToneBody()}</g>`,
+      `  <g transform="translate(${n(LOCK_X)} 0)">${wordmarkBody(INK)}</g>`,
     ' fill="none"'
   ),
 };
@@ -297,7 +288,7 @@ if (!check && stale === 0) console.log('logo/assets is already up to date');
 // Colours differ between the two copies, so compare with them stripped out.
 const bare = (s) => s.replace(/ (?:stroke|fill)="[^"]*"/g, '');
 const inline = bare(fs.readFileSync('src/logo.ts', 'utf8'));
-const geometry = [...markParts('currentColor'), ...FILES['feorge-wordmark.svg'].split('\n')]
+const geometry = [...markParts('currentColor'), ...FILES['mochi-wordmark.svg'].split('\n')]
   .flatMap((s) => [...s.matchAll(/ (?:d|cx|x)="[^"]*"[^/>]*/g)].map((m) => bare(m[0]).trim()))
   .concat(`transform="translate(${n(ICON_OFFSET)} ${n(ICON_OFFSET)}) scale(${ICON.scale})"`);
 
@@ -307,9 +298,9 @@ if (missing.length) {
   for (const m of missing) console.error(`  ${m}`);
   console.error('\nPaste these into src/logo.ts:\n');
   const oneLine = (s) => s.replace(/\n\s*/g, '');
-  console.error(`export const WORDMARK = \`${oneLine(FILES['feorge-wordmark.svg']).replace(/ width="\d+" height="\d+"/, '')}\`;\n`);
-  console.error(`export const MARK = \`${oneLine(FILES['feorge-mark.svg']).replace(/ width="\d+" height="\d+"/, '')}\`;\n`);
-  const favicon = oneLine(FILES['feorge-icon.svg'])
+  console.error(`export const WORDMARK = \`${oneLine(FILES['mochi-wordmark.svg']).replace(/ width="\d+" height="\d+"/, '')}\`;\n`);
+  console.error(`export const MARK = \`${oneLine(FILES['mochi-mark.svg']).replace(/ width="\d+" height="\d+"/, '')}\`;\n`);
+  const favicon = oneLine(FILES['mochi-icon.svg'])
     .replace(/ width="\d+" height="\d+"/, '')
     .replaceAll(TEAL, '${bg}')
     .replaceAll(PAPER, '${fg}');

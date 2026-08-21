@@ -380,7 +380,7 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
         fail(res, minted.error === 'finished' ? 409 : 400, why, actor.viewer, back);
         return;
       }
-      const command = `npx @magland/feorge@${packageVersion()} job run ${baseUrlOf(req)} ${minted.token}`;
+      const command = `npx @magland/mochi@${packageVersion()} job run ${baseUrlOf(req)} ${minted.token}`;
       res
         .type('html')
         .send(ciViews.execCommandPage(ctx, n, command, Math.round(MINT_TTL_MS / 60000), back));

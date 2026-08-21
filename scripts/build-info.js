@@ -28,7 +28,7 @@ function fromGit(args) {
 }
 
 function commit() {
-  const given = (process.env.FEORGE_BUILD_COMMIT || '').trim();
+  const given = (process.env.MOCHI_BUILD_COMMIT || '').trim();
   if (given) return given.slice(0, 12);
   const head = fromGit(['rev-parse', '--short=7', 'HEAD']);
   if (!head) return null;
@@ -38,7 +38,7 @@ function commit() {
 }
 
 function builtAt() {
-  const given = (process.env.FEORGE_BUILD_DATE || '').trim();
+  const given = (process.env.MOCHI_BUILD_DATE || '').trim();
   if (given && !isNaN(new Date(given).getTime())) return new Date(given).toISOString();
   return new Date().toISOString();
 }

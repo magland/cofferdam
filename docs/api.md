@@ -2,7 +2,7 @@
 
 Every route the vault answers with JSON, what it takes, and what it requires of the caller.
 
-For a shorter introduction aimed at a program rather than a person, see [feorge for an agent](agents.md). For the command line over this API, see [The command line](cli.md).
+For a shorter introduction aimed at a program rather than a person, see [Mochi Forge for an agent](agents.md). For the command line over this API, see [The command line](cli.md).
 
 ## The rules that hold everywhere
 
@@ -272,7 +272,7 @@ Cancelling a run that is not in progress is 409. Dispatching requires the workfl
 
 `exec-command` takes the write role and answers `{command, token, expiresAt, expiresInMinutes}` for a run with waiting [manual jobs](workflows.md#manual-jobs-run-by-pasting-a-command): 400 when the run has none, 409 when it has finished. The token appears in this response and nowhere else, must be redeemed within fifteen minutes, and works once.
 
-**There is nothing behind `gh pr checks`.** feorge has no check suites and no commit statuses. The nearest answer is the runs whose sha matches the pull request's head, which is exactly what `feorge pr checks` computes.
+**There is nothing behind `gh pr checks`.** Mochi Forge has no check suites and no commit statuses. The nearest answer is the runs whose sha matches the pull request's head, which is exactly what `mochi pr checks` computes.
 
 ## Backing up a vault
 
@@ -281,7 +281,7 @@ GET  /api/backup/manifest?exclude=&hash=1       NDJSON: every file and repositor
 POST /api/backup/fetch                          {paths: [...]}, answered as a length-prefixed stream
 ```
 
-Two routes, together enough to pull a whole vault onto another disk. `feorge backup` is the client; [Backing up a vault](backup.md) describes it and what a backup does not promise. Both require a site admin with an unrestricted token, since the manifest necessarily names `vault.json` and `.secret`, and both hold the same concurrency gate a file listing does, so a backup in progress cannot crowd out a push.
+Two routes, together enough to pull a whole vault onto another disk. `mochi backup` is the client; [Backing up a vault](backup.md) describes it and what a backup does not promise. Both require a site admin with an unrestricted token, since the manifest necessarily names `vault.json` and `.secret`, and both hold the same concurrency gate a file listing does, so a backup in progress cannot crowd out a push.
 
 The manifest streams NDJSON, so a large vault costs the server no more memory than a small one:
 
@@ -293,7 +293,7 @@ The manifest streams NDJSON, so a large vault costs the server no more memory th
 {"kind":"end","files":9143,"bytes":1043221,"repos":12}
 ```
 
-Paths are vault-relative and always POSIX-separated, and `mtime` is in milliseconds. `?hash=1` adds `sha256` to each file line, for `--checksum` runs and for `feorge backup verify`. `?exclude=` takes any of `runs`, `sites`, `lfs`, `secrets` and leaves those out. A repository is reported as `kind:"repo"` and its contents are deliberately *not* enumerated: git is their transport, and `refs` is a digest over every ref, what it points at, and where `HEAD` points, so a client can skip a repository nothing has changed in. The `end` line is what says the walk completed; a client that does not see one must not treat the manifest as the whole vault.
+Paths are vault-relative and always POSIX-separated, and `mtime` is in milliseconds. `?hash=1` adds `sha256` to each file line, for `--checksum` runs and for `mochi backup verify`. `?exclude=` takes any of `runs`, `sites`, `lfs`, `secrets` and leaves those out. A repository is reported as `kind:"repo"` and its contents are deliberately *not* enumerated: git is their transport, and `refs` is a digest over every ref, what it points at, and where `HEAD` points, so a client can skip a repository nothing has changed in. The `end` line is what says the walk completed; a client that does not see one must not treat the manifest as the whole vault.
 
 `POST /api/backup/fetch` takes `{"paths": [...]}` and answers with the bytes of each, framed by a JSON line rather than packed into a tar:
 
@@ -315,7 +315,7 @@ POST   /api/runners                    register one   {name, labels?, allow}    
 DELETE /api/runners/:name              remove one                                         (the same, over its allow)
 ```
 
-`POST` returns `{name, token, labels, allow}`, and the token once: it is what `feorge runner run --token` presents, and only its hash is kept. `allow` is a list of globs saying which repositories the runner serves and is required, since a runner with no allow list could take no job. `labels` defaults to `["ubuntu-latest"]`.
+`POST` returns `{name, token, labels, allow}`, and the token once: it is what `mochi runner run --token` presents, and only its hash is kept. `allow` is a list of globs saying which repositories the runner serves and is required, since a runner with no allow list could take no job. `labels` defaults to `["ubuntu-latest"]`.
 
 Registration takes ownership of every collection the `allow` globs name (a site admin covers any), because a runner executes repository-controlled code on its own machine: granting one a repository is granting that repository's authors the runner. Removing a runner takes the same standing over the allow list it was registered with. A name that is already registered is 409.
 
@@ -323,7 +323,7 @@ Registration takes ownership of every collection the `allow` globs name (a site 
 
 Each runner in that listing carries `lastSeen` (when it last spoke to the vault, or `null` if not since the vault started: it is kept in memory, so a restart forgets it and a live runner re-announces within one poll) and `running` (the job it holds, or `null`). Beside them, `queued` lists the jobs waiting for a runner with the `runs-on` labels each is asking for, which is what answers "why has this run not started".
 
-`/api/runner/*`, singular, is a private protocol between a vault and the runners it hands jobs to, authenticated by a runner token rather than a user's. It is not an interface to program against and is not documented here. [Workflows](workflows.md) describes what a runner is and does. `/api/manual/*` is the same kind of thing for `feorge job run`, the process behind a pasted exec command, and is private for the same reason.
+`/api/runner/*`, singular, is a private protocol between a vault and the runners it hands jobs to, authenticated by a runner token rather than a user's. It is not an interface to program against and is not documented here. [Workflows](workflows.md) describes what a runner is and does. `/api/manual/*` is the same kind of thing for `mochi job run`, the process behind a pasted exec command, and is private for the same reason.
 
 ## Rate limits
 

@@ -9,7 +9,7 @@ import { Externals, defaultExternalsDir } from './externals';
 import { JobResult, defaultWorkDir, runJob } from './job';
 import { startWakeListener } from './wake';
 
-// `feorge runner run`: acquire a job, execute it, report back, repeat. The
+// `mochi runner run`: acquire a job, execute it, report back, repeat. The
 // transport is plain HTTP with a long poll, so it works through any proxy
 // that passes ordinary requests, and a runner behind NAT needs no inbound
 // connectivity at all.
@@ -54,7 +54,7 @@ export const DEFAULT_IMAGES: Record<string, string> = {
 
 export function configPath(): string {
   const base = process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config');
-  return path.join(base, 'feorge', 'runner.json');
+  return path.join(base, 'mochi', 'runner.json');
 }
 
 export function loadRunnerConfig(file = configPath()): RunnerConfig | null {
@@ -76,7 +76,7 @@ export function saveRunnerConfig(config: RunnerConfig, file = configPath()): voi
 
 // The per-job wire client: logs, heartbeats, progress, and the final report.
 // It needs a host and a bearer token and nothing else about its caller, which
-// is what lets a manual session (`feorge job run`) drive it with a session
+// is what lets a manual session (`mochi job run`) drive it with a session
 // token exactly as the long-lived runner drives it with a runner token.
 export class JobClient {
   private buffer: { s: number; t: string; l: string }[] = [];
@@ -96,7 +96,7 @@ export class JobClient {
   private headers(extra: Record<string, string> = {}): Record<string, string> {
     return {
       authorization: `Bearer ${this.runner.token}`,
-      'x-feorge-lease': this.spec.lease,
+      'x-mochi-lease': this.spec.lease,
       ...extra,
     };
   }
@@ -315,7 +315,7 @@ export class Runner {
           },
         })
       : null;
-    console.log(`feorge runner ${identity.name} ready`);
+    console.log(`mochi runner ${identity.name} ready`);
     console.log(`  server:  ${this.host}`);
     console.log(`  engine:  ${containerEngine()} ${docker}`);
     console.log(`  workdir: ${this.workDir}`);

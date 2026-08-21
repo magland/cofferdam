@@ -32,8 +32,8 @@ export function isManualJob(runsOn: string[]): boolean {
 /** How long a minted command waits to be pasted before it dies. */
 export const MINT_TTL_MS = 15 * 60 * 1000;
 
-const MINT_PREFIX = 'feorge_run_';
-const SESSION_PREFIX = 'feorge_manual_';
+const MINT_PREFIX = 'mochi_run_';
+const SESSION_PREFIX = 'mochi_manual_';
 
 export interface ManualGrant {
   /** Short id; the lease's runner name is derived from it as `manual:<id>`. */

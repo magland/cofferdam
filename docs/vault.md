@@ -16,10 +16,10 @@ A vault is a plain directory. Its collections are in `collections/`, and a colle
     alice/
       collection.json           (the collection's explicit owners; created when one is added)
       repos/
-        .feorge.git/         (the collection's profile README; see below)
+        .mochi.git/         (the collection's profile README; see below)
         hello-numerics.git/     (bare repository)
         hello-numerics.runs/    (its workflow runs and logs)
-        webapp.git/             (holds feorge.json: visibility and collaborators)
+        webapp.git/             (holds mochi.json: visibility and collaborators)
         webapp.site/            (static site for webapp)
         webapp.issues/          (its issues, one directory each)
         webapp.pulls/           (its pull requests, one directory each)
@@ -47,14 +47,14 @@ Authorization is GitHub-shaped: roles on repositories, owners on collections, an
   { "owners": ["bob"] }
   ```
 
-  The file sits beside `repos/`, so it moves with the collection when the collection is renamed. Owners and site admins edit the list, on the collection's settings page, with `feorge collection owner add`, or over the API.
-- **A repository may list collaborators**, each with a role, in `feorge.json` inside the bare repository, beside git's own `config`. The same file carries the private flag:
+  The file sits beside `repos/`, so it moves with the collection when the collection is renamed. Owners and site admins edit the list, on the collection's settings page, with `mochi collection owner add`, or over the API.
+- **A repository may list collaborators**, each with a role, in `mochi.json` inside the bare repository, beside git's own `config`. The same file carries the private flag:
 
   ```json
   { "private": true, "collaborators": { "carol": "read", "dave": "write" } }
   ```
 
-  The roles order as `read` < `write` < `admin`. *read* may see a private repository; *write* may also push, edit files in the browser, and manage branches, tags, issues, and releases; *admin* may also change the repository's settings, visibility, and collaborators, rename it, and delete it. A repository with no `feorge.json` is public with no collaborators, which is what every repository was before the file existed. Collaborators are managed on the repository's settings page, with `feorge collab add`, or over the API.
+  The roles order as `read` < `write` < `admin`. *read* may see a private repository; *write* may also push, edit files in the browser, and manage branches, tags, issues, and releases; *admin* may also change the repository's settings, visibility, and collaborators, rename it, and delete it. A repository with no `mochi.json` is public with no collaborators, which is what every repository was before the file existed. Collaborators are managed on the repository's settings page, with `mochi collab add`, or over the API.
 - **A site admin** (`"siteAdmin": true` on the user in `vault.json`) holds the admin role everywhere and manages users, runners, and the vault's own settings. The `owner` user a fresh vault creates is one.
 
 Anyone may read a public repository, signed in or not. A private repository is visible to its collaborators, the collection's owners, and site admins, and to nobody else: everyone else gets the same 404 an absent repository gets, on the web, over git, in the API, and in every listing, so a private name proves nothing by existing. A repository is made private at creation (`--private`, or the checkbox on the new-repository form) or from its settings page later; push-to-create always creates public repositories, since a push has no way to carry the flag. A fork of a private repository starts private. One deliberate exception: a private repository's published site stays public, like GitHub Pages on a private repository, because the sites hostname serves without sessions; withdraw the site directory if the site must go too.
@@ -67,16 +67,16 @@ A token may be minted with a scope, globs over `collection/repo`, which narrows 
 
 ## A collection's profile README
 
-A collection page is a list of repository names, which says what a collection holds but not what it is for. A collection can introduce itself instead: a repository named `.feorge` in the collection, holding `profile/README.md`, has that file rendered above the listing. GitHub reads an organization's profile out of a `.github` repository the same way, and the convention is borrowed rather than invented so that the file needs no new place in the vault and no new way to edit it.
+A collection page is a list of repository names, which says what a collection holds but not what it is for. A collection can introduce itself instead: a repository named `.mochi` in the collection, holding `profile/README.md`, has that file rendered above the listing. GitHub reads an organization's profile out of a `.github` repository the same way, and the convention is borrowed rather than invented so that the file needs no new place in the vault and no new way to edit it.
 
 ```
 collections/
   alice/
     repos/
-      .feorge.git/       ->  profile/README.md is shown on /alice
+      .mochi.git/       ->  profile/README.md is shown on /alice
 ```
 
-The repository is an ordinary one. It is created by pushing to `/alice/.feorge` or from the new-repository form, it appears in the collection's listing like any other, its own root `README.md` shows on its own page rather than on the collection's, and the write role on `alice/.feorge` is what decides who may change the profile. The file is read from the repository's default branch, so a change to it can be reviewed as a pull request first. Relative links and images in it resolve against `profile/`, as they do in any other README the interface renders, and `#12` still points at that repository's issue 12. Making the `.feorge` repository private hides the profile from anyone who could not read the repository, along with the repository itself.
+The repository is an ordinary one. It is created by pushing to `/alice/.mochi` or from the new-repository form, it appears in the collection's listing like any other, its own root `README.md` shows on its own page rather than on the collection's, and the write role on `alice/.mochi` is what decides who may change the profile. The file is read from the repository's default branch, so a change to it can be reviewed as a pull request first. Relative links and images in it resolve against `profile/`, as they do in any other README the interface renders, and `#12` still points at that repository's issue 12. Making the `.mochi` repository private hides the profile from anyone who could not read the repository, along with the repository itself.
 
 Nothing is required. A collection without the repository, without the file, or with the file empty renders exactly as it did before, and a viewer who could administer the collection is offered a link to write one. Names beginning with a dot are otherwise unusual in a vault, and a leading dot is allowed for a repository alone: a collection or a user may not begin with one.
 
@@ -108,7 +108,7 @@ One deliberate asymmetry: repositories created by push set `receive.denyDeletes`
 
 A repository is renamed, or moved to another collection, from its own Settings page; the two are one operation, since both are a directory rename. Renaming in place takes the admin role on the repository; moving it to another collection is also a creation over there, so that half additionally takes permission to create in the destination collection, exactly as a transfer does on GitHub. A collection is renamed from a Settings page of its own, at `/<collection>/settings`, reached from the button beside its name; that takes ownership of the collection, and the owners file moves with it, so the owners after the rename are the owners before it. Implicit ownership follows from the name and would not survive, so when the collection being renamed is somebody's namespace, that user is written into the explicit owners on the way rather than being locked out of what is still theirs. Nothing is confirmed by typing the name, as deletion is: a rename that was a mistake is undone by renaming it back.
 
-Both are also operations of the CLI and the JSON API, as everything in the web interface is: `feorge repo rename`, `feorge collection rename`, and the `POST /api/repos/:c/:r/rename` and `POST /api/collections/:name/rename` routes behind them. Neither takes a `--yes` or a confirmation, for the reason above.
+Both are also operations of the CLI and the JSON API, as everything in the web interface is: `mochi repo rename`, `mochi collection rename`, and the `POST /api/repos/:c/:r/rename` and `POST /api/collections/:name/rename` routes behind them. Neither takes a `--yes` or a confirmation, for the reason above.
 
 Everything a repository or a collection has accumulated moves with it, including sites, workflow runs, issues, pull requests, releases, and Git LFS objects. Collaborators travel inside the repository and owners inside the collection, so roles survive a rename untouched. One thing does not: token scopes in `vault.json` still name the old collection, so a scope that covered `oldname/*` covers nothing after the rename and has to be granted again under the new name; the page says so before the rename is made. Rewriting scopes automatically was considered and not done, since a glob is a statement about what a user may reach rather than a pointer to a directory, and quietly widening one is worse than leaving it to be granted deliberately.
 

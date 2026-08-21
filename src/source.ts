@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-// Where an import reads from. `feorge import` accepts an https git URL, an
+// Where an import reads from. `mochi import` accepts an https git URL, an
 // ssh git URL, `owner/repo` as shorthand for GitHub, or a directory on this
 // machine, which is the case for a repository that only exists as a local clone.
 //

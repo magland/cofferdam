@@ -7,7 +7,7 @@ import { containerEngine } from './docker';
 import { Externals, defaultExternalsDir } from './externals';
 import { defaultWorkDir } from './job';
 
-// `feorge job run`: the process behind a pasted command. It redeems the
+// `mochi job run`: the process behind a pasted command. It redeems the
 // command for a session, then takes the run's manual jobs one at a time,
 // showing each job's steps and asking before executing anything, and exits
 // when the run has nothing left for it. Execution itself is the runner's own
@@ -131,7 +131,7 @@ export class ManualSession {
         `${this.opts.host}/api/manual/jobs/${encodeURIComponent(a.collection)}/${encodeURIComponent(a.repo)}/${a.run}/${encodeURIComponent(a.job)}/release`,
         {
           method: 'POST',
-          headers: { authorization: `Bearer ${this.session}`, 'x-feorge-lease': spec.lease },
+          headers: { authorization: `Bearer ${this.session}`, 'x-mochi-lease': spec.lease },
         }
       );
     } catch {
@@ -179,7 +179,7 @@ export class ManualSession {
     this.redeemed = redeemed;
     this.session = redeemed.sessionToken;
 
-    console.log(`feorge job run: ${redeemed.collection}/${redeemed.repo} run #${redeemed.run.number} "${redeemed.run.workflowName}"`);
+    console.log(`mochi job run: ${redeemed.collection}/${redeemed.repo} run #${redeemed.run.number} "${redeemed.run.workflowName}"`);
     console.log(`  server:  ${this.opts.host}`);
     console.log(`  commit:  ${redeemed.run.sha.slice(0, 8)} on ${redeemed.run.refName}`);
     console.log(`  workdir: ${this.workDir}`);

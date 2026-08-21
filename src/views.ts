@@ -161,7 +161,7 @@ function jumpDialog(jump: JumpContext | null): Html {
  */
 function buildStamp(): Html {
   const build = buildInfo();
-  const parts: Html[] = [html`feorge <span class="mono">${build.version}</span>`];
+  const parts: Html[] = [html`Mochi Forge <span class="mono">${build.version}</span>`];
   if (build.commit) parts.push(html`build <span class="mono">${build.commit}</span>`);
   const iso = build.builtAt;
   const built = iso ? new Date(iso) : null;
@@ -535,7 +535,7 @@ ${
     // visitor's, so the path is shown to someone who could act on it.
     viewerIsAdmin(viewer) ? html`<p class="muted small vault-note">Serving ${rootLabel}</p>` : ''
   }`;
-  return layout('feorge', content, { viewer, path: '/' });
+  return layout('Mochi Forge', content, { viewer, path: '/' });
 }
 
 /**
@@ -570,10 +570,10 @@ by the operator's own runners, and a static site served from the repository at
 no secrets, so jobs are limited to work that needs none, such as building and publishing a site.</p>
 
 <h2>The software</h2>
-<p>This vault runs <a href="https://github.com/magland/feorge">feorge</a>, an open-source forge: one process, no
+<p>This vault runs <a href="https://github.com/magland/mochi">Mochi Forge</a>, an open-source forge: one process, no
 database, every repository an ordinary bare git repository on the operator's own disk.</p>
 </div>`;
-  return layout('About - feorge', content, { viewer, path: '/about' });
+  return layout('About - Mochi Forge', content, { viewer, path: '/about' });
 }
 
 export function collectionPage(
@@ -584,7 +584,7 @@ export function collectionPage(
   // Whether the viewer may reach the collection's settings, which is the only
   // way to the rename. A control nobody can use is not shown, as elsewhere.
   canAdminCollection: boolean,
-  // The collection's profile README, read from its .feorge repository; see
+  // The collection's profile README, read from its .mochi repository; see
   // src/profile.ts. Rendered above the listing, since it is what the page is
   // for once a collection has one.
   profile: CollectionProfile | null = null
@@ -619,7 +619,7 @@ export function collectionPage(
     : profile && canAdminCollection
       ? html`<p class="muted small profile-hint">This collection has no profile README. <a href="${
           profile.addUrl
-        }">Add one</a> at <span class="mono">.feorge/profile/README.md</span> to introduce it here.</p>`
+        }">Add one</a> at <span class="mono">.mochi/profile/README.md</span> to introduce it here.</p>`
       : '';
   const content = html`<div class="page-head"><h1 class="with-avatar">${avatar(collection, 28, 'square')}${collection}</h1><span class="right-group">${settingsBtn}${newBtn}</span></div>${profileBox}${body}`;
   return layout(collection, content, {
@@ -1358,7 +1358,7 @@ export function emptyRepoPage(ctx: RepoCtx): string {
   <div class="box-header">${icon('repo')}Quick setup, if you have done this before</div>
   <div class="box-body">
     <div class="cmd-row"><code>${url}</code>${copyButton()}</div>
-    <p class="muted">Cloning is anonymous. Pushing asks for your username and a token; <span class="mono">feorge login</span> hands the token to git once so it stops asking.</p>
+    <p class="muted">Cloning is anonymous. Pushing asks for your username and a token; <span class="mono">mochi login</span> hands the token to git once so it stops asking.</p>
     ${readmeBtn}
   </div>
 </div>

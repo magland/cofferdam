@@ -97,10 +97,10 @@ route. The response body is printed verbatim on stdout, whatever its type; a
 non-2xx status prints the body on stderr instead and exits non-zero, with the
 same exit codes every other command uses (4 for 404, 5 for 409).
 
-  feorge api repos/demo/proj/issues
-  feorge api repos/demo/proj/issues -X POST --field title=Bug --field 'body=It broke'
-  feorge api repos/demo/proj/issues/1/state -X POST --field state=closed
-  feorge api repos/demo/proj/contents/README.md --input patch.json -X PUT`,
+  mochi api repos/demo/proj/issues
+  mochi api repos/demo/proj/issues -X POST --field title=Bug --field 'body=It broke'
+  mochi api repos/demo/proj/issues/1/state -X POST --field state=closed
+  mochi api repos/demo/proj/contents/README.md --input patch.json -X PUT`,
   args: [{ name: 'path', required: true }],
   options: [...FIELD_OPTIONS, ...TARGET_OPTIONS],
   async run(inv) {

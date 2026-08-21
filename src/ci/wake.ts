@@ -53,14 +53,14 @@ interface Attempt {
 /**
  * Send one wake request, and say what happened.
  *
- * Exported because both the timer below and `feorge runner wake` want the
+ * Exported because both the timer below and `mochi runner wake` want the
  * same request with the same headers; a wake tested by hand that differed
  * from the one the vault sends would test the wrong thing.
  */
 export async function sendWake(wake: { url: string; secret: string }, timeoutMs = REQUEST_TIMEOUT_MS): Promise<void> {
   const res = await fetch(wake.url, {
     method: 'POST',
-    headers: { 'x-feorge-wake': wake.secret, 'content-length': '0' },
+    headers: { 'x-mochi-wake': wake.secret, 'content-length': '0' },
     signal: AbortSignal.timeout(timeoutMs),
   });
   // A runner that answers 401 is running somebody else's secret, and one that

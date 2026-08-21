@@ -9,7 +9,7 @@ import { findRepo, siteDir } from './scan';
 import { isUnderSitesHost, parseSiteHost, siteHostFor } from './siteshost';
 import { send404, wildcard } from './web';
 
-// Serving a repository's static site. This is the only place in feorge where
+// Serving a repository's static site. This is the only place in mochi where
 // bytes supplied by someone other than the server are returned as HTML, so it
 // is also the only place that needs to think about what that HTML is allowed to
 // do. Raw blob views and LFS downloads are sandboxed where they are served

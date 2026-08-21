@@ -6,10 +6,10 @@ import { api, apiFailed, apiTry, remoteTarget } from './cli-api';
 import { isValidName } from './scan';
 import { parseSource } from './source';
 
-// `feorge import`: bring an existing repository into a vault. This runs on
+// `mochi import`: bring an existing repository into a vault. This runs on
 // the operator's machine and not on the server, which is the same division the
 // import page has always described: their own git credentials read
-// the source, their feorge token writes the vault, and push-to-create makes
+// the source, their mochi token writes the vault, and push-to-create makes
 // the repository. What changes here is only who types the commands. A bare
 // clone into a temporary directory, a mirror push at the vault, and the
 // temporary directory is removed again.
@@ -55,7 +55,7 @@ function parseImportArgs(args: string[], usage: () => never): ImportArgs {
       positional++;
     } else if (positional === 1) {
       // The destination is written the way a repository is addressed
-      // everywhere else in feorge: `collection` or `collection/repo`.
+      // everywhere else in mochi: `collection` or `collection/repo`.
       const slash = a.indexOf('/');
       if (slash === -1) out.collection = a;
       else {
@@ -87,11 +87,11 @@ function git(args: string[], env?: NodeJS.ProcessEnv): Promise<number> {
 // machine could read it. The empty helper first clears the list, so the answer
 // comes from here and nowhere else, and no prompt can appear.
 function pushEnv(username: string, token: string): NodeJS.ProcessEnv {
-  return { ...process.env, FEORGE_USER: username, FEORGE_TOKEN: token, GIT_TERMINAL_PROMPT: '0' };
+  return { ...process.env, MOCHI_USER: username, MOCHI_TOKEN: token, GIT_TERMINAL_PROMPT: '0' };
 }
 
 const CREDENTIAL_HELPER =
-  `!f() { test "$1" = get && printf 'username=%s\\npassword=%s\\n' "$FEORGE_USER" "$FEORGE_TOKEN"; }; f`;
+  `!f() { test "$1" = get && printf 'username=%s\\npassword=%s\\n' "$MOCHI_USER" "$MOCHI_TOKEN"; }; f`;
 
 function pushArgs(dir: string): string[] {
   return ['-C', dir, '-c', 'credential.helper=', '-c', `credential.helper=${CREDENTIAL_HELPER}`];
@@ -109,7 +109,7 @@ async function githubDescription(gh: { owner: string; repo: string }): Promise<s
   const url = `https://api.github.com/repos/${encodeURIComponent(gh.owner)}/${encodeURIComponent(gh.repo)}`;
   try {
     const resp = await fetch(url, {
-      headers: { accept: 'application/vnd.github+json', 'user-agent': 'feorge-import' },
+      headers: { accept: 'application/vnd.github+json', 'user-agent': 'mochi-import' },
       signal: AbortSignal.timeout(10000),
     });
     if (!resp.ok) return null;
@@ -124,8 +124,8 @@ async function githubDescription(gh: { owner: string; repo: string }): Promise<s
 export async function importCmd(args: string[], usage: () => never): Promise<void> {
   const a = parseImportArgs(args, usage);
   if (!a.src) {
-    console.error('Usage: feorge import <source> <collection>[/<name>]');
-    console.error("  e.g. feorge import https://github.com/octocat/Hello-World mycollection");
+    console.error('Usage: mochi import <source> <collection>[/<name>]');
+    console.error("  e.g. mochi import https://github.com/octocat/Hello-World mycollection");
     process.exit(1);
   }
   const source = parseSource(a.src);
@@ -138,7 +138,7 @@ export async function importCmd(args: string[], usage: () => never): Promise<voi
   const name = a.name ?? source.name;
   if (!collection) {
     console.error(`Which collection should ${name} go into?`);
-    console.error(`  feorge import ${a.src} mycollection`);
+    console.error(`  mochi import ${a.src} mycollection`);
     process.exit(1);
   }
   if (!isValidName(collection) || !isValidName(name)) {
@@ -166,14 +166,14 @@ export async function importCmd(args: string[], usage: () => never): Promise<voi
     console.error(`${collection}/${name} already exists on ${target.host}.`);
     console.error('A mirror push would replace its branches and tags, so this stops here. Import');
     console.error('under another name,');
-    console.error(`  feorge import ${a.src} ${collection}/another-name`);
+    console.error(`  mochi import ${a.src} ${collection}/another-name`);
     console.error('or delete the existing repository first, from its settings page.');
     process.exit(1);
   }
   if (!existing.ok && existing.status !== 404) apiFailed(target, listing, existing);
 
   const dest = `${target.host}/${encodeURIComponent(collection)}/${encodeURIComponent(name)}`;
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'feorge-import-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mochi-import-'));
   const cleanup = () => {
     try {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -265,7 +265,7 @@ function parseCollectionArgs(args: string[], usage: () => never): CollectionArgs
 export async function collectionAddCmd(args: string[], usage: () => never): Promise<void> {
   const a = parseCollectionArgs(args, usage);
   if (!a.name) {
-    console.error('Usage: feorge collection add <name>');
+    console.error('Usage: mochi collection add <name>');
     process.exit(1);
   }
   const target = await remoteTarget(a);
@@ -274,7 +274,7 @@ export async function collectionAddCmd(args: string[], usage: () => never): Prom
   console.log(`  ${target.host}/${encodeURIComponent(String(data.name))}`);
   console.log('');
   console.log('It has no repositories yet. Put one in it with');
-  console.log(`  feorge import https://github.com/owner/repo ${data.name}`);
+  console.log(`  mochi import https://github.com/owner/repo ${data.name}`);
 }
 
 export async function collectionListCmd(args: string[], usage: () => never): Promise<void> {

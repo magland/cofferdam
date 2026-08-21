@@ -11,7 +11,7 @@ import { isUnderSitesHost, parseSiteHost } from './siteshost';
 //
 // A host that bills for egress and does not cap it -- Fly is the one this was
 // written for -- turns a popular repository, a crawler, or a badly written CI
-// loop into a bill nobody chose. Nothing else in feorge bounds it: the rate
+// loop into a bill nobody chose. Nothing else in mochi bounds it: the rate
 // limiter in src/limit.ts counts requests, and a request for a 2 GB release
 // asset costs the same one request as a request for the front page.
 //

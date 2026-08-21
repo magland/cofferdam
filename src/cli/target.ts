@@ -12,13 +12,13 @@ export const TARGET_OPTIONS: OptionSpec[] = [
     name: 'host',
     type: 'string',
     value: '<url>',
-    summary: 'Vault URL, ahead of FEORGE_HOST and the last login',
+    summary: 'Vault URL, ahead of MOCHI_HOST and the last login',
   },
   {
     name: 'token',
     type: 'string',
     value: '<t>',
-    summary: "Token, ahead of FEORGE_TOKEN and git's credential store",
+    summary: "Token, ahead of MOCHI_TOKEN and git's credential store",
   },
   {
     name: 'token-stdin',
@@ -32,7 +32,7 @@ export const TARGET_OPTIONS: OptionSpec[] = [
  * the login.
  *
  * `opts.host` is a fallback a command can supply from state of its own, and sits
- * between the environment and the login: `feorge backup` records the vault a
+ * between the environment and the login: `mochi backup` records the vault a
  * backup directory is a backup of, and that has to outrank the last login,
  * because a machine that has since logged in to another vault must not quietly
  * start filling one backup directory from a different vault.
@@ -47,6 +47,6 @@ export async function targetFrom(inv: Invocation, opts: { host?: string | null }
     token = (await readStdin()).trim();
     if (!token) throw new CliError('--token-stdin was given but stdin was empty.', EXIT_AUTH);
   }
-  const host = inv.str('host') ?? process.env.FEORGE_HOST?.trim() ?? opts.host ?? null;
+  const host = inv.str('host') ?? process.env.MOCHI_HOST?.trim() ?? opts.host ?? null;
   return await remoteTarget({ host, token });
 }

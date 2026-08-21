@@ -3,7 +3,7 @@ import { Invocation, OptionSpec } from './parse';
 
 // The output contract, which a program depends on more than a person does:
 // --json puts a single JSON value on stdout and nothing else, and every
-// diagnostic goes to stderr, so `feorge issue list --json | jq` never has to
+// diagnostic goes to stderr, so `mochi issue list --json | jq` never has to
 // filter anything out.
 
 export const JSON_OPTION: OptionSpec = {

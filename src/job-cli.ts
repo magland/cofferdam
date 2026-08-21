@@ -2,7 +2,7 @@ import * as readline from 'readline';
 import { probeEngine, setContainerEngine } from './runner/docker';
 import { ManualSession } from './runner/manual-run';
 
-// `feorge job run <vault-url> <token>`: the command a run page mints for its
+// `mochi job run <vault-url> <token>`: the command a run page mints for its
 // manual jobs, pasted on whatever machine should execute them. Parsing lives
 // here in the style of runner-cli.ts; the session itself is
 // src/runner/manual-run.ts, and execution below that is the runner's own.
@@ -128,7 +128,7 @@ export async function chooseEngine(flag: 'docker' | 'podman' | null, interactive
 export async function jobRunCmd(args: string[], usage: () => never): Promise<void> {
   const a = parseArgs(args, usage);
   if (!a.url || !a.token) {
-    console.error('Usage: feorge job run <vault-url> <token>   (both come from the run page, minted together)');
+    console.error('Usage: mochi job run <vault-url> <token>   (both come from the run page, minted together)');
     process.exit(1);
   }
   const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;

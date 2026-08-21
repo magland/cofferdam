@@ -29,7 +29,7 @@ import { registerCiRunApi } from './api/ci';
 import { registerReleaseApi } from './api/releases';
 import { registerWriteApi } from './api/write';
 
-// The bearer-token JSON API used by the feorge CLI. Only Bearer tokens are
+// The bearer-token JSON API used by the mochi CLI. Only Bearer tokens are
 // accepted; session cookies never authorize API calls.
 
 export function registerApi(
@@ -61,7 +61,7 @@ export function registerApi(
   if (engine) registerCiRunApi(app, root, authLimiter, engine);
   registerReleaseApi(app, root, authLimiter);
   registerAdminApi(app, root, authLimiter, lfs, engine, egress);
-  // Reading a whole vault out over HTTP, for `feorge backup`. Admin over the
+  // Reading a whole vault out over HTTP, for `mochi backup`. Admin over the
   // whole vault, and behind the same gate a file listing holds.
   registerBackupApi(app, root, authLimiter, gates);
 
@@ -102,8 +102,8 @@ export function registerApi(
     });
   });
 
-  // Collections, for the CLI. `feorge import` asks what is already in a
-  // collection before it pushes, and `feorge collection add` makes an empty
+  // Collections, for the CLI. `mochi import` asks what is already in a
+  // collection before it pushes, and `mochi collection add` makes an empty
   // one, which is the case a push cannot cover: pushing creates the collection
   // it lands in, so a collection with nothing in it yet has to be asked for.
   app.get('/api/collections', (req, res) => {
@@ -274,7 +274,7 @@ export function registerApi(
     }
     const existing = state.vault.users[username];
     if (existing && body.siteAdmin !== undefined) {
-      apiError(res, 409, `user ${username} already exists; use 'feorge user grant' to change the site-admin bit`);
+      apiError(res, 409, `user ${username} already exists; use 'mochi user grant' to change the site-admin bit`);
       return;
     }
     const result = addUserToken(root, username, {

@@ -1,4 +1,4 @@
-# Publishes the container image that `feorge deploy fly` deploys.
+# Publishes the container image that `mochi deploy fly` deploys.
 #
 # Two kinds of event produce an image. A version tag, which the publish
 # workflow creates after a successful npm release, is tagged with that version
@@ -27,7 +27,7 @@
 #
 # One thing this workflow cannot do for you: a newly created GitHub package is
 # private, and Fly pulls anonymously. After the first successful run, set the
-# package to public under Packages > feorge > Package settings, or deploys
+# package to public under Packages > mochi > Package settings, or deploys
 # will fail to pull the image.
 name: image
 
@@ -82,7 +82,7 @@ jobs:
       - name: Work out the tags
         id: tags
         run: |
-          image=ghcr.io/${{ github.repository_owner }}/feorge
+          image=ghcr.io/${{ github.repository_owner }}/mochi
           # The runner is a second image from the same commit and carries the
           # same tags, because a runner and the vault it serves speak one
           # protocol and are released together.
@@ -102,7 +102,7 @@ jobs:
 
       # The tag must match the version in package.json, since that version is
       # what the CLI asks the registry for. A mismatch would publish an image
-      # under a tag no `feorge deploy` will ever request.
+      # under a tag no `mochi deploy` will ever request.
       - name: Check the tag against package.json
         if: github.ref_type == 'tag'
         run: |
@@ -129,8 +129,8 @@ jobs:
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           build-args: |
-            FEORGE_BUILD_COMMIT=${{ steps.stamp.outputs.commit }}
-            FEORGE_BUILD_DATE=${{ steps.stamp.outputs.date }}
+            MOCHI_BUILD_COMMIT=${{ steps.stamp.outputs.commit }}
+            MOCHI_BUILD_DATE=${{ steps.stamp.outputs.date }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -142,8 +142,8 @@ jobs:
           push: true
           tags: ${{ steps.tags.outputs.runner-tags }}
           build-args: |
-            FEORGE_BUILD_COMMIT=${{ steps.stamp.outputs.commit }}
-            FEORGE_BUILD_DATE=${{ steps.stamp.outputs.date }}
+            MOCHI_BUILD_COMMIT=${{ steps.stamp.outputs.commit }}
+            MOCHI_BUILD_DATE=${{ steps.stamp.outputs.date }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -156,7 +156,7 @@ jobs:
         run: |
           tag=$(echo "${{ steps.tags.outputs.runner-tags }}" | cut -d, -f1)
           docker run -d --privileged --name runnercheck \
-            -e FEORGE_HOST=http://127.0.0.1:1 "$tag"
+            -e MOCHI_HOST=http://127.0.0.1:1 "$tag"
           for _ in $(seq 1 90); do
             docker logs runnercheck 2>&1 | grep -q 'No runner credentials' && break
             sleep 1
@@ -190,13 +190,13 @@ jobs:
           docker rm -f check >/dev/null
           [ "$code" = "200" ] || { echo "the image did not answer 200"; exit 1; }
 
-      # The path `feorge deploy` relies on: the server adopts an owner token
+      # The path `mochi deploy` relies on: the server adopts an owner token
       # supplied in the environment, rather than minting one and printing it.
       - name: Check the owner token can be supplied to the image
         run: |
           tag=$(echo "${{ steps.tags.outputs.tags }}" | cut -d, -f1)
-          token="feorge_$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-          docker run -d --name preset -p 3001:3000 -e "FEORGE_OWNER_TOKEN=$token" "$tag"
+          token="mochi_$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          docker run -d --name preset -p 3001:3000 -e "MOCHI_OWNER_TOKEN=$token" "$tag"
           for _ in $(seq 1 60); do
             curl -fsS -o /dev/null http://127.0.0.1:3001/ && break
             sleep 1
@@ -228,7 +228,7 @@ jobs:
   # a live vault, which is not what dispatching a rebuild means.
   deploy:
     needs: image
-    if: github.repository == 'magland/feorge' && github.event_name != 'workflow_dispatch'
+    if: github.repository == 'magland/mochi' && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:

@@ -188,7 +188,7 @@ a caller can tell "it does not apply" from "it went wrong".
 Whether it would apply can be asked without merging anything, which is the read
 worth making first:
 
-  feorge api repos/<collection>/<repo>/pulls/<n>/merge`,
+  mochi api repos/<collection>/<repo>/pulls/<n>/merge`,
     args: [{ name: 'number', required: true }],
     options: [
       { name: 'squash', type: 'boolean', summary: 'One commit on the base rather than a merge commit' },
@@ -230,7 +230,7 @@ worth making first:
   {
     path: ['pr', 'checks'],
     summary: 'Workflow runs whose commit is this pull request head',
-    description: `feorge has no equivalent of a check suite or a commit status, so there is
+    description: `mochi has no equivalent of a check suite or a commit status, so there is
 nothing behind this but the runs whose sha matches the pull request's head
 commit. That is what this reports, and it is worth knowing that is what it means.`,
     args: [{ name: 'number', required: true }],

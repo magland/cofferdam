@@ -225,7 +225,7 @@ function buildMarkdownIt(): MarkdownIt {
   // text rule has already swallowed these characters, which is the same
   // reason its own linkify works this way. Text inside a link is left alone,
   // so a reference written inside one does not try to nest a second.
-  md.core.ruler.push('feorge_refs', (state) => {
+  md.core.ruler.push('mochi_refs', (state) => {
     const opts = (state.env as RenderEnv).opts;
     if (!opts.issueBase && !opts.commitBase) return;
     for (const block of state.tokens) {

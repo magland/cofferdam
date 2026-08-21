@@ -210,9 +210,9 @@ refused rather than emptied.`,
       console.log(`themes: ${(data.themes as string[]).join(', ')}`);
       // Saying which of these a write can reach saves a caller discovering it by
       // being refused.
-      console.log('theme, ci, sites.host, and limits.egressGbPerDay can be set with `feorge config set`.');
+      console.log('theme, ci, sites.host, and limits.egressGbPerDay can be set with `mochi config set`.');
       console.log('network and the rest of limits are read once at startup: edit config.json in the vault and restart.');
-      console.log('`feorge api /api/egress` shows what has gone out today, per repository.');
+      console.log('`mochi api /api/egress` shows what has gone out today, per repository.');
     },
   },
   {

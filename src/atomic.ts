@@ -75,7 +75,7 @@ function sleepSync(ms: number): void {
  * against other requests.
  *
  * The state files at a vault's root are read-modify-written by whoever has the
- * directory: the server answering `POST /api/users`, and `feorge user add`
+ * directory: the server answering `POST /api/users`, and `mochi user add`
  * run against the same path from a shell. Both were reading, editing in memory,
  * and writing the whole file back, so two of them overlapping lost one edit
  * entirely - a user created and then gone, or a token revoked and then back.
@@ -111,7 +111,7 @@ export function withFileLock<T>(lockPath: string, fn: () => T): T {
         continue;
       }
       if (Date.now() > deadline) {
-        throw new Error(`timed out waiting for the lock at ${lockPath}; remove it if no feorge process is running`);
+        throw new Error(`timed out waiting for the lock at ${lockPath}; remove it if no mochi process is running`);
       }
       sleepSync(LOCK_RETRY_MS);
     }

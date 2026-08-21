@@ -8,9 +8,9 @@ import { CliError, EXIT_USAGE, setJsonErrors } from './exit';
 //
 // Generated help is the point rather than a nicety. A single dump of every
 // command is unreadable at seventy commands, and the reader is frequently a
-// program with a context window: `feorge --help` lists groups, `feorge
-// issue --help` lists that group, and `feorge issue create --help` lists one
-// command's options. `feorge commands --json` dumps the whole registry for a
+// program with a context window: `mochi --help` lists groups, `mochi
+// issue --help` lists that group, and `mochi issue create --help` lists one
+// command's options. `mochi commands --json` dumps the whole registry for a
 // caller that would rather not read prose at all.
 
 export type OptionType = 'string' | 'boolean' | 'int' | 'string[]' | 'string?';
@@ -54,7 +54,7 @@ export interface Command {
   /** e.g. ['issue', 'create']. A one-element path is a top-level command. */
   path: string[];
   summary: string;
-  /** Longer help, shown by `feorge <command> --help`. */
+  /** Longer help, shown by `mochi <command> --help`. */
   description?: string;
   options?: OptionSpec[];
   args?: ArgSpec[];
@@ -175,7 +175,7 @@ function parseOptions(cmd: Command, argv: string[]): { values: Map<string, Value
         const near = nearest(name, names);
         usageError(
           `unknown option --${name} for '${cmd.path.join(' ')}'` +
-            (near ? `; did you mean --${near}?` : `. Run 'feorge ${cmd.path.join(' ')} --help'.`)
+            (near ? `; did you mean --${near}?` : `. Run 'mochi ${cmd.path.join(' ')} --help'.`)
         );
       }
       if (spec.type === 'boolean') {
@@ -194,7 +194,7 @@ function parseOptions(cmd: Command, argv: string[]): { values: Map<string, Value
     // A lone '-' is a positional: several options take it to mean stdin.
     if (a.startsWith('-') && a.length > 1) {
       const spec = findShort(cmd, a.slice(1));
-      if (!spec) usageError(`unknown option ${a} for '${cmd.path.join(' ')}'. Run 'feorge ${cmd.path.join(' ')} --help'.`);
+      if (!spec) usageError(`unknown option ${a} for '${cmd.path.join(' ')}'. Run 'mochi ${cmd.path.join(' ')} --help'.`);
       if (spec.type === 'boolean') values.set(spec.name, true);
       else i = take(spec, undefined, argv, i);
       continue;
@@ -208,11 +208,11 @@ function checkArgs(cmd: Command, args: string[]): void {
   const specs = cmd.args ?? [];
   const required = specs.filter((s) => s.required).length;
   if (args.length < required) {
-    usageError(`'feorge ${cmd.path.join(' ')}' needs ${usageLine(cmd)}`);
+    usageError(`'mochi ${cmd.path.join(' ')}' needs ${usageLine(cmd)}`);
   }
   const variadic = specs.some((s) => s.variadic);
   if (!variadic && args.length > specs.length) {
-    usageError(`unexpected argument '${args[specs.length]}' to 'feorge ${cmd.path.join(' ')}'`);
+    usageError(`unexpected argument '${args[specs.length]}' to 'mochi ${cmd.path.join(' ')}'`);
   }
 }
 
@@ -372,7 +372,7 @@ export async function dispatch(cli: Cli, argv: string[]): Promise<void> {
       const sub = argv[1];
       if (sub === undefined || HELP_FLAGS.has(sub)) {
         process.stdout.write(groupHelp(cli, head));
-        if (sub === undefined) throw new CliError(`'feorge ${head}' needs a command: ${subs.join(', ')}`, EXIT_USAGE);
+        if (sub === undefined) throw new CliError(`'mochi ${head}' needs a command: ${subs.join(', ')}`, EXIT_USAGE);
         return;
       }
       // A group may nest twice ('user token list'), so a second word that names
@@ -380,21 +380,21 @@ export async function dispatch(cli: Cli, argv: string[]): Promise<void> {
       const deeper = under.filter((c) => c.path.length > 2 && c.path[1] === sub);
       if (deeper.length && argv[2] === undefined) {
         throw new CliError(
-          `'feorge ${head} ${sub}' needs a command: ${[...new Set(deeper.map((c) => c.path[2]))].join(', ')}`,
+          `'mochi ${head} ${sub}' needs a command: ${[...new Set(deeper.map((c) => c.path[2]))].join(', ')}`,
           EXIT_USAGE
         );
       }
       // What was typed is one word, so it is compared against single words.
       const near = nearest(sub, [...new Set(under.map((c) => c.path[1]))]);
       throw new CliError(
-        `unknown command 'feorge ${head} ${sub}'` + (near ? `; did you mean '${head} ${near}'?` : `. One of: ${subs.join(', ')}`),
+        `unknown command 'mochi ${head} ${sub}'` + (near ? `; did you mean '${head} ${near}'?` : `. One of: ${subs.join(', ')}`),
         EXIT_USAGE
       );
     }
     const tops = [...new Set([...cli.groups.map((g) => g.name), ...cli.commands.map((c) => c.path[0])])];
     const near = nearest(head, tops);
     throw new CliError(
-      `unknown command '${head}'` + (near ? `; did you mean '${near}'?` : ". Run 'feorge --help'."),
+      `unknown command '${head}'` + (near ? `; did you mean '${near}'?` : ". Run 'mochi --help'."),
       EXIT_USAGE
     );
   }

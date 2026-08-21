@@ -44,7 +44,7 @@ export function startWakeListener(opts: {
   onWake: () => void;
 }): Promise<WakeListener> {
   const server = http.createServer((req, res) => {
-    if (!secretOk(req.headers['x-feorge-wake'] as string | undefined, opts.secret)) {
+    if (!secretOk(req.headers['x-mochi-wake'] as string | undefined, opts.secret)) {
       res.writeHead(401).end();
       return;
     }

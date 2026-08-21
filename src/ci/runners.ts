@@ -103,7 +103,7 @@ function write(root: string, registry: RunnerRegistry): void {
 /**
  * Hold the registry's lock across a read, an edit, and the write back.
  *
- * `feorge runner add` from a shell and the same call through the API edit
+ * `mochi runner add` from a shell and the same call through the API edit
  * this file the same way, and either one overlapping the other loses a runner
  * outright. The cache is dropped on the way in because the decision it makes,
  * that a file with an unchanged mtime and size has unchanged contents, is one
@@ -122,7 +122,7 @@ export function hashRunnerToken(token: string): string {
 }
 
 function newRunnerToken(): string {
-  return 'feorge_runner_' + crypto.randomBytes(32).toString('hex');
+  return 'mochi_runner_' + crypto.randomBytes(32).toString('hex');
 }
 
 export function registerRunner(
@@ -180,7 +180,7 @@ export interface RunnerWake {
  * Point a runner's wake address somewhere, or clear it with null.
  *
  * Separate from registration because the two are learned at different times:
- * `feorge deploy fly runner` registers the runner before the app it will
+ * `mochi deploy fly runner` registers the runner before the app it will
  * run on exists, and only afterwards knows the URL that starts it. Returns
  * null if no runner by that name is registered.
  */

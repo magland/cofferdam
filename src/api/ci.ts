@@ -267,7 +267,7 @@ export function registerCiRunApi(app: Express, root: string, limiter: AuthLimite
       token: minted.token,
       expiresAt: minted.grant.expiresAt,
       expiresInMinutes: Math.round(MINT_TTL_MS / 60000),
-      command: `npx @magland/feorge@${packageVersion()} job run ${url} ${minted.token}`,
+      command: `npx @magland/mochi@${packageVersion()} job run ${url} ${minted.token}`,
     });
   });
 
