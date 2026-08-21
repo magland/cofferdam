@@ -41,9 +41,11 @@ const SECRET_FILES = new Set(['vault.json', 'runners.json', '.secret']);
  * mirror clone carries objects and refs; it writes its own default description
  * and its own config, so a backup that relied on it alone would lose every
  * repository's description, its `cofferdam.forkedFrom`, and the `receive.*`
- * settings a repository is created with.
+ * settings a repository is created with. cofferdam.json is the worst of the
+ * three to lose: it holds the private flag and the collaborators, so a
+ * restore without it would serve every private repository as public.
  */
-const REPO_FILES = ['description', 'config'];
+const REPO_FILES = ['description', 'config', 'cofferdam.json'];
 
 /** What a caller may ask to have left out, as `?exclude=runs,sites`. */
 const EXCLUDABLE = new Set(['runs', 'sites', 'lfs', 'secrets']);
@@ -373,13 +375,14 @@ export function registerBackupApi(app: Express, root: string, limiter: AuthLimit
               packed: await repoBytes(abs),
             });
             if (!(await send(res, line + '\n'))) return;
-            // Two files inside the repository are named all the same, because a
-            // mirror clone does not carry them and they are not git data: the
-            // description, which every listing shows, and the config, which
-            // holds the fork parent and the receive protections a repository
-            // was created with. Restoring a vault whose repositories had lost
-            // their descriptions and their push protections would be a poor
-            // restore.
+            // A few files inside the repository are named all the same,
+            // because a mirror clone does not carry them and they are not git
+            // data: the description, which every listing shows; the config,
+            // which holds the fork parent and the receive protections a
+            // repository was created with; and cofferdam.json, which holds
+            // the private flag and the collaborators. Restoring a vault whose
+            // private repositories had come back public would be far worse
+            // than a poor restore.
             for (const inside of REPO_FILES) {
               const fileEntry = fileLine(root, path.join(abs, inside), opts);
               if (!fileEntry) continue;

@@ -1943,6 +1943,22 @@ api_as "renaming a collection is the owners' alone" 403 "$ALICE_TOKEN" -X POST -
   --data '{"name":"alicesnow"}' "$BASE/api/collections/apinew/rename"
 body_has "saying whose it is" 'not an owner'
 
+# Implicit ownership follows from the name, so a rename would sever it: the
+# user who renames the collection named after them is written into its
+# explicit owners on the way, or they would be locked out of what is theirs.
+check "a user whose namespace this is" 200 -b "$JAR" "$BASE/admin/users" \
+  --data-urlencode "csrf=$CSRF" --data-urlencode username=renamer
+RENAMER_TOKEN="$(grep -o 'cofferdam_[0-9a-f]\{64\}' "$BODY" | head -1 || true)"
+[ -n "$RENAMER_TOKEN" ] || { echo "FAIL: no token for renamer"; exit 1; }
+api_as "they create in their namespace" 201 "$RENAMER_TOKEN" -H "$JSON_CT" \
+  --data '{"collection":"renamer","name":"mine","initReadme":true}' "$BASE/api/repos"
+api_as "and rename the namespace itself" 200 "$RENAMER_TOKEN" -X POST -H "$JSON_CT" \
+  --data '{"name":"renamedspace"}' "$BASE/api/collections/renamer/rename"
+api "the owners file now names them" 200 "$BASE/api/collections/renamedspace"
+body_has "explicitly" '"owners":\["renamer"\]'
+api_as "so ownership survived the rename" 200 "$RENAMER_TOKEN" -X POST -H "$JSON_CT" \
+  --data '{"name":"renamer"}' "$BASE/api/collections/renamedspace/rename"
+
 
 api "api reads the vault settings" 200 "$BASE/api/config"
 body_has "with the theme" '"theme":'
@@ -3661,6 +3677,24 @@ elif command -v docker > /dev/null 2>&1 && docker version --format '{{.Server.Ve
   check "the run page defaults to the failed job" 200 "$BASE/demo/ci/actions/runs/$EXEC_RUN"
   body_has "matrix job name resolved" 'fan (2)'
 
+  # ---- a private repository's job clones with the ephemeral token ----
+  #
+  # The runner checks the repository out over git before the job starts, which
+  # a private repository refuses anonymously; the job carries a read token
+  # minted for exactly this repository, and this is the check that it works
+  # end to end rather than only in the token's own unit tests.
+  api "the repository under test goes private" 200 -X PATCH -H "$JSON_CT" \
+    --data '{"private":true}' "$BASE/api/repos/demo/ci"
+  check "and vanishes for anonymous eyes meanwhile" 404 "$BASE/demo/ci"
+  run_workflow build.yml Build
+  PRIVATE_RUN="$RUN_N"
+  [ "$(job_field "$RUNS/$PRIVATE_RUN/jobs/build.json" conclusion)" = "success" ] || {
+    echo "FAIL: the private repository's build job did not succeed; the per-job clone token is the suspect"
+    tail -40 "$TMP/runner.log"; exit 1; }
+  PASS=$((PASS+1)); echo "ok: a private repository's job checks out with the per-job token"
+  api "and public again for the checks below" 200 -X PATCH -H "$JSON_CT" \
+    --data '{"private":false}' "$BASE/api/repos/demo/ci"
+
 
   # ---- actions: local JavaScript and composite actions ----
   #
@@ -4044,6 +4078,13 @@ check "its pull requests too" 200 "$BACKUP_BASE/demo/proj/pulls/1"
 check "and a release" 200 "$BACKUP_BASE/demo/proj/releases/tag/v2.0.0"
 check "a published site is in the backup" 200 "$BACKUP_BASE/pushed/created/site/"
 body_has "with its content" 'site ok'
+# A mirror clone does not carry cofferdam.json, so the backup fetches it
+# beside the mirror; a restore that lost it would serve every private
+# repository as public.
+[ -f "$BK/current/collections/vaulted/repos/hidden.git/cofferdam.json" ] \
+  || { echo "FAIL: the backup did not carry the repository's access file"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the access file came across"
+check "a private repository is still private in the backup" 404 "$BACKUP_BASE/vaulted/hidden"
 kill "$BACKUP_PID" 2>/dev/null || true
 wait "$BACKUP_PID" 2>/dev/null || true
 BACKUP_PID=""

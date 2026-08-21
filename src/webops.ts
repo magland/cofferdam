@@ -43,6 +43,7 @@ import {
   isSiteAdmin,
   removeCollaborator,
   removeCollectionOwner,
+  removeUserGrants,
   repoAccess,
   repoRenameBlocker,
   setCollaborator,
@@ -1536,7 +1537,9 @@ export function registerWebOps(
       fail(res, 400, `Type ${found.name} exactly to confirm deletion.`, viewer, backUrl);
       return;
     }
-    removeUser(root, found.name);
+    // Their grants go with them: a collaborator entry or an owners listing
+    // left behind would belong to whoever is given this name next.
+    if (removeUser(root, found.name)) removeUserGrants(root, found.name);
     res.redirect(`/admin/users?msg=${encodeURIComponent(`Deleted ${found.name} and revoked their tokens.`)}`);
   });
 

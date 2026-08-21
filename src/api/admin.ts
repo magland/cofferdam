@@ -11,7 +11,7 @@ import { forgetCollectionRedirects } from '../redirects';
 import { displayName, isValidName, listRepoDirs } from '../scan';
 import { normalizeHostname } from '../siteshost';
 import { DEFAULT_THEME, findTheme, themeNames } from '../themes';
-import { canAdminCollection, isSiteAdmin } from '../perms';
+import { canAdminCollection, isSiteAdmin, removeUserGrants } from '../perms';
 import { loadVault, removeUser, revokeToken, tokenId } from '../vault';
 import { apiError, bodyOf, requireApiAuth, sendOpError, stringField } from './auth';
 
@@ -259,7 +259,11 @@ export function registerAdminApi(
       apiError(res, 400, `to remove this user and every token they hold, send ?confirm=${req.params.name}`);
       return;
     }
-    res.json({ deleted: req.params.name, removed: removeUser(root, req.params.name) });
+    const removed = removeUser(root, req.params.name);
+    // Their grants go with them: a collaborator entry or an owners listing
+    // left behind would belong to whoever is given this name next.
+    if (removed) removeUserGrants(root, req.params.name);
+    res.json({ deleted: req.params.name, removed });
   });
 
   // ---- vault settings ----

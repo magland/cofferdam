@@ -445,7 +445,11 @@ ${csrfField(ctx.viewer!)}
 <input type="hidden" name="private" value="${ctx.isPrivate ? 'false' : 'true'}">
 <p>${
         ctx.isPrivate
-          ? html`This repository is <b>private</b>: visible to its collaborators, the collection's owners, and site admins, on the web, over git, and in the API alike.`
+          ? html`This repository is <b>private</b>: visible to its collaborators, the collection's owners, and site admins, on the web, over git, and in the API alike.${
+              ctx.hasSite
+                ? html` Its published <a href="${ctx.siteUrl}">site</a> stays world-readable; remove the site directory if the site must go too.`
+                : ''
+            }`
           : html`This repository is <b>public</b>: anyone can read and clone it, as everything in a vault is by default.`
       }</p>
 <button type="submit" class="btn">${ctx.isPrivate ? 'Make public' : 'Make private'}</button>

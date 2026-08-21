@@ -5,7 +5,8 @@ import * as path from 'path';
 import { writeFileAtomic } from './atomic';
 import { GitRepo, execGit, execGitStatus, isValidRefName, isValidRepoPath, isValidSha } from './git';
 import type { LfsStore } from './lfsstore';
-import { repoIsPrivate, setRepoPrivate } from './perms';
+import { addCollectionOwner, repoIsPrivate, setRepoPrivate } from './perms';
+import { loadVault } from './vault';
 import { looksLikePointer } from './pointer';
 import { forgetRepoRedirects, recordCollectionRename, recordRepoRename } from './redirects';
 import { REPOS_DIR, collectionDir, repoPath, reposDir } from './layout';
@@ -796,6 +797,16 @@ export async function renameCollection(
   // with the collection already.
   if (ctx.lfs) {
     for (const repo of repos) await ctx.lfs.renameRepo(name, repo, toName, repo);
+  }
+  // Implicit ownership follows from the collection's name, so a rename severs
+  // it: a user who renamed the collection named after them would be locked out
+  // of what is still theirs. The implicit owner, when there is such a user, is
+  // therefore written into the explicit owners the file carries across. Only
+  // ever added, never removed: the reverse rename leaves them listed, which is
+  // redundant beside the name and costs nothing.
+  const state = loadVault(root);
+  if (state.status === 'ok' && state.vault.users[name] && name !== toName) {
+    addCollectionOwner(root, toName, name);
   }
   // As for a repository: the old name is remembered, so every address under it
   // - the collection page and every repository in it - is redirected to the new

@@ -15,6 +15,7 @@ import {
   isSiteAdmin,
   removeCollaborator,
   removeCollectionOwner,
+  removeUserGrants,
   repoAccess,
   repoIsPrivate,
   repoRenameBlocker,
@@ -229,6 +230,22 @@ test('canAdminRunnerGlobs: site admins always; owners over literal collections t
   assert.ok(!canAdminRunnerGlobs(root, makeAuth('bob'), ['*']));
   assert.ok(!canAdminRunnerGlobs(root, makeAuth('bob'), []));
   assert.ok(!canAdminRunnerGlobs(root, makeAuth('bob', { tokenScope: ['*'] }), ['bob/*']));
+});
+
+test('removeUserGrants sweeps owners lists and collaborator entries vault-wide', () => {
+  const root = makeVaultDir();
+  makeBareRepo(root, 'demo', 'webapp');
+  makeBareRepo(root, 'team', 'shared');
+  addCollectionOwner(root, 'team', 'bob');
+  setCollaborator(ref(root, 'demo', 'webapp').dir, 'bob', 'admin');
+  setCollaborator(ref(root, 'team', 'shared').dir, 'carol', 'read');
+  removeUserGrants(root, 'bob');
+  // Everything bob held is gone; what others hold is untouched. A grant is
+  // keyed by name alone, so a swept name grants nothing to whoever gets the
+  // name next.
+  assert.deepEqual(collectionOwners(root, 'team'), []);
+  assert.deepEqual(repoAccess(ref(root, 'demo', 'webapp').dir).collaborators, {});
+  assert.deepEqual(repoAccess(ref(root, 'team', 'shared').dir).collaborators, { carol: 'read' });
 });
 
 // ---- the migration from glob scopes ----

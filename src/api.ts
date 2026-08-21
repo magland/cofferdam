@@ -247,6 +247,18 @@ export function registerApi(
       apiError(res, 400, '"tokenScope" must be a list of strings');
       return;
     }
+    // Refused loudly rather than ignored: an older client sending the glob
+    // fields would otherwise create a user without the access its operator
+    // asked for, and silence is the worst way to deliver that.
+    if (body.scope !== undefined || body.admin !== undefined) {
+      apiError(
+        res,
+        400,
+        '"scope" and "admin" are gone: a user owns the collection named after them, and anything more is ' +
+          'granted where it applies (repository collaborators, collection owners) or with "siteAdmin"'
+      );
+      return;
+    }
     if (body.siteAdmin !== undefined && typeof body.siteAdmin !== 'boolean') {
       apiError(res, 400, '"siteAdmin" must be a boolean');
       return;

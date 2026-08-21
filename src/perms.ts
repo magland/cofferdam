@@ -2,7 +2,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { withFileLock, writeFileAtomic } from './atomic';
 import { fileCache } from './filecache';
-import { collectionDir } from './layout';
+import { collectionDir, repoPath } from './layout';
+import { listCollections, listRepoDirs } from './scan';
 import { AuthResult, globMatch } from './vault';
 
 // The permission model, GitHub-shaped: roles on repositories, owners on
@@ -342,6 +343,28 @@ export function repoRenameBlocker(
 export function collectionMoveBlocker(root: string, auth: AuthResult, collection: string): string | null {
   if (!canAdminCollection(root, auth, collection)) return `ownership of ${collection}`;
   return null;
+}
+
+/**
+ * Remove every grant a username holds, across the vault: its entries in
+ * owners lists and its collaborator roles. Called when the user is deleted,
+ * because a grant is keyed by name alone: left behind, it would belong to
+ * whoever is given the name next, silently. The user's implicit namespace
+ * needs no sweeping, since a future user of the same name is meant to own
+ * the collection named after them.
+ */
+export function removeUserGrants(root: string, username: string): void {
+  for (const { name: collection } of listCollections(root)) {
+    if (collectionOwners(root, collection).includes(username)) {
+      removeCollectionOwner(root, collection, username);
+    }
+    for (const dirName of listRepoDirs(root, collection)) {
+      const dir = repoPath(root, collection, dirName);
+      if (repoAccess(dir).collaborators[username] !== undefined) {
+        removeCollaborator(dir, username);
+      }
+    }
+  }
 }
 
 /**
