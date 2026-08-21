@@ -570,7 +570,7 @@ by the operator's own runners, and a static site served from the repository at
 no secrets, so jobs are limited to work that needs none, such as building and publishing a site.</p>
 
 <h2>The software</h2>
-<p>This vault runs <a href="https://github.com/magland/mochi">Mochi Forge</a>, an open-source forge: one process, no
+<p>This vault runs <a href="https://github.com/magland/mochiforge">Mochi Forge</a>, an open-source forge: one process, no
 database, every repository an ordinary bare git repository on the operator's own disk.</p>
 </div>`;
   return layout('About - Mochi Forge', content, { viewer, path: '/about' });

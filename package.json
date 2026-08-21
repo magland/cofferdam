@@ -5,10 +5,10 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/magland/mochi.git"
+    "url": "git+https://github.com/magland/mochiforge.git"
   },
-  "homepage": "https://github.com/magland/mochi#readme",
-  "bugs": "https://github.com/magland/mochi/issues",
+  "homepage": "https://github.com/magland/mochiforge#readme",
+  "bugs": "https://github.com/magland/mochiforge/issues",
   "keywords": [
     "git",
     "forge",

@@ -134,7 +134,7 @@ mochi deploy fly my-vault-name --image ghcr.io/magland/mochi:0.2.0
 By default the image deployed is the published one matching the version of the CLI you ran, which means waiting for a release before a change of your own can reach a vault. `--from-source` builds the image from the checkout you are running instead:
 
 ```bash
-git clone https://github.com/magland/mochi && cd mochi
+git clone https://github.com/magland/mochiforge && cd mochiforge
 npm install && npm run build
 node dist/index.js deploy fly my-vault-name --from-source
 ```

@@ -228,7 +228,7 @@ jobs:
   # a live vault, which is not what dispatching a rebuild means.
   deploy:
     needs: image
-    if: github.repository == 'magland/mochi' && github.event_name != 'workflow_dispatch'
+    if: github.repository == 'magland/mochiforge' && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:

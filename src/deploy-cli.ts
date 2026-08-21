@@ -261,7 +261,7 @@ export function sourceRoot(): string {
         `  ${root}\n\n` +
         'The published package contains only the compiled output, so there is nothing to\n' +
         'build. Clone the repository and run the deploy from there:\n\n' +
-        '  git clone https://github.com/magland/mochi && cd mochi && npm install\n' +
+        '  git clone https://github.com/magland/mochiforge && cd mochiforge && npm install\n' +
         '  npm run build && node dist/index.js deploy fly <app> --from-source\n'
     );
   }
