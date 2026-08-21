@@ -26,8 +26,33 @@ export function tokenId(t: TokenRecord): string {
   return t.id ?? t.hash.slice(0, 8);
 }
 
+/**
+ * A passkey a user registered from their account page. What is stored is the
+ * public half alone: the credential id the authenticator minted, the public
+ * key (converted to a DER SPKI at registration, so signing in is one
+ * crypto.verify), and the signature counter for authenticators that keep one.
+ * Like a token, a passkey is a credential the vault can take away: sessions
+ * signed in with it resolve it against live vault.json on every request, so
+ * removing it here ends them at once.
+ */
+export interface PasskeyRecord {
+  /** The credential id, base64url. */
+  id: string;
+  /** The public key as a DER SPKI, base64url. */
+  publicKey: string;
+  /** The COSE algorithm the key signs under: -7 ES256, -8 EdDSA, -257 RS256. */
+  alg: number;
+  /** The authenticator's signature counter; 0 from the many that keep none. */
+  counter: number;
+  created?: string;
+  /** The label the user gave it, so two passkeys can be told apart. */
+  name?: string;
+}
+
 export interface UserRecord {
   tokens: TokenRecord[];
+  /** Passkeys the user may sign in to the web interface with. */
+  passkeys?: PasskeyRecord[];
   /**
    * Site admins hold the admin role on every repository and manage users,
    * runners, and the vault itself. Everything finer-grained lives with the
@@ -125,8 +150,36 @@ function normalizeVault(parsed: unknown): Vault {
     if (!emails) {
       throw new Error(`user ${name}: "emails" must be a list of strings`);
     }
+    // Parsed explicitly, like every other field: normalizeVault builds a fresh
+    // object, so a field it did not read would be dropped by the next write.
+    const passkeysRaw = rec.passkeys ?? [];
+    if (!Array.isArray(passkeysRaw)) {
+      throw new Error(`user ${name}: "passkeys" must be a list`);
+    }
+    const passkeys: PasskeyRecord[] = passkeysRaw.map((p, i) => {
+      if (
+        typeof p !== 'object' ||
+        p === null ||
+        typeof (p as Record<string, unknown>).id !== 'string' ||
+        typeof (p as Record<string, unknown>).publicKey !== 'string' ||
+        typeof (p as Record<string, unknown>).alg !== 'number'
+      ) {
+        throw new Error(`user ${name}: passkey ${i} must be an object with "id", "publicKey", and "alg"`);
+      }
+      const pRec = p as Record<string, unknown>;
+      const out: PasskeyRecord = {
+        id: pRec.id as string,
+        publicKey: pRec.publicKey as string,
+        alg: pRec.alg as number,
+        counter: typeof pRec.counter === 'number' && pRec.counter >= 0 ? Math.floor(pRec.counter) : 0,
+      };
+      if (typeof pRec.created === 'string' && pRec.created !== '') out.created = pRec.created;
+      if (typeof pRec.name === 'string' && pRec.name !== '') out.name = pRec.name;
+      return out;
+    });
     users[name] = {
       tokens,
+      ...(passkeys.length ? { passkeys } : {}),
       ...(rec.siteAdmin === true ? { siteAdmin: true } : {}),
       ...(emails.length ? { emails } : {}),
       ...(legacy ? { legacy: { scope, admin } } : {}),
@@ -384,6 +437,95 @@ export function revokeToken(root: string, username: string, id: string): { revok
     if (user.tokens.length === before) return { revoked: false, remaining: before };
     writeVault(file, vault);
     return { revoked: true, remaining: user.tokens.length };
+  });
+}
+
+/** How a session bound to a passkey spells it in the cookie payload: never a
+ * hex token hash, so the two kinds of binding cannot collide. */
+export const PASSKEY_BINDING_PREFIX = 'pk:';
+
+export function passkeyBinding(credentialId: string): string {
+  return PASSKEY_BINDING_PREFIX + credentialId;
+}
+
+/**
+ * The AuthResult a session binding resolves to against a live vault: a token
+ * binding finds its TokenRecord, and a passkey binding finds the passkey and
+ * stands a synthetic token in for it. The synthetic record carries no scope,
+ * deliberately: a passkey proves the user, not a narrowed token, so a session
+ * signed in with one has the user's own rights, exactly as an unscoped token
+ * would. Its hash is the binding string, which is not hex and so can never
+ * name a real token anywhere else.
+ */
+export function authForBinding(vault: Vault, username: string, binding: string): AuthResult | null {
+  const user = vault.users[username];
+  if (!user) return null;
+  if (binding.startsWith(PASSKEY_BINDING_PREFIX)) {
+    const id = binding.slice(PASSKEY_BINDING_PREFIX.length);
+    if (!user.passkeys?.some((p) => p.id === id)) return null;
+    return { username, user, token: { hash: binding } };
+  }
+  const token = user.tokens.find((t) => t.hash === binding);
+  return token ? { username, user, token } : null;
+}
+
+/** The user a credential id belongs to, for a sign-in that only knows the key. */
+export function findPasskey(
+  vault: Vault,
+  credentialId: string
+): { username: string; user: UserRecord; passkey: PasskeyRecord } | null {
+  for (const [username, user] of Object.entries(vault.users)) {
+    const passkey = user.passkeys?.find((p) => p.id === credentialId);
+    if (passkey) return { username, user, passkey };
+  }
+  return null;
+}
+
+/** Register a passkey. The credential id must be new to the whole vault: an
+ * authenticator names its keys uniquely, so a collision is a replayed
+ * registration rather than a coincidence to accommodate. */
+export function addPasskey(root: string, username: string, rec: Omit<PasskeyRecord, 'created'>): PasskeyRecord {
+  return editVault(root, (file) => {
+    const vault = readVaultForEdit(file);
+    const user = vault.users[username];
+    if (!user) throw new Error(`no user ${username}`);
+    if (findPasskey(vault, rec.id)) throw new Error('this passkey is already registered');
+    const stored: PasskeyRecord = { ...rec, created: new Date().toISOString() };
+    user.passkeys = [...(user.passkeys ?? []), stored];
+    writeVault(file, vault);
+    return stored;
+  });
+}
+
+/** Remove one passkey, ending any session signed in with it. */
+export function removePasskey(root: string, username: string, credentialId: string): boolean {
+  return editVault(root, (file) => {
+    const vault = readVaultForEdit(file);
+    const user = vault.users[username];
+    if (!user) throw new Error(`no user ${username}`);
+    const before = user.passkeys?.length ?? 0;
+    const after = (user.passkeys ?? []).filter((p) => p.id !== credentialId);
+    if (after.length === before) return false;
+    if (after.length) user.passkeys = after;
+    else delete user.passkeys;
+    writeVault(file, vault);
+    return true;
+  });
+}
+
+/**
+ * Record the signature counter an assertion carried. Best effort: the write
+ * exists to catch a cloned authenticator replaying an old counter, and a
+ * vault.json that cannot be written right now is not worth failing a sign-in
+ * whose signature already verified.
+ */
+export function setPasskeyCounter(root: string, username: string, credentialId: string, counter: number): void {
+  editVault(root, (file) => {
+    const vault = readVaultForEdit(file);
+    const passkey = vault.users[username]?.passkeys?.find((p) => p.id === credentialId);
+    if (!passkey || passkey.counter >= counter) return;
+    passkey.counter = counter;
+    writeVault(file, vault);
   });
 }
 

@@ -166,10 +166,30 @@ test('a repository description is escaped on the settings page', () => {
 });
 
 test('a username and its scopes are escaped on the admin pages', () => {
-  const user = { tokens: [{ hash: 'ff', id: XSS, created: '' }], siteAdmin: true, emails: [XSS] };
+  const user = {
+    tokens: [{ hash: 'ff', id: XSS, created: '' }],
+    siteAdmin: true,
+    emails: [XSS],
+    passkeys: [{ id: XSS, publicKey: 'aa', alg: -7, counter: 0, name: XSS }],
+  };
   assertSafe(forms.adminUsersPage(viewer, [{ name: XSS, user }], XSS, XSS), 'adminUsersPage');
   assertSafe(forms.adminUserPage(viewer, XSS, user, XSS, XSS), 'adminUserPage');
   assertSafe(forms.tokenPage(viewer, XSS, XSS, true), 'tokenPage');
+});
+
+test('the account and sign-in-code pages escape names, labels, and errors', () => {
+  const pkViewer: Viewer = {
+    ...viewer,
+    auth: {
+      ...viewer.auth,
+      username: XSS,
+      user: { tokens: [], passkeys: [{ id: ATTR, publicKey: 'aa', alg: -7, counter: 0, name: XSS }] },
+    },
+  };
+  assertSafe(forms.accountPage(pkViewer, { restricted: false, msg: XSS, error: XSS }), 'accountPage');
+  assertSafe(forms.accountLinkPage(pkViewer, 'ABCD-EFGH', 5), 'accountLinkPage');
+  assertSafe(forms.loginLinkPage(`/next?${ATTR}`, XSS), 'loginLinkPage');
+  assertSafe(forms.loginLinkConfirmPage(XSS, ATTR, `/next?${ATTR}`), 'loginLinkConfirmPage');
 });
 
 test('a fork or new-repository form escapes the collection names it offers', () => {

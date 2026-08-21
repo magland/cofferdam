@@ -51,15 +51,31 @@ import {
 } from './perms';
 import {
   UserRecord,
+  addPasskey,
+  authForBinding,
   authenticate,
+  findPasskey,
   loadVault,
   addUserToken,
+  passkeyBinding,
+  removePasskey,
   removeUser,
   revokeToken,
+  setPasskeyCounter,
   setSiteAdmin,
   setUserEmails,
   tokenId,
 } from './vault';
+import {
+  SUPPORTED_ALGS,
+  WebAuthnError,
+  claimedChallenge,
+  fromB64url,
+  verifyAssertion,
+  verifyRegistration,
+} from './webauthn';
+import { createOneTimeStore } from './onetime';
+import { HANDOFF_TTL_MS, mintHandoff, peekLoginLink, takeHandoff, takeLoginLink } from './logincodes';
 import { encPath, repoUrl } from './views';
 import {
   LoadedRepo,
@@ -231,6 +247,322 @@ export function registerWebOps(
   app.post('/logout', form, (_req, res) => {
     clearSessionCookie(res);
     res.redirect('/');
+  });
+
+  // ---- passkeys, the account page, and sign-in codes ----
+  //
+  // Three more ways into a session, all ending at the same setSessionCookie
+  // the token form uses: a passkey (WebAuthn), a short code shown by a
+  // signed-in browser, and a one-time link minted by `mochi web` against the
+  // API. The WebAuthn endpoints speak JSON because the ceremonies run through
+  // fetch; everything else is ordinary forms.
+
+  const jsonForm = express.json({ limit: '64kb' });
+
+  // Pending WebAuthn challenges. The store's opaque id is the challenge
+  // itself: finishing a ceremony hands it back inside clientDataJSON, so
+  // nothing else has to travel, and taking it makes each challenge one use.
+  const registrationChallenges = createOneTimeStore<{ username: string }>();
+  const loginChallenges = createOneTimeStore<true>();
+  const CHALLENGE_TTL_MS = 2 * 60 * 1000;
+  const WEBAUTHN_TIMEOUT_MS = 120000;
+
+  // The RP ID is the hostname the vault is being served under, which is what
+  // scopes a passkey to this vault: a key made for one hostname does not
+  // answer for another, and moving a vault to a new domain means registering
+  // new passkeys (tokens keep working, so nobody is locked out by the move).
+  const rpIdOf = (req: Request) => req.hostname;
+  const originOf = (req: Request) => `${req.protocol}://${req.get('host')}`;
+
+  // A restricted token may not add passkeys or hand off sessions broader than
+  // itself: a passkey signs in with the user's full standing, so minting one
+  // from a session that does not have it would widen the token it came from.
+  const restricted = (viewer: Viewer) => viewer.auth.token.scope !== undefined;
+
+  function jsonViewer(req: Request, res: Response): Viewer | null {
+    const viewer = getViewer(req, root);
+    if (!viewer) {
+      res.status(403).json({ error: 'You are signed out. Reload the page and sign in.' });
+      return null;
+    }
+    if (!csrfMatches(req, field(req, 'csrf'), viewer)) {
+      res.status(403).json({ error: 'The page has expired; reload it and try again.' });
+      return null;
+    }
+    return viewer;
+  }
+
+  app.get('/account', (req, res) => {
+    const viewer = requireViewerPage(root, req, res);
+    if (!viewer) return;
+    const msg = typeof req.query.msg === 'string' ? req.query.msg : undefined;
+    res.type('html').send(forms.accountPage(viewer, { restricted: restricted(viewer), msg }));
+  });
+
+  app.post('/account/passkeys/challenge', jsonForm, (req, res) => {
+    const viewer = jsonViewer(req, res);
+    if (!viewer) return;
+    if (restricted(viewer)) {
+      res.status(403).json({ error: 'A session from a restricted token may not add passkeys.' });
+      return;
+    }
+    const username = viewer.auth.username;
+    res.json({
+      challenge: registrationChallenges.put({ username }, CHALLENGE_TTL_MS),
+      rp: { id: rpIdOf(req), name: `Mochi Forge (${rpIdOf(req)})` },
+      // The user handle is what a later usernameless sign-in identifies the
+      // account by; usernames are short and stable, so they are it, verbatim.
+      user: { id: Buffer.from(username, 'utf8').toString('base64url'), name: username, displayName: username },
+      pubKeyCredParams: SUPPORTED_ALGS.map((alg) => ({ type: 'public-key', alg })),
+      // Resident keys, so signing in needs no username typed first; every
+      // platform authenticator that offers passkeys keeps them.
+      authenticatorSelection: { residentKey: 'required', userVerification: 'preferred' },
+      timeout: WEBAUTHN_TIMEOUT_MS,
+      attestation: 'none',
+      excludeCredentials: (viewer.auth.user.passkeys ?? []).map((p) => ({ type: 'public-key', id: p.id })),
+    });
+  });
+
+  app.post('/account/passkeys', jsonForm, (req, res) => {
+    const viewer = jsonViewer(req, res);
+    if (!viewer) return;
+    if (restricted(viewer)) {
+      res.status(403).json({ error: 'A session from a restricted token may not add passkeys.' });
+      return;
+    }
+    let clientDataJSON: Buffer;
+    let attestationObject: Buffer;
+    try {
+      clientDataJSON = fromB64url(field(req, 'clientDataJSON'));
+      attestationObject = fromB64url(field(req, 'attestationObject'));
+    } catch {
+      res.status(400).json({ error: 'The registration payload is not base64url.' });
+      return;
+    }
+    const challenge = claimedChallenge(clientDataJSON);
+    const pending = challenge ? registrationChallenges.take(challenge) : null;
+    if (!pending || pending.username !== viewer.auth.username) {
+      res.status(400).json({ error: 'The challenge is missing or expired; try again.' });
+      return;
+    }
+    let reg;
+    try {
+      reg = verifyRegistration({
+        attestationObject,
+        clientDataJSON,
+        challenge: challenge as string,
+        origin: originOf(req),
+        rpId: rpIdOf(req),
+      });
+    } catch (e) {
+      res.status(400).json({ error: e instanceof WebAuthnError ? e.message : 'The registration could not be verified.' });
+      return;
+    }
+    const name = field(req, 'name').trim().slice(0, 60);
+    try {
+      addPasskey(root, viewer.auth.username, {
+        id: reg.id,
+        publicKey: reg.publicKey,
+        alg: reg.alg,
+        counter: reg.counter,
+        ...(name ? { name } : {}),
+      });
+    } catch (e) {
+      res.status(409).json({ error: e instanceof Error ? e.message : 'The passkey could not be stored.' });
+      return;
+    }
+    res.json({ next: `/account?msg=${encodeURIComponent(`Passkey ${name ? `${name} ` : ''}added.`)}` });
+  });
+
+  app.post('/account/passkeys/:id/delete', form, (req, res) => {
+    const viewer = requireViewerPost(root, req, res);
+    if (!viewer) return;
+    const wasThisSession = viewer.auth.token.hash === passkeyBinding(req.params.id);
+    if (!removePasskey(root, viewer.auth.username, req.params.id)) {
+      fail(res, 404, 'No such passkey on your account.', viewer, '/account');
+      return;
+    }
+    // Removing the passkey this session signed in with ends this session; the
+    // redirect says so instead of pretending otherwise.
+    if (wasThisSession) {
+      res.redirect('/login');
+      return;
+    }
+    res.redirect(`/account?msg=${encodeURIComponent('Passkey removed.')}`);
+  });
+
+  app.post('/account/link', form, (req, res) => {
+    const viewer = requireViewerPost(root, req, res);
+    if (!viewer) return;
+    // The new session is bound to whatever this one is -- the same token
+    // hash (scope and all), or the same passkey -- so nothing new is minted,
+    // nothing widens, and one revocation ends both.
+    const code = mintHandoff(root, viewer.auth.username, viewer.auth.token.hash);
+    res.type('html').send(forms.accountLinkPage(viewer, code, Math.round(HANDOFF_TTL_MS / 60000)));
+  });
+
+  app.get('/login/link', (req, res) => {
+    const next = safeNext(String(req.query.next ?? '/'));
+    if (getViewer(req, root)) {
+      res.redirect(next);
+      return;
+    }
+    res.type('html').send(forms.loginLinkPage(next));
+  });
+
+  // Redeeming any kind of sign-in code shares the token form's rate limiter:
+  // a code is a credential being presented, and guessing them is the same
+  // attack mistyping tokens is throttled as.
+  function redeemPending(
+    req: Request,
+    res: Response,
+    pending: { username: string; binding: string; next?: string } | null,
+    renderRefusal: (error: string, status: number) => void
+  ): void {
+    if (!pending) {
+      authLimiter.fail(req, null);
+      renderRefusal('That code is not valid. Codes work once and expire after a few minutes.', 401);
+      return;
+    }
+    const state = loadVault(root);
+    const auth = state.status === 'ok' ? authForBinding(state.vault, pending.username, pending.binding) : null;
+    if (!auth) {
+      renderRefusal('The credential behind this code has been revoked; sign in another way.', 403);
+      return;
+    }
+    setSessionCookie(req, res, root, auth);
+    res.redirect(safeNext(pending.next ?? field(req, 'next')));
+  }
+
+  app.post('/login/link', form, (req, res) => {
+    const next = safeNext(field(req, 'next'));
+    const allowed = authLimiter.allow(req, null);
+    if (!allowed.ok) {
+      res.status(429).setHeader('Retry-After', String(allowed.retryAfter));
+      res.type('html').send(forms.loginLinkPage(next, 'Too many attempts from this address. Try again later.'));
+      return;
+    }
+    redeemPending(req, res, takeHandoff(root, field(req, 'code')), (error, status) => {
+      res.status(status).type('html').send(forms.loginLinkPage(next, error));
+    });
+  });
+
+  // The landing page of a `mochi web` link: it looks the code up without
+  // consuming it and asks for a click, so a GET never changes who the browser
+  // is and a prefetch cannot burn the code.
+  app.get('/login/code/:code', (req, res) => {
+    const pending = peekLoginLink(root, req.params.code);
+    if (!pending) {
+      fail(res, 404, 'This sign-in link has expired or was already used. Run mochi web again for a fresh one.', null, '/login');
+      return;
+    }
+    res.type('html').send(forms.loginLinkConfirmPage(pending.username, req.params.code, safeNext(pending.next ?? '/')));
+  });
+
+  app.post('/login/code', form, (req, res) => {
+    const allowed = authLimiter.allow(req, null);
+    if (!allowed.ok) {
+      res.status(429).setHeader('Retry-After', String(allowed.retryAfter));
+      fail(res, 429, 'Too many attempts from this address. Try again later.', null, '/login');
+      return;
+    }
+    redeemPending(req, res, takeLoginLink(root, field(req, 'code')), (error, status) => {
+      fail(res, status, error, null, '/login');
+    });
+  });
+
+  app.post('/login/passkey/challenge', jsonForm, (req, res) => {
+    res.json({
+      challenge: loginChallenges.put(true, CHALLENGE_TTL_MS),
+      rpId: rpIdOf(req),
+      timeout: WEBAUTHN_TIMEOUT_MS,
+      userVerification: 'preferred',
+    });
+  });
+
+  app.post('/login/passkey', jsonForm, (req, res) => {
+    const allowed = authLimiter.allow(req, null);
+    if (!allowed.ok) {
+      res.setHeader('Retry-After', String(allowed.retryAfter));
+      res.status(429).json({ error: 'Too many failed sign-in attempts from this address; try again later.' });
+      return;
+    }
+    let clientDataJSON: Buffer;
+    let authenticatorData: Buffer;
+    let signature: Buffer;
+    try {
+      clientDataJSON = fromB64url(field(req, 'clientDataJSON'));
+      authenticatorData = fromB64url(field(req, 'authenticatorData'));
+      signature = fromB64url(field(req, 'signature'));
+    } catch {
+      res.status(400).json({ error: 'The sign-in payload is not base64url.' });
+      return;
+    }
+    const challenge = claimedChallenge(clientDataJSON);
+    if (!challenge || !loginChallenges.take(challenge)) {
+      res.status(400).json({ error: 'The challenge is missing or expired; try again.' });
+      return;
+    }
+    const state = loadVault(root);
+    if (state.status !== 'ok') {
+      res.status(500).json({ error: 'The vault is not available; try again later.' });
+      return;
+    }
+    const found = findPasskey(state.vault, field(req, 'id'));
+    if (!found) {
+      authLimiter.fail(req, null);
+      res.status(401).json({ error: 'This passkey is not registered on this vault.' });
+      return;
+    }
+    // The authenticator says whose credential it presented; when it does, it
+    // must agree with where the credential id was found.
+    const handle = field(req, 'userHandle');
+    if (handle) {
+      let claimed: string;
+      try {
+        claimed = fromB64url(handle).toString('utf8');
+      } catch {
+        claimed = '';
+      }
+      if (claimed !== found.username) {
+        authLimiter.fail(req, null);
+        res.status(401).json({ error: 'The passkey does not match its account.' });
+        return;
+      }
+    }
+    let assertion;
+    try {
+      assertion = verifyAssertion({
+        authenticatorData,
+        clientDataJSON,
+        signature,
+        publicKey: found.passkey.publicKey,
+        alg: found.passkey.alg,
+        challenge,
+        origin: originOf(req),
+        rpId: rpIdOf(req),
+      });
+    } catch (e) {
+      authLimiter.fail(req, null);
+      res.status(401).json({ error: e instanceof WebAuthnError ? e.message : 'The sign-in could not be verified.' });
+      return;
+    }
+    // A counter that moved backwards means two devices hold this key, which
+    // resident passkeys do legitimately (they sync); most report 0 and skip
+    // this entirely. Only an actual regression from a counter-keeping key is
+    // refused.
+    if (assertion.counter > 0 && found.passkey.counter > 0 && assertion.counter <= found.passkey.counter) {
+      authLimiter.fail(req, null);
+      res.status(401).json({ error: 'The passkey presented an old signature counter; remove and re-register it.' });
+      return;
+    }
+    if (assertion.counter > 0) setPasskeyCounter(root, found.username, found.passkey.id, assertion.counter);
+    setSessionCookie(req, res, root, {
+      username: found.username,
+      user: found.user,
+      token: { hash: passkeyBinding(found.passkey.id) },
+    });
+    res.json({ next: safeNext(field(req, 'next')) });
   });
 
   // ---- new repository, new collection, import ----
@@ -1579,6 +1911,21 @@ export function registerWebOps(
       return;
     }
     res.redirect(`${backUrl}?msg=${encodeURIComponent(`Revoked token ${req.params.id}.`)}`);
+  });
+
+  // The admin's off switch for a passkey, beside the one for tokens: the
+  // user removes their own on /account, and this is for the day they cannot.
+  app.post('/admin/users/:name/passkeys/:id/delete', form, (req, res) => {
+    const viewer = requireAdminPost(req, res);
+    if (!viewer) return;
+    const backUrl = `/admin/users/${encodeURIComponent(req.params.name)}`;
+    const found = loadUserForAdmin(req, res, viewer, backUrl);
+    if (!found) return;
+    if (!removePasskey(root, found.name, req.params.id)) {
+      fail(res, 404, `No such passkey for ${found.name}.`, viewer, backUrl);
+      return;
+    }
+    res.redirect(`${backUrl}?msg=${encodeURIComponent('Passkey removed.')}`);
   });
 
   app.post('/admin/users/:name/emails', form, (req, res) => {

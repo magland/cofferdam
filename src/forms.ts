@@ -9,7 +9,7 @@ import { formatSize, timeTag } from './render';
 import { Viewer } from './session';
 import { Theme } from './themes';
 import { isSiteAdmin } from './perms';
-import { UserRecord, tokenId } from './vault';
+import { UserRecord, passkeyBinding, tokenId } from './vault';
 import {
   PageOpts,
   RepoCtx,
@@ -38,7 +38,9 @@ export function flashBanner(msg?: string): Html | '' {
 
 export function loginPage(next: string, error?: string): string {
   // A narrow card under the mark, centred on the page: signing in is the one
-  // thing this page is for, so nothing else is on it.
+  // thing this page is for, so nothing else is on it. The passkey button is
+  // hidden until the page script finds WebAuthn support, so a browser without
+  // it sees the form it can use and nothing it cannot.
   const content = html`<div class="signin">
 <div class="signin-mark">${raw(MARK)}</div>
 <h1>Sign in to Mochi Forge</h1>
@@ -50,10 +52,139 @@ ${errorBanner(error)}
 <div class="field"><label for="token">Token</label><input type="password" id="token" name="token" autocomplete="current-password" required></div>
 <button type="submit" class="btn btn-primary">Sign in</button>
 </form>
+<div class="signin-alt" data-passkey-login hidden>
+<button type="button" class="btn" data-passkey-login-btn data-next="${next}">${icon('lock')}<span>Sign in with a passkey</span></button>
+<div class="form-error" data-passkey-error hidden></div>
 </div>
-<p class="muted small signin-note">A token is what git uses for pushing. Tokens are minted by an administrator; there are no passwords.</p>
+</div>
+<p class="muted small signin-note">A token is what git uses for pushing. Tokens are minted by an administrator; there are no passwords.
+Passkeys are added from your account page, once you are signed in.</p>
+<p class="muted small signin-note">Already signed in on another device? <a href="/login/link?next=${encodeURIComponent(
+    next
+  )}">Enter a code from it</a>.</p>
 </div>`;
   return layout('Sign in', content, { path: '/login' });
+}
+
+/** The page a handoff code is typed into: the other half of accountLinkPage. */
+export function loginLinkPage(next: string, error?: string): string {
+  const content = html`<div class="signin">
+<div class="signin-mark">${raw(MARK)}</div>
+<h1>Sign in with a code</h1>
+${errorBanner(error)}
+<div class="form-box">
+<form method="post" action="/login/link">
+<input type="hidden" name="next" value="${next}">
+<div class="field"><label for="code">Code</label><input type="text" id="code" name="code" class="mono" autocomplete="off" spellcheck="false" placeholder="ABCD-EFGH" autofocus required></div>
+<button type="submit" class="btn btn-primary">Sign in</button>
+</form>
+</div>
+<p class="muted small signin-note">On a device where you are already signed in, open your account page and choose
+&ldquo;Sign in on another device&rdquo;. The code it shows works once and expires after a few minutes.</p>
+</div>`;
+  return layout('Sign in with a code', content, { path: '/login' });
+}
+
+/**
+ * The page a `mochi web` link lands on. It names the account and asks for a
+ * click rather than signing the browser in on arrival: a GET must not change
+ * who the browser is, or a link someone was tricked into opening would sign
+ * them in as somebody else without a word.
+ */
+export function loginLinkConfirmPage(username: string, code: string, next: string): string {
+  const content = html`<div class="signin">
+<div class="signin-mark">${raw(MARK)}</div>
+<h1>Sign in to Mochi Forge</h1>
+<div class="form-box">
+<p>This link signs this browser in as <b>${username}</b>.</p>
+<form method="post" action="/login/code">
+<input type="hidden" name="code" value="${code}">
+<input type="hidden" name="next" value="${next}">
+<button type="submit" class="btn btn-primary">Continue as ${username}</button>
+</form>
+</div>
+<p class="muted small signin-note">Not you, or not something you asked for? Close this page; the link works once and expires by itself.</p>
+</div>`;
+  return layout('Sign in', content, { path: '/login' });
+}
+
+/**
+ * The signed-in user's own page: their passkeys and the way to another
+ * device. Tokens are deliberately not here; they are minted and revoked on
+ * the admin pages, and this page holds only what a user manages for
+ * themselves.
+ */
+export function accountPage(
+  viewer: Viewer,
+  opts: { restricted: boolean; msg?: string; error?: string } = { restricted: false }
+): string {
+  const name = viewer.auth.username;
+  const user = viewer.auth.user;
+  const passkeys = user.passkeys ?? [];
+  const rows = passkeys.map((p) => {
+    const current = viewer.auth.token.hash === passkeyBinding(p.id);
+    return html`<tr><td>${p.name ?? 'Passkey'}${
+      current ? raw(' <span class="counter">this session</span>') : ''
+    }</td><td class="muted small">${
+      p.created ? timeTag(p.created, '') : ''
+    }</td><td class="mono small muted">${p.id.slice(0, 8)}&hellip;</td><td class="right">
+<form method="post" action="/account/passkeys/${encodeURIComponent(p.id)}/delete" class="inline-form">
+${csrfField(viewer)}
+<button type="submit" class="btn btn-danger-outline">Remove</button>
+</form></td></tr>`;
+  });
+  const list = passkeys.length
+    ? html`<table class="listing"><tbody><tr><th>Passkey</th><th>Added</th><th>Id</th><th class="right"></th></tr>${rows}</tbody></table>
+<p class="muted small">Removing a passkey is immediate: a session signed in with it is signed out on its next page load.</p>`
+    : html`<p class="muted">No passkeys yet.</p>`;
+  const add = opts.restricted
+    ? html`<p class="muted small">This session was signed in with a restricted token, which may not add passkeys:
+a passkey signs in with your full account, so adding one takes a session that already has it.</p>`
+    : html`<div class="inline-form" data-passkey-form>
+${csrfField(viewer)}
+<label for="pk-name">Name</label><input type="text" id="pk-name" name="name" placeholder="e.g. laptop" autocomplete="off">
+<button type="button" class="btn" data-passkey-add>${icon('plus')}<span>Add a passkey</span></button>
+</div>
+<div class="form-error" data-passkey-error hidden></div>
+<p class="muted small" data-passkey-unsupported hidden>This browser does not offer passkeys here. Passkeys need a browser
+with WebAuthn, over https (or on localhost).</p>
+<p class="muted small">A passkey signs you in to this vault's web pages with your screen lock or security key, instead of
+the token. It is kept by your browser or device; the vault stores only its public half. git keeps using tokens.</p>`;
+  const passkeyBox = html`<div class="form-box">
+<h2>Passkeys</h2>
+${list}
+${add}
+</div>`;
+  const handoff = html`<div class="form-box">
+<h2>Sign in on another device</h2>
+<form method="post" action="/account/link">
+${csrfField(viewer)}
+<button type="submit" class="btn">${icon('link')}<span>Show a sign-in code</span></button>
+</form>
+<p class="muted small">Shows a short code. On the other device, open the sign-in page, choose &ldquo;Enter a code&rdquo;,
+and type it. The code works once, expires after five minutes, and signs that device in as you.</p>
+</div>`;
+  const content = html`<div class="page-head"><div class="with-avatar">${avatar(name, 32)}<h1>${name}</h1></div></div>
+${flashBanner(opts.msg)}
+${errorBanner(opts.error)}
+<p class="muted">${user.siteAdmin ? 'Site admin' : html`Owns the collection <span class="mono">${name}</span> by name`}</p>
+${passkeyBox}
+${handoff}`;
+  return layout('Your account', content, { viewer, path: '/account' });
+}
+
+/** The code accountPage's handoff form minted, shown once. */
+export function accountLinkPage(viewer: Viewer, code: string, minutes: number): string {
+  const content = html`<div class="form-box">
+<h1>Sign in on another device</h1>
+<p>On the other device, open this vault's sign-in page, choose <b>Enter a code from a signed-in device</b>, and type:</p>
+<div class="handoff-code mono">${code}</div>
+<p class="muted small">The code signs that device in as <b>${viewer.auth.username}</b>. It works once and expires in
+${minutes} minutes; showing it again mints a fresh one. The new session is tied to the same credential as this one, so
+revoking that credential signs out both.</p>
+<p><a href="/account">&larr; Your account</a></p>
+</div>`;
+  return layout('Sign in on another device', content, { viewer, path: '/account' });
 }
 
 export function newRepoPage(
@@ -733,6 +864,25 @@ repository (collaborators), per collection (owners), or with the site-admin bit 
 <button type="submit" class="btn">${user.siteAdmin ? 'Withdraw site admin' : 'Make site admin'}</button>
 </form>
 </div>`;
+  // Passkeys sit beside tokens because they are the same kind of thing -- a
+  // credential this user signs in with -- and revoking one is the same
+  // emergency. Adding one is not here: registration takes the authenticator,
+  // which is on the user's own device, so it lives on their /account page.
+  const passkeyRows = (user.passkeys ?? []).map(
+    (p) => html`<tr><td>${p.name ?? 'Passkey'}</td><td class="muted small">${
+      p.created ? timeTag(p.created, '') : ''
+    }</td><td class="mono small muted">${p.id.slice(0, 8)}&hellip;</td><td class="right">
+<form method="post" action="${base}/passkeys/${encodeURIComponent(p.id)}/delete" class="inline-form">
+${csrfField(viewer)}
+<button type="submit" class="btn btn-danger-outline">Remove</button>
+</form></td></tr>`
+  );
+  const passkeys = passkeyRows.length
+    ? html`<h2>Passkeys</h2>
+<table class="listing"><tbody><tr><th>Passkey</th><th>Added</th><th>Id</th><th class="right"></th></tr>${passkeyRows}</tbody></table>
+<p class="muted small">Passkeys sign in to the web interface only, with the user's full standing. ${name} adds them from
+their own account page; removal is immediate, like revoking a token.</p>`
+    : '';
   const identity = html`<div class="form-box">
 <h2>Identity</h2>
 <form method="post" action="${base}/emails">
@@ -764,6 +914,7 @@ ${errorBanner(error)}
 <h2>Tokens</h2>
 ${tokens}
 ${mint}
+${passkeys}
 ${grant}
 ${identity}
 ${danger}

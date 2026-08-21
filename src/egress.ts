@@ -231,7 +231,9 @@ function readDays(file: string): DayRecord[] {
 function isEgressExempt(root: string, req: Request): boolean {
   if (isUnderSitesHost(loadConfig(root).sites.host, req.hostname)) return false;
   const p = req.path;
-  if (p === '/login' || p === '/logout' || p === '/api/config' || p === '/api/egress') return true;
+  if (p === '/login' || p.startsWith('/login/') || p === '/logout' || p === '/api/config' || p === '/api/egress') {
+    return true;
+  }
   if (p === '/admin' || p.startsWith('/admin/')) return true;
   return p.startsWith('/assets/') || p === '/favicon.svg' || p === '/favicon.ico';
 }

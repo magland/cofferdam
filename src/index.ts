@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -406,6 +407,39 @@ async function loginCmd(inv: Invocation) {
   console.log('Run `mochi logout` to remove it again.');
 }
 
+// ---- web ----
+
+// Best effort and platform-shaped. The URL is printed first, so a machine
+// with no opener, or an SSH session, still leaves the person one paste away.
+function openBrowser(url: string): void {
+  const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
+  const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
+  try {
+    const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
+    child.on('error', () => {});
+    child.unref();
+  } catch {
+    // The link is already on the terminal.
+  }
+}
+
+async function webCmd(inv: Invocation) {
+  const target = await targetFrom(inv);
+  const next = inv.args[0] ?? '/';
+  const data = await api(target, 'POST', '/api/login-url', { next });
+  const json = jsonMode(inv);
+  if (json.enabled) {
+    printJson(pickObject(data, json.fields));
+    return;
+  }
+  console.log(`A one-time sign-in link for '${data.username}' at ${target.host}:`);
+  console.log('');
+  console.log(`  ${data.url}`);
+  console.log('');
+  console.log(`It works once, expires in ${data.expiresInSeconds} seconds, and asks before signing in.`);
+  openBrowser(String(data.url));
+}
+
 async function logoutCmd(inv: Invocation) {
   if (inv.str('token') || inv.str('helper')) {
     throw new CliError('logout takes only --host: it removes a stored credential rather than making one.', EXIT_USAGE);
@@ -630,6 +664,20 @@ nothing when that is nothing.`,
       ...TARGET_OPTIONS,
     ],
     run: loginCmd,
+  },
+  {
+    path: ['web'],
+    summary: 'Open the vault in a browser, signed in as you',
+    description: `Mints a one-time sign-in link from the stored token and opens it in the
+default browser (the link is printed too, for machines without one). The link
+lands on a page that names the account and signs in on a click; it works once
+and expires after two minutes. The browser session is bound to the same token
+this CLI holds, so revoking that token signs the browser out as well.
+
+An optional path says where to land: mochi web /alice/myrepo`,
+    args: [{ name: 'path' }],
+    options: [JSON_OPTION, ...TARGET_OPTIONS],
+    run: webCmd,
   },
   {
     path: ['logout'],

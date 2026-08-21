@@ -693,6 +693,11 @@ table.listing:has(+ .empty-state:not([hidden])) { border-top: none; }
 .signin .form-box { padding: 16px; }
 .signin .btn { width: 100%; justify-content: center; }
 .signin-note { margin: 16px 0 0; text-align: center; }
+/* The passkey button under the token form: a quiet second door. */
+.signin-alt { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.signin-alt .form-error { margin: 10px 0 0; }
+/* A handoff code is read across a room, so it is set like a heading. */
+.handoff-code { font-size: 28px; letter-spacing: 4px; text-align: center; padding: 16px 0; user-select: all; }
 
 /* Two fields reading as one address, "collection / name". */
 .name-row { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }

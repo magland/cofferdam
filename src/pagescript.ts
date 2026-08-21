@@ -313,6 +313,129 @@ function filterMenu(input) {
   }
 }
 
+// ---- passkeys ----
+//
+// The WebAuthn ceremonies, client half. The server speaks JSON on
+// /login/passkey* and /account/passkeys*, with every binary field base64url,
+// which is also the encoding the WebAuthn API's own ids use. Buttons carry
+// data attributes and start hidden; support is detected here, so a browser
+// without WebAuthn (or a page served over plain http, where the API does not
+// exist) simply never shows them.
+
+function pkDecode(s) {
+  s = String(s).replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  var bin = atob(s);
+  var out = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out.buffer;
+}
+function pkEncode(buf) {
+  var b = new Uint8Array(buf);
+  var bin = '';
+  for (var i = 0; i < b.length; i++) bin += String.fromCharCode(b[i]);
+  return btoa(bin).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+}
+function pkSay(message) {
+  var el = document.querySelector('[data-passkey-error]');
+  if (!el) return;
+  el.textContent = message || '';
+  el.hidden = !message;
+}
+function pkFetch(url, body) {
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(function (r) {
+    return r.json().catch(function () { return {}; }).then(function (d) {
+      if (!r.ok) throw new Error(d.error || ('the server answered ' + r.status));
+      return d;
+    });
+  });
+}
+// A cancelled or timed-out prompt is the user's decision, not a fault to
+// paint red; anything else is said as the server or browser said it.
+function pkProblem(e) {
+  if (e && e.name === 'NotAllowedError') pkSay('Cancelled, or the prompt timed out. Try again when ready.');
+  else pkSay((e && e.message) || 'Something went wrong.');
+}
+function pkRegister(btn) {
+  var form = closestOf(btn, '[data-passkey-form]');
+  var csrf = form.querySelector('input[name=csrf]').value;
+  var label = (form.querySelector('input[name=name]') || { value: '' }).value;
+  pkSay('');
+  btn.disabled = true;
+  pkFetch('/account/passkeys/challenge', { csrf: csrf })
+    .then(function (o) {
+      var publicKey = {
+        challenge: pkDecode(o.challenge),
+        rp: o.rp,
+        user: { id: pkDecode(o.user.id), name: o.user.name, displayName: o.user.displayName },
+        pubKeyCredParams: o.pubKeyCredParams,
+        authenticatorSelection: o.authenticatorSelection,
+        timeout: o.timeout,
+        attestation: o.attestation,
+        excludeCredentials: (o.excludeCredentials || []).map(function (c) {
+          return { type: 'public-key', id: pkDecode(c.id) };
+        }),
+      };
+      return navigator.credentials.create({ publicKey: publicKey });
+    })
+    .then(function (cred) {
+      return pkFetch('/account/passkeys', {
+        csrf: csrf,
+        name: label,
+        id: cred.id,
+        clientDataJSON: pkEncode(cred.response.clientDataJSON),
+        attestationObject: pkEncode(cred.response.attestationObject),
+      });
+    })
+    .then(function (d) { location.href = d.next; })
+    .catch(pkProblem)
+    .then(function () { btn.disabled = false; });
+}
+function pkLogin(btn) {
+  pkSay('');
+  btn.disabled = true;
+  pkFetch('/login/passkey/challenge', {})
+    .then(function (o) {
+      return navigator.credentials.get({
+        publicKey: {
+          challenge: pkDecode(o.challenge),
+          rpId: o.rpId,
+          timeout: o.timeout,
+          userVerification: o.userVerification,
+          allowCredentials: [],
+        },
+      });
+    })
+    .then(function (cred) {
+      return pkFetch('/login/passkey', {
+        next: btn.getAttribute('data-next') || '/',
+        id: cred.id,
+        clientDataJSON: pkEncode(cred.response.clientDataJSON),
+        authenticatorData: pkEncode(cred.response.authenticatorData),
+        signature: pkEncode(cred.response.signature),
+        userHandle: cred.response.userHandle ? pkEncode(cred.response.userHandle) : null,
+      });
+    })
+    .then(function (d) { location.href = d.next; })
+    .catch(pkProblem)
+    .then(function () { btn.disabled = false; });
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var supported = Boolean(window.PublicKeyCredential);
+  var login = document.querySelector('[data-passkey-login]');
+  if (login && supported) login.hidden = false;
+  var add = document.querySelector('[data-passkey-add]');
+  var unsupported = document.querySelector('[data-passkey-unsupported]');
+  if (add && !supported) {
+    add.disabled = true;
+    if (unsupported) unsupported.hidden = false;
+  }
+});
+
 // ---- wiring ----
 //
 // The markup carries data attributes rather than inline handlers, and the
@@ -345,6 +468,10 @@ document.addEventListener('click', function (e) {
   if (lines) { copyLines(lines); return; }
   var select = closestOf(t, '[data-select-all]');
   if (select) { select.select(); return; }
+  var pkAdd = closestOf(t, '[data-passkey-add]');
+  if (pkAdd) { pkRegister(pkAdd); return; }
+  var pkGo = closestOf(t, '[data-passkey-login-btn]');
+  if (pkGo) { pkLogin(pkGo); return; }
   var mdTab = closestOf(t, '[data-md-pane]');
   if (mdTab) { mdPane(mdEditorOf(mdTab), mdTab.getAttribute('data-md-pane')); return; }
   var mdBtn = closestOf(t, '[data-md-act]');

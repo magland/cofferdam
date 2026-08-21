@@ -109,6 +109,7 @@ function userBox(opts: PageOpts): Html {
 <summary aria-label="Account menu">${avatar(name, 24)}${icon('chevron-down', 'caret')}</summary>
 <div class="dropdown-menu dd-right">
   <div class="dd-section">Signed in as <b>${name}</b></div>
+  <a class="dd-item" href="/account">${icon('person')}<span>Your account</span></a>
   ${admin}
   <form method="post" action="/logout">${csrfField(viewer)}<button type="submit" class="dd-item">${icon(
     'sign-out'

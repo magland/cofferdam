@@ -6,7 +6,7 @@ import { loadConfig } from './config';
 import { fileCache } from './filecache';
 import { isUnderSitesHost } from './siteshost';
 import { isSiteAdmin } from './perms';
-import { AuthResult, TokenRecord, loadVault } from './vault';
+import { AuthResult, authForBinding, loadVault } from './vault';
 
 // Stateless signed-cookie sessions on top of the token model. The payload is
 // base64url JSON plus an HMAC keyed by <vault>/.secret. There is no server-side
@@ -14,14 +14,15 @@ import { AuthResult, TokenRecord, loadVault } from './vault';
 // request, so deleting a user's tokens cuts them off, and rotating .secret
 // invalidates every session at once.
 //
-// A session is bound to the single token it was minted from, by recording that
-// token's SHA-256 hash (the same value vault.json stores, so no new secret is
-// put in the cookie, and the hash is useless as a credential). Resolving a
-// session looks that token up in live vault.json, so deleting one token ends
-// the sessions it started and leaves the user's other sessions alone. The
-// token record found this way is the real one, which is why the session carries
-// no copy of the token's scope: the role checks in src/perms.ts read it from
-// the vault.
+// A session is bound to the single credential it was minted from, by
+// recording that token's SHA-256 hash (the same value vault.json stores, so
+// no new secret is put in the cookie, and the hash is useless as a
+// credential) or, for a passkey sign-in, the passkey's binding string (see
+// authForBinding in src/vault.ts). Resolving a session looks that credential
+// up in live vault.json, so deleting one token or passkey ends the sessions
+// it started and leaves the user's other sessions alone. The token record
+// found this way is the real one, which is why the session carries no copy of
+// the token's scope: the role checks in src/perms.ts read it from the vault.
 
 // Cookies are not scoped by origin, so any document on any host under a shared
 // parent domain can set a cookie named mochi_session with
@@ -182,11 +183,12 @@ export function getViewer(req: Request, root: string): Viewer | null {
   if (!session) return null;
   const state = loadVault(root);
   if (state.status !== 'ok') return null;
-  const user = state.vault.users[session.u];
-  if (!user) return null;
-  const token: TokenRecord | undefined = user.tokens.find((t) => t.hash === session.t);
-  if (!token) return null;
-  return { auth: { username: session.u, user, token }, csrf: session.csrf };
+  // `t` is the token hash the session was minted from, or a passkey binding;
+  // either way it resolves against live vault.json, so revoking the token or
+  // removing the passkey ends the session on the next request.
+  const auth = authForBinding(state.vault, session.u, session.t);
+  if (!auth) return null;
+  return { auth, csrf: session.csrf };
 }
 
 export function viewerIsAdmin(viewer: Viewer | null): boolean {

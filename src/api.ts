@@ -15,6 +15,7 @@ import {
 import { displayName, isValidName, isValidUserName, listCollections, listRepoDirs } from './scan';
 import { AuthResult, addUserToken, loadVault, setSiteAdmin } from './vault';
 import { apiError, requireApiAuth as authenticateRequest } from './api/auth';
+import { LOGIN_LINK_TTL_MS, mintLoginLink } from './logincodes';
 import { Egress } from './egress';
 import { AuthLimiter, Gates } from './limit';
 import { LfsContext } from './lfsstore';
@@ -88,6 +89,24 @@ export function registerApi(
           dir: repoPath(root, collection, dirName),
         }) !== null
     );
+
+  // A one-time sign-in URL for the browser, which is how `mochi web` opens
+  // the vault already signed in: the CLI proves the token over the API, and
+  // the session the link starts is bound to that same token, so revoking it
+  // ends both. The link lands on a page that names the account and asks for a
+  // click; see /login/code/:code in src/webops.ts.
+  app.post('/api/login-url', (req, res) => {
+    const auth = requireApiAuth(req, res);
+    if (!auth) return;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const next = typeof body.next === 'string' ? body.next : '/';
+    const code = mintLoginLink(root, auth.username, auth.token.hash, next);
+    res.json({
+      url: `${req.protocol}://${req.get('host')}/login/code/${code}`,
+      username: auth.username,
+      expiresInSeconds: Math.round(LOGIN_LINK_TTL_MS / 1000),
+    });
+  });
 
   app.get('/api/whoami', (req, res) => {
     const auth = requireApiAuth(req, res);

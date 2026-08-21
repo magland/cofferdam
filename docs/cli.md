@@ -29,6 +29,8 @@ mochi import https://github.com/owner/repo mycollection
 
 `mochi login` is the way to configure the CLI for a person at a keyboard: no token to re-supply per command, and nothing to set in the environment. The vault URL is remembered in `~/.config/mochi/login.json` (mode 0600) and the token goes to git's own credential store, which is where git needs it anyway for pushing, so a token is kept in one place rather than two (see [Not typing the token every time](#not-typing-the-token-every-time)). `mochi logout` undoes both.
 
+Once logged in, `mochi web` opens the vault in the browser already signed in: it asks the vault for a one-time link (printed too, for machines without a browser), which lands on a page that names the account and signs in on a click. The link works once and expires after two minutes; `mochi web /alice/myrepo` says where to land. The browser session it starts is bound to the same token the CLI holds, so revoking that token signs the browser out as well.
+
 A caller in a container is in a different position: it has no keyring, may have no writable home directory, and gets its secrets as environment variables. So `MOCHI_HOST` and `MOCHI_TOKEN` are honoured by every command that talks to a vault, and `--token-stdin` reads a token from stdin so that it appears in neither argv nor shell history. Precedence for both the host and the token is the same: the option, then the environment, then what `mochi login` left behind.
 
 ```bash

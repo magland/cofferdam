@@ -4,7 +4,7 @@ A self-hosted git forge, GitHub-shaped: repository browsing, in-browser editing,
 
 Mochi Forge is usually shortened to *mochi*, which is how the command, the npm package, and the vault's own files are spelled.
 
-Reading is anonymous, unless a repository is made private, in which case it is visible only to its collaborators, its collection's owners, and site admins. Every write is authorized by a token, and users are created by an administrator rather than registering themselves. Permissions are GitHub-shaped: a user owns the collection named after them, repositories take collaborators with read, write, or admin roles, and one site-admin bit runs the vault.
+Reading is anonymous, unless a repository is made private, in which case it is visible only to its collaborators, its collection's owners, and site admins. Every write is authorized by a token, and users are created by an administrator rather than registering themselves. Permissions are GitHub-shaped: a user owns the collection named after them, repositories take collaborators with read, write, or admin roles, and one site-admin bit runs the vault. Signing in on the web takes the token once; after that a passkey signs in with a touch, a short code carries a session to another device, and `mochi web` opens a signed-in browser from the terminal.
 
 ## Try it locally
 
