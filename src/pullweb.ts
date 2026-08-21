@@ -450,6 +450,13 @@ export function registerPulls(app: Express, root: string, engine?: CiEngine): vo
         );
         res.redirect(`${pullsUrl(ctx)}/${created.number}`);
       } catch (e) {
+        // A pull request already open for this base and head is where this one
+        // was headed anyway, so the reader is sent there instead of shown a form
+        // error describing it.
+        if (e instanceof pulls.DuplicatePullError) {
+          res.redirect(`${pullsUrl(ctx)}/${e.number}`);
+          return;
+        }
         const message = e instanceof OpError ? e.message : 'Could not open the pull request.';
         res
           .status(400)

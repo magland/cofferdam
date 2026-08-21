@@ -156,6 +156,18 @@ export function readPull(root: string, collection: string, repo: string, n: numb
   return { ...summaryFrom(n, dir, doc), body: doc.body, commentList: readComments(dir) };
 }
 
+/**
+ * A pull request refused because one is already open for the same base and
+ * head. Its own class because the number is what a caller wants: the web
+ * handler sends the reader to the existing pull request rather than
+ * describing it.
+ */
+export class DuplicatePullError extends OpError {
+  constructor(public readonly number: number, head: string, base: string) {
+    super(`Pull request #${number} for ${head} into ${base} is already open.`, 'exists');
+  }
+}
+
 export function createPull(
   root: string,
   collection: string,
@@ -167,6 +179,13 @@ export function createPull(
   const title = checkDiscussionTitle(PULL, input.title);
   const body = checkDiscussionBody(PULL, input.body);
   if (input.base === input.head) throw new OpError('A branch cannot be merged into itself.');
+  // One open pull request per (base, head): a second would show the same
+  // commits and go stale the moment the first merges. The existing one is
+  // where new discussion belongs, so the refusal carries its number.
+  const open = listPulls(root, collection, repo).find(
+    (p) => p.state === 'open' && p.base === input.base && p.head === input.head
+  );
+  if (open) throw new DuplicatePullError(open.number, input.head, input.base);
   const now = new Date().toISOString();
   const n = allocate(PULL, dir, (sub) =>
     writeDoc(
