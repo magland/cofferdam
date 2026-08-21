@@ -4,7 +4,7 @@ import * as path from 'path';
 import { JobSpec } from '../ci/protocol';
 import { StepState } from '../ci/runs';
 import { ActionStore, defaultActionCacheDir } from './actions';
-import { dockerAvailable } from './docker';
+import { containerEngine, dockerAvailable } from './docker';
 import { Externals, defaultExternalsDir } from './externals';
 import { JobResult, defaultWorkDir, runJob } from './job';
 import { startWakeListener } from './wake';
@@ -74,13 +74,17 @@ export function saveRunnerConfig(config: RunnerConfig, file = configPath()): voi
   fs.renameSync(tmp, file);
 }
 
-class JobClient {
+// The per-job wire client: logs, heartbeats, progress, and the final report.
+// It needs a host and a bearer token and nothing else about its caller, which
+// is what lets a manual session (`feorge job run`) drive it with a session
+// token exactly as the long-lived runner drives it with a runner token.
+export class JobClient {
   private buffer: { s: number; t: string; l: string }[] = [];
   private flushing = false;
   private cancelSeen = false;
   private timer: NodeJS.Timeout | null = null;
 
-  constructor(private runner: Runner, private spec: JobSpec) {}
+  constructor(private runner: { host: string; token: string }, private spec: JobSpec) {}
 
   private base(): string {
     const a = this.spec.address;
@@ -228,13 +232,7 @@ export class Runner {
   }
 
   imageFor(labels: string[]): string {
-    for (const l of labels) {
-      if (this.images[l]) return this.images[l];
-    }
-    // An unmapped label is taken as an image name when it looks like one,
-    // which makes `runs-on: node:24` work without configuration.
-    const looksLikeImage = labels.find((l) => l.includes('/') || l.includes(':'));
-    return looksLikeImage ?? this.images['ubuntu-latest'];
+    return imageForLabels(this.images, labels);
   }
 
   cloneUrl(collection: string, repo: string): string {
@@ -291,7 +289,7 @@ export class Runner {
     const docker = await dockerAvailable();
     if (!docker) {
       throw new Error(
-        'Docker is not available. The runner executes every job in a container, so it needs a working `docker` command.'
+        `${containerEngine()} is not available. The runner executes every job in a container, so it needs a working \`${containerEngine()}\` command.`
       );
     }
     const identity = await this.whoami();
@@ -319,7 +317,7 @@ export class Runner {
       : null;
     console.log(`feorge runner ${identity.name} ready`);
     console.log(`  server:  ${this.host}`);
-    console.log(`  docker:  ${docker}`);
+    console.log(`  engine:  ${containerEngine()} ${docker}`);
     console.log(`  workdir: ${this.workDir}`);
     console.log(`  labels:  ${labels.join(', ')}`);
     console.log(`  serving: ${identity.allow.join(', ')}`);
@@ -366,44 +364,86 @@ export class Runner {
   }
 
   private async execute(spec: JobSpec): Promise<void> {
-    const label = `${spec.address.collection}/${spec.address.repo} #${spec.runNumber} ${spec.name}`;
-    console.log(`> ${label}`);
-    const client = new JobClient(this, spec);
-    client.start();
-    this.actions.beginJob();
-    const started = Date.now();
-    let result: JobResult;
-    try {
-      result = await runJob(
-        spec,
-        {
-          imageFor: (labels) => this.imageFor(labels),
-          cloneUrl: (c, r) => this.cloneUrl(c, r),
-          workDir: this.workDir,
-          network: this.network,
-          actions: this.actions,
-          externals: this.externals,
-          serverUrl: this.host,
-          runnerToken: this.token,
-        },
-        {
-          log: (i, line) => client.log(i, line),
-          progress: (steps) => void client.progress(steps),
-          cancelled: () => client.cancelled(),
-        }
-      );
-    } catch (e) {
-      // A failure here is the runner's own, not the workflow's, and the log
-      // is read on the vault by someone who cannot see this machine: say
-      // which runner it was and where it was working, so that the reader
-      // knows whose filesystem the message is about.
-      const where = `${this.name || 'this runner'} on ${os.hostname()}, work dir ${this.workDir}`;
-      client.log(-1, `runner error (${where}): ${e instanceof Error ? e.message : String(e)}`);
-      result = { conclusion: 'failure', steps: [], outputs: {}, summaries: [] };
-    }
-    await client.complete(result);
-    client.stop();
-    const secs = Math.round((Date.now() - started) / 1000);
-    console.log(`< ${label}: ${result.conclusion} in ${secs}s`);
+    await executeSpec(spec, {
+      host: this.host,
+      token: this.token,
+      runnerName: this.name || 'this runner',
+      imageFor: (labels) => this.imageFor(labels),
+      workDir: this.workDir,
+      network: this.network,
+      actions: this.actions,
+      externals: this.externals,
+    });
   }
+}
+
+export interface ExecuteDeps {
+  host: string;
+  token: string;
+  /** What the log calls this executor when the failure is its own. */
+  runnerName: string;
+  imageFor: (labels: string[]) => string;
+  workDir: string;
+  network?: string;
+  actions: ActionStore;
+  externals: Externals;
+}
+
+/**
+ * Take one leased job through execution and reporting. Shared between the
+ * long-lived runner and a manual session, which differ in how they came by
+ * the lease and in nothing that happens after.
+ */
+export async function executeSpec(spec: JobSpec, deps: ExecuteDeps): Promise<JobResult> {
+  const label = `${spec.address.collection}/${spec.address.repo} #${spec.runNumber} ${spec.name}`;
+  console.log(`> ${label}`);
+  const client = new JobClient({ host: deps.host, token: deps.token }, spec);
+  client.start();
+  deps.actions.beginJob();
+  const started = Date.now();
+  let result: JobResult;
+  try {
+    result = await runJob(
+      spec,
+      {
+        imageFor: deps.imageFor,
+        cloneUrl: (c, r) => `${deps.host}/${encodeURIComponent(c)}/${encodeURIComponent(r)}`,
+        workDir: deps.workDir,
+        network: deps.network,
+        actions: deps.actions,
+        externals: deps.externals,
+        serverUrl: deps.host,
+        runnerToken: deps.token,
+      },
+      {
+        log: (i, line) => client.log(i, line),
+        progress: (steps) => void client.progress(steps),
+        cancelled: () => client.cancelled(),
+      }
+    );
+  } catch (e) {
+    // A failure here is the runner's own, not the workflow's, and the log
+    // is read on the vault by someone who cannot see this machine: say
+    // which runner it was and where it was working, so that the reader
+    // knows whose filesystem the message is about.
+    const where = `${deps.runnerName} on ${os.hostname()}, work dir ${deps.workDir}`;
+    client.log(-1, `runner error (${where}): ${e instanceof Error ? e.message : String(e)}`);
+    result = { conclusion: 'failure', steps: [], outputs: {}, summaries: [] };
+  }
+  await client.complete(result);
+  client.stop();
+  const secs = Math.round((Date.now() - started) / 1000);
+  console.log(`< ${label}: ${result.conclusion} in ${secs}s`);
+  return result;
+}
+
+/** The image a set of runs-on labels selects, given the label→image map. */
+export function imageForLabels(images: Record<string, string>, labels: string[]): string {
+  for (const l of labels) {
+    if (images[l]) return images[l];
+  }
+  // An unmapped label is taken as an image name when it looks like one,
+  // which makes `runs-on: node:24` work without configuration.
+  const looksLikeImage = labels.find((l) => l.includes('/') || l.includes(':'));
+  return looksLikeImage ?? images['ubuntu-latest'];
 }

@@ -9,6 +9,7 @@ import { AuthResult, authenticateToken, loadVault } from '../vault';
 import { baseUrlOf } from '../web';
 import { ArtifactError, artifactPath, artifactsDir, deploySite, isValidArtifactName, listArtifacts } from './artifacts';
 import { CiEngine } from './engine';
+import { MANUAL_LABEL, looksLikeSessionToken, sessionRunnerName } from './manual';
 import { LogLine } from './protocol';
 import { Conclusion, StepState } from './runs';
 import {
@@ -100,7 +101,30 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
       denyTooMany(res, allowed.retryAfter);
       return null;
     }
-    const auth = authenticateRunner(root, m[1].trim());
+    const token = m[1].trim();
+    // A manual session speaks these endpoints too, once it holds a job: the
+    // lease plus the runner name `manual:<id>` scope it to exactly that job,
+    // the same way a registered runner is scoped, so the endpoints need not
+    // know which kind is talking.
+    if (looksLikeSessionToken(token)) {
+      const session = engine.authenticateManualSession(token);
+      if (!session) {
+        authLimiter.fail(req, null);
+        apiError(res, 401, 'this manual session is no longer recognized; the run has likely finished');
+        return null;
+      }
+      return {
+        name: sessionRunnerName(session.grant),
+        runner: {
+          hash: '',
+          labels: [],
+          allow: [`${session.collection}/${session.repo}`],
+          createdBy: session.grant.mintedBy,
+          createdAt: session.grant.mintedAt,
+        },
+      };
+    }
+    const auth = authenticateRunner(root, token);
     if (!auth) {
       authLimiter.fail(req, null);
       apiError(res, 401, 'invalid runner token');
@@ -198,6 +222,14 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
     }
     if (allow.length === 0) {
       apiError(res, 400, 'a runner needs at least one --allow glob saying which repositories it serves');
+      return;
+    }
+    if (labels.includes(MANUAL_LABEL)) {
+      apiError(
+        res,
+        400,
+        `'${MANUAL_LABEL}' is a reserved label: a job that names it runs only through a command pasted from its run page, never on a registered runner`
+      );
       return;
     }
     // A runner may take jobs for every repository its allow list covers, and
@@ -391,6 +423,172 @@ export function registerCiApi(app: Express, root: string, engine: CiEngine, auth
       return;
     }
     res.json(spec);
+  });
+
+  // ---- the manual protocol ----
+  //
+  // Three endpoints carry what is particular to a pasted command: redeeming
+  // it, acquiring the run's manual jobs, and handing one back unrun. The rest
+  // of a manual session's traffic (heartbeats, logs, status, artifacts) goes
+  // through the job endpoints below, authenticated by the session token that
+  // requireRunner also accepts.
+
+  function runSummary(run: { number: number; workflowName: string; status: string; conclusion?: string } | null) {
+    if (!run) return null;
+    return {
+      number: run.number,
+      workflowName: run.workflowName,
+      status: run.status,
+      conclusion: run.conclusion ?? null,
+    };
+  }
+
+  app.post('/api/manual/redeem', json, (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const token = typeof body.token === 'string' ? body.token.trim() : '';
+    const host = typeof body.host === 'string' ? body.host : '';
+    if (!token) {
+      apiError(res, 400, 'a "token" is required: the one the pasted command carries');
+      return;
+    }
+    const allowed = authLimiter.allow(req, null);
+    if (!allowed.ok) {
+      denyTooMany(res, allowed.retryAfter);
+      return;
+    }
+    const redeemed = engine.redeemManual(token, host);
+    if (!redeemed) {
+      authLimiter.fail(req, null);
+      apiError(
+        res,
+        401,
+        'this command has expired, was already used, or its run has finished; mint a fresh one from the run page'
+      );
+      return;
+    }
+    res.json({
+      sessionToken: redeemed.sessionToken,
+      collection: redeemed.collection,
+      repo: redeemed.repo,
+      run: {
+        number: redeemed.run.number,
+        workflowName: redeemed.run.workflowName,
+        refName: redeemed.run.refName,
+        sha: redeemed.run.sha,
+        status: redeemed.run.status,
+      },
+      jobs: redeemed.jobs.map((j) => ({
+        id: j.id,
+        key: j.key,
+        name: j.name,
+        status: j.status,
+        conclusion: j.conclusion ?? null,
+        runsOn: j.runsOn,
+      })),
+    });
+  });
+
+  function requireManualSession(req: Request, res: Response): ReturnType<CiEngine['authenticateManualSession']> {
+    const m = (req.get('authorization') ?? '').match(/^bearer\s+(.+)$/i);
+    if (!m) {
+      apiError(res, 401, 'missing session token');
+      return null;
+    }
+    const allowed = authLimiter.allow(req, null);
+    if (!allowed.ok) {
+      denyTooMany(res, allowed.retryAfter);
+      return null;
+    }
+    const session = engine.authenticateManualSession(m[1].trim());
+    if (!session) {
+      authLimiter.fail(req, null);
+      apiError(res, 401, 'this manual session is no longer recognized; the run has likely finished');
+      return null;
+    }
+    return session;
+  }
+
+  app.post('/api/manual/acquire', json, async (req, res) => {
+    const session = requireManualSession(req, res);
+    if (!session) return;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const filter = typeof body.job === 'string' && body.job !== '' ? body.job : null;
+    if (!session.active) {
+      res.status(410).json({
+        reason:
+          session.run?.status === 'completed'
+            ? `the run finished: ${session.run.conclusion ?? 'completed'}`
+            : 'the run no longer exists',
+        run: runSummary(session.run),
+      });
+      return;
+    }
+    // Same disconnect-watching as the runner acquire above, released the
+    // manual way: a job leased to a session that hung up before hearing about
+    // it goes back to waiting for a command, since nothing has executed.
+    let closed = false;
+    const gone = new AbortController();
+    res.on('close', () => {
+      if (!res.writableEnded) {
+        closed = true;
+        gone.abort();
+      }
+    });
+    const result = await engine.waitForManualJob(
+      session.collection,
+      session.repo,
+      session.n,
+      session.grant,
+      filter,
+      baseUrlOf(req),
+      ACQUIRE_TIMEOUT_MS,
+      gone.signal
+    );
+    if (result.kind === 'wait') {
+      if (!closed) res.status(204).end();
+      return;
+    }
+    if (result.kind === 'done') {
+      if (!closed) res.status(410).json({ reason: result.reason, run: runSummary(result.run) });
+      return;
+    }
+    const spec = result.spec;
+    spec.site = siteOf(req, spec.address.collection, spec.address.repo);
+    if (closed) {
+      engine.releaseManualJob(
+        spec.address.collection,
+        spec.address.repo,
+        spec.address.run,
+        spec.address.job,
+        spec.lease,
+        sessionRunnerName(session.grant)
+      );
+      return;
+    }
+    res.json(spec);
+  });
+
+  app.post('/api/manual/jobs/:collection/:repo/:run/:job/release', json, (req, res) => {
+    const session = requireManualSession(req, res);
+    if (!session) return;
+    const a = addressOf(req);
+    if (!a) {
+      apiError(res, 400, 'invalid job address');
+      return;
+    }
+    const ok = engine.releaseManualJob(
+      a.collection,
+      a.repo,
+      a.run,
+      a.job,
+      leaseOf(req),
+      sessionRunnerName(session.grant)
+    );
+    if (!ok) {
+      apiError(res, 409, 'the lease on this job is no longer valid');
+      return;
+    }
+    res.json({ released: true });
   });
 
   // Every job-scoped endpoint checks the lease token, so a runner can only

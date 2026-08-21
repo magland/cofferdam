@@ -4,9 +4,12 @@ import * as path from 'path';
 import { artifactPath, isValidArtifactName, listArtifacts } from '../ci/artifacts';
 import { dispatchWorkflow } from '../ci/dispatch';
 import { CiEngine, listWorkflowsAt } from '../ci/engine';
+import { MINT_TTL_MS } from '../ci/manual';
 import { RunStatus, isValidJobId, jobLogPath, listRuns, readJob, readRun } from '../ci/runs';
 import { isValidRefName } from '../git';
 import { AuthLimiter } from '../limit';
+import { packageVersion } from '../version';
+import { baseUrlOf } from '../web';
 import { apiError, bodyOf, limitParam, requireRepo, requirePush, sendOpError, stringField } from './auth';
 
 // Workflows and their runs.
@@ -230,6 +233,42 @@ export function registerCiRunApi(app: Express, root: string, limiter: AuthLimite
     } catch (e) {
       apiError(res, 400, e instanceof Error ? e.message : String(e));
     }
+  });
+
+  /**
+   * Mint the command that runs this run's manual jobs on a machine of the
+   * caller's. Takes the write role, the same standing that dispatches and
+   * re-runs workflows: minting decides that repository code will execute
+   * somewhere, which is exactly what those decide.
+   *
+   * The token is in the response once and only its hash is kept, as with
+   * every credential a vault issues. It must be redeemed within fifteen
+   * minutes and is spent by redemption; the npx version is pinned to this
+   * vault's own, so the pasted command runs the client this server was
+   * released with.
+   */
+  app.post('/api/repos/:collection/:repo/runs/:n/exec-command', (req, res) => {
+    const ctx = requirePush(root, limiter, req, res);
+    if (!ctx) return;
+    const n = runNumber(req.params.n);
+    if (n === null || !readRun(root, ctx.repo.collection, ctx.repo.name, n)) {
+      apiError(res, 404, `no run #${req.params.n}`);
+      return;
+    }
+    const minted = engine.mintManual(ctx.repo.collection, ctx.repo.name, n, ctx.actor.username);
+    if ('error' in minted) {
+      if (minted.error === 'finished') apiError(res, 409, `run #${n} has finished; there is nothing left to run`);
+      else apiError(res, 400, `run #${n} has no manual jobs (none of its jobs has 'manual' in runs-on)`);
+      return;
+    }
+    const url = baseUrlOf(req);
+    res.status(201).json({
+      run: n,
+      token: minted.token,
+      expiresAt: minted.grant.expiresAt,
+      expiresInMinutes: Math.round(MINT_TTL_MS / 60000),
+      command: `npx @magland/feorge@${packageVersion()} job run ${url} ${minted.token}`,
+    });
   });
 
   app.post('/api/repos/:collection/:repo/dispatches', async (req, res) => {

@@ -2,15 +2,28 @@ import { ChildProcess, execFile, spawn } from 'child_process';
 
 // The Docker surface the runner needs, as thin wrappers over the CLI rather
 // than the Engine API socket. Shelling out keeps the runner dependency-free
-// and works with anything that provides a `docker` command, including
-// Podman's shim.
+// and works with anything that provides the docker command set; `podman`
+// answers the same arguments, so the binary is a setting rather than a fact.
 
 export class DockerError extends Error {}
 
+// Which binary carries the commands below. Set once at startup by whichever
+// CLI is running (see setContainerEngine); every wrapper reads it, so a
+// runner told to use podman uses it for everything or for nothing.
+let engineBin = 'docker';
+
+export function setContainerEngine(bin: 'docker' | 'podman'): void {
+  engineBin = bin;
+}
+
+export function containerEngine(): string {
+  return engineBin;
+}
+
 function run(args: string[], input?: string): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = execFile('docker', args, { maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) reject(new DockerError(`docker ${args[0]} failed: ${(stderr || err.message).trim()}`));
+    const child = execFile(engineBin, args, { maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) reject(new DockerError(`${engineBin} ${args[0]} failed: ${(stderr || err.message).trim()}`));
       else resolve({ stdout, stderr });
     });
     if (input !== undefined && child.stdin) {
@@ -29,6 +42,22 @@ export async function dockerAvailable(): Promise<string | null> {
   }
 }
 
+/**
+ * What a given binary would report as its server version, without changing
+ * which one this process uses. The CLIs ask this of both `docker` and
+ * `podman` to offer a choice; a binary that is missing, or present with no
+ * working daemon behind it, answers null either way, since a runner cares
+ * only whether containers can actually be started.
+ */
+export function probeEngine(bin: 'docker' | 'podman'): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile(bin, ['version', '--format', '{{.Server.Version}}'], { timeout: 15000 }, (err, stdout) => {
+      if (err) resolve(null);
+      else resolve(stdout.toString().trim() || 'unknown');
+    });
+  });
+}
+
 export async function imagePresent(image: string): Promise<boolean> {
   try {
     await run(['image', 'inspect', image]);
@@ -40,7 +69,7 @@ export async function imagePresent(image: string): Promise<boolean> {
 
 export function pullImage(image: string, onLine: (line: string) => void): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn('docker', ['pull', image]);
+    const child = spawn(engineBin, ['pull', image]);
     const feed = (buf: Buffer) => {
       for (const line of buf.toString('utf8').split('\n')) {
         if (line.trim() !== '') onLine(line.replace(/\r/g, ''));
@@ -115,7 +144,7 @@ export function execInContainer(
   if (opts.user) args.push('--user', opts.user);
   for (const [k, v] of Object.entries(opts.env ?? {})) args.push('--env', `${k}=${v}`);
   args.push(id, ...argv);
-  const child = spawn('docker', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(engineBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
   // Split on newlines across chunk boundaries, and cap any single line so a
   // program printing a gigabyte without a newline cannot exhaust memory.
@@ -162,7 +191,7 @@ export function execInContainer(
 export function writeFileInContainer(id: string, containerPath: string, content: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(
-      'docker',
+      engineBin,
       ['exec', '--interactive', id, 'sh', '-c', `cat > "$0"`, containerPath],
       { stdio: ['pipe', 'ignore', 'pipe'] }
     );

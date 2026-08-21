@@ -104,7 +104,7 @@ Job workspaces are made under the system temporary directory, which `--work-dir`
 
 Actions named by `uses:` are downloaded from `https://github.com` and cached under `~/.cache/feorge`, which `--actions-url` and `--cache-dir` change. The ref is resolved to a commit first, with one `git ls-remote`, and the cache entry is keyed by that commit: a branch or tag that has moved is picked up on the next run, and one that has not is never downloaded again. The log says which commit an action resolved to and whether the copy came from the cache, so a run that used an old copy is not mistaken for one that used the tip. A forge that cannot answer `ls-remote` falls back to keying by name and re-fetching after a day, and says so. `--no-action-cache` downloads every time.
 
-`runs-on` labels map to images. The defaults cover `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, and `self-hosted` with the [`catthehacker`](https://github.com/catthehacker/docker_images) images that `act` also uses; `--image <label>=<image>` overrides any of them, and an unmapped label that looks like an image name (`runs-on: node:24`) is used as one. Note that the images decide what your workflows can assume: a bare `ubuntu:24.04` has no node, no python, and no compilers.
+`runs-on` labels map to images. The defaults cover `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, and `self-hosted` with the [`catthehacker`](https://github.com/catthehacker/docker_images) images that `act` also uses; `--image <label>=<image>` overrides any of them, and an unmapped label that looks like an image name (`runs-on: node:24`) is used as one. One label is reserved: `manual` marks a job that no registered runner may take, described in [Manual jobs](#manual-jobs-run-by-pasting-a-command), and registering a runner with that label is refused. Note that the images decide what your workflows can assume: a bare `ubuntu:24.04` has no node, no python, and no compilers.
 
 If the runner dies mid-job, the server notices the lease expire and requeues the job; after three attempts it fails it with a message naming the runner, rather than retrying forever. A failure in the runner itself rather than in the workflow, such as a work directory that has been removed underneath it, is logged against the run naming the runner, the machine it is on, and the directory it was working in, since none of that is visible to whoever is reading the run.
 
@@ -152,6 +152,26 @@ feorge deploy fly runner destroy my-runner    # the app, and the registration wi
 ```
 
 A runner deployed this way is a runner like any other: it executes whatever the repositories in its allow list contain, now on a machine in your Fly organization rather than on your laptop.
+
+### Manual jobs, run by pasting a command
+
+A job whose `runs-on` names the reserved label `manual` is never handed to a registered runner, whatever its other labels say. It waits until someone with the write role presses **Run it yourself** on the run page (or runs `feorge run exec-command <n>`), which mints a command to paste on whatever machine should execute it:
+
+```bash
+npx @magland/feorge@0.3.0 job run https://vault.example.com feorge_run_9d75dd45...
+```
+
+This is the arrangement for a machine that should execute repository code only while a person is watching it do so: a workstation you have an account on but do not administer, hardware too large to dedicate to CI, a machine holding data the job needs. Nothing is installed and nothing is registered; the machine needs node and a working docker or podman, and the pasted process reaches the vault only outbound, so it works from behind any NAT. It is also a decent way to debug a job on your own laptop, whether or not anything about the machine worries you.
+
+The pasted process shows each job before running it, image, commit, and every step, and executes nothing until you agree; `--yes` skips the asking, and is required when there is no terminal to ask on. That check is the point of the mode, and it is one a standing runner structurally cannot offer: a registered runner executes whatever arrives, while a pasted command executes what you just read. Read it.
+
+One paste serves one run. The session takes the run's manual jobs as they become eligible, waiting through gaps where the next one is blocked on jobs running elsewhere, and exits when the run has nothing left for it, saying how the run concluded. A run can hold several sessions at once, and `--job <glob>` confines one to particular jobs, so a `bigmem` job can run at the office while a `gpu` job runs somewhere else. `runs-on: [manual, ubuntu-24.04]` picks the image by the ordinary label rules; bare `runs-on: manual` gets the default image.
+
+The token in the command is single-use and dies unredeemed after fifteen minutes. Redeeming it trades it for a session credential that exists only in the pasted process, so the copy a command leaves in shell history and terminal scrollback buys nothing afterwards; only hashes of either are stored, as with every credential a vault issues. Minting takes the write role, the standing that already decides whether workflows run at all, and the job's record keeps who minted and the hostname the session reported, shown on the run page as `run manually by alice on ccmlin008`.
+
+Everything after the lease is the registered runner's own path: the same per-job leases and heartbeats, the same log streaming and masking, the same timeout enforcement, artifacts, and site deploys. The one deliberate difference is what happens when the session dies mid-job: the job fails at once when its lease expires, naming the session, rather than requeueing, since nothing else can pick a manual job up and a job silently waiting for a person who has gone would read as a run that hangs. Manual jobs the session never claimed stay waiting, and a fresh command from the run page picks them up. Declining at the confirmation prompt is not a failure: the job goes back to waiting untouched.
+
+Manual dispatch scales exactly as badly as it sounds, one person at one terminal per run, and that is by design. Use it for the few jobs that need a particular machine or a watching eye, and registered runners for everything that should simply happen.
 
 ### Is a runner actually there?
 

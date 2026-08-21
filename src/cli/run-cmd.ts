@@ -331,6 +331,32 @@ nothing and needs no protocol.`,
     },
   },
   {
+    path: ['run', 'exec-command'],
+    summary: "Mint the command that runs a run's manual jobs on a machine of yours",
+    description: `A job with 'manual' in runs-on waits for a person rather than a runner. This
+mints the command to paste on the machine that should execute it, the same one
+the run page's "Run it yourself" button mints. The token in it is shown once,
+must be pasted within fifteen minutes, and works once.`,
+    args: [{ name: 'number', required: true }],
+    options: [JSON_OPTION, ...COMMON],
+    async run(inv) {
+      const target = await targetFrom(inv);
+      const repo = await resolveRepo(inv, target);
+      const n = runNumber(inv);
+      const data = await api(target, 'POST', `${repoPath(repo)}/runs/${n}/exec-command`);
+      const json = jsonMode(inv);
+      if (json.enabled) {
+        printJson(pickObject(data, json.fields));
+        return;
+      }
+      console.log('Paste this on the machine that should run the manual jobs (shown once):');
+      console.log('');
+      console.log(`  ${data.command}`);
+      console.log('');
+      console.log(`It expires in ${data.expiresInMinutes} minutes and works once.`);
+    },
+  },
+  {
     path: ['run', 'download'],
     summary: "Download a run's artifacts",
     description: `An artifact is a tar. Without --artifact every artifact of the run is downloaded;

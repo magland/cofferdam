@@ -35,6 +35,7 @@ import {
   deployFlyRunnerDestroyCmd,
   deployFlyRunnerShowCmd,
 } from './deploy-runner-cli';
+import { jobRunCmd } from './job-cli';
 import { runnerAddCmd, runnerListCommand, runnerRemoveCmd, runnerRunCmd, runnerWakeCmd } from './runner-cli';
 import { seedTrustProxy } from './config';
 import { isValidUserName } from './scan';
@@ -711,8 +712,9 @@ the vault's machine, so a vault with no runner queues its runs and waits.`,
     `Usage: feorge runner run [--host <url>] [--runner-token <t>] [--labels <l,...>]
 
 Reads ~/.config/feorge/runner.json when given no arguments. Needs a working
-docker command; --image <label>=<image> overrides which image a runs-on label
-maps to. Actions named by uses: are fetched from github.com (--actions-url
+docker or podman command; --engine picks one when both are present (asked
+interactively otherwise), and --image <label>=<image> overrides which image a
+runs-on label maps to. Actions named by uses: are fetched from github.com (--actions-url
 changes that) and cached under ~/.cache/feorge (--cache-dir changes that),
 keyed by the commit the ref resolves to, so a moved branch or tag is picked up
 on the next run; --no-action-cache downloads every time. --work-dir sets where
@@ -743,6 +745,30 @@ however many jobs are waiting.`,
     runnerWakeCmd
   ),
   raw(['runner', 'remove'], 'Remove a registered runner', '', runnerRemoveCmd),
+  raw(
+    ['job', 'run'],
+    "Run a workflow run's manual jobs here, from a command minted on its run page",
+    `Usage: feorge job run <vault-url> <token> [--job <pattern>] [--yes]
+                     [--engine docker|podman] [--image <label>=<image>]
+
+The run page of a run with 'runs-on: manual' jobs mints this command, token and
+all (also: feorge run exec-command <n>). The token must be pasted within fifteen
+minutes and works once: redeeming it starts a session that lives until the run
+finishes, and a copy left in scrollback buys nothing afterwards.
+
+Each job is shown step by step and nothing executes until you agree; --yes skips
+the asking, and is required when there is no terminal to ask on. --job limits the
+session to jobs matching a glob over the job key. Jobs execute in containers
+exactly as on a registered runner: --engine picks docker or podman when both are
+present (asked interactively otherwise), and --image, --work-dir, --network,
+--cache-dir, --actions-url, --no-action-cache mean what they mean for
+feorge runner run.
+
+Exits 0 when everything it ran succeeded, 1 when something failed. Ctrl-C
+finishes the job in hand and stops; a second Ctrl-C quits now, and the vault
+fails the abandoned job when its lease expires.`,
+    jobRunCmd
+  ),
   ...repoCommands,
   ...issueCommands,
   ...prCommands,
@@ -786,6 +812,7 @@ const cli: Cli = {
     { name: 'user', summary: 'Users, their scopes, and their tokens' },
     { name: 'deploy', summary: 'Put a vault on Fly.io and manage it there' },
     { name: 'runner', summary: 'Machines that execute workflow jobs' },
+    { name: 'job', summary: 'Run manual workflow jobs from a pasted command' },
   ],
   commands,
   footer: FOOTER,

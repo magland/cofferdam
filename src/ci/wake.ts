@@ -144,8 +144,10 @@ export function startWakeDispatcher(root: string, engine: CiEngine): WakeDispatc
       if (load.running[name]) continue;
       const seen = runnerLastSeen(name);
       if (seen && now - Date.parse(seen) < PRESENT_MS) continue;
+      // A manual job is waiting for a person, not a machine; starting a
+      // runner for one would cost its owner a boot for a job it may not take.
       const waiting = load.queued.some(
-        (j) => runnerAllows(runner, j.collection, j.repo) && j.runsOn.some((l) => runner.labels.includes(l))
+        (j) => !j.manual && runnerAllows(runner, j.collection, j.repo) && j.runsOn.some((l) => runner.labels.includes(l))
       );
       if (!waiting) continue;
       const attempt = attempts.get(name) ?? { at: 0, inFlight: false, lastError: null };

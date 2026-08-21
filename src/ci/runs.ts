@@ -59,6 +59,11 @@ export interface JobRecord {
   stepStates: StepState[];
   summaries?: string[];
   lease?: JobLease;
+  // For a job executed through a pasted command (runs-on: manual): who minted
+  // the command and the hostname the session reported. The audit trail for
+  // "repository code ran on a machine of mine", so it is kept on the record
+  // and shown wherever the job is. The host is self-reported.
+  manual?: { user: string; host: string };
   // Set once the job's log hits its size cap, so the notice is written once.
   logCapped?: boolean;
   attempts: number;

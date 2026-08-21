@@ -260,6 +260,7 @@ GET  /api/repos/:c/:r/runs/:n/artifacts
 GET  /api/repos/:c/:r/runs/:n/artifacts/:name   the tar
 POST /api/repos/:c/:r/runs/:n/cancel
 POST /api/repos/:c/:r/runs/:n/rerun
+POST /api/repos/:c/:r/runs/:n/exec-command      mint the command for the run's manual jobs
 POST /api/repos/:c/:r/dispatches                {workflow, ref?, inputs?}
 ```
 
@@ -268,6 +269,8 @@ POST /api/repos/:c/:r/dispatches                {workflow, ref?, inputs?}
 `?tail=` defaults to 200 and is not a convenience. A job log can be large and is capped by the server as it is written; a caller diagnosing a failure wants the end of it, and handing over the whole thing spends its attention on the part that worked. `?tail=0` asks for all of it. The response distinguishes the two kinds of truncation, which are not the same thing: `truncated` means tail kept only the end, and `capped` means the server stopped recording. A job that failed in the planner has no log at all, only `error`.
 
 Cancelling a run that is not in progress is 409. Dispatching requires the workflow to have a `workflow_dispatch` trigger and the ref to be a branch the repository has.
+
+`exec-command` takes the write role and answers `{command, token, expiresAt, expiresInMinutes}` for a run with waiting [manual jobs](workflows.md#manual-jobs-run-by-pasting-a-command): 400 when the run has none, 409 when it has finished. The token appears in this response and nowhere else, must be redeemed within fifteen minutes, and works once.
 
 **There is nothing behind `gh pr checks`.** feorge has no check suites and no commit statuses. The nearest answer is the runs whose sha matches the pull request's head, which is exactly what `feorge pr checks` computes.
 
@@ -320,7 +323,7 @@ Registration takes ownership of every collection the `allow` globs name (a site 
 
 Each runner in that listing carries `lastSeen` (when it last spoke to the vault, or `null` if not since the vault started: it is kept in memory, so a restart forgets it and a live runner re-announces within one poll) and `running` (the job it holds, or `null`). Beside them, `queued` lists the jobs waiting for a runner with the `runs-on` labels each is asking for, which is what answers "why has this run not started".
 
-`/api/runner/*`, singular, is a private protocol between a vault and the runners it hands jobs to, authenticated by a runner token rather than a user's. It is not an interface to program against and is not documented here. [Workflows](workflows.md) describes what a runner is and does.
+`/api/runner/*`, singular, is a private protocol between a vault and the runners it hands jobs to, authenticated by a runner token rather than a user's. It is not an interface to program against and is not documented here. [Workflows](workflows.md) describes what a runner is and does. `/api/manual/*` is the same kind of thing for `feorge job run`, the process behind a pasted exec command, and is private for the same reason.
 
 ## Rate limits
 

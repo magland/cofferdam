@@ -156,11 +156,15 @@ trap cleanup EXIT
 #    well under a minute, which is nothing like browsing and well past any
 #    sensible limit. The limits are exercised deliberately further down, against
 #    a second server started with a configuration of its own.
+#  - authFailures: 40, for the same reason at a smaller scale: the suite's many
+#    deliberate wrong-token checks all come from one address inside one
+#    fifteen-minute window, and the default budget sits within one failure of
+#    what they add up to. The throttling itself is tested on the second server.
 cat > "$VAULT/config.json" <<'CONFIG'
 {
   "theme": "paper",
   "network": { "trustProxy": true },
-  "limits": { "requestsPerMinute": 0 }
+  "limits": { "requestsPerMinute": 0, "authFailures": 40 }
 }
 CONFIG
 
@@ -3549,6 +3553,92 @@ cache_has "the fallback still delivers the action" '^name=widget-two$'
 
 kill "$FORGE_PID" 2>/dev/null || true
 FORGE_PID=""
+
+# ---- manual jobs: the reserved label, minting, redeeming, releasing ----
+#
+# A job with `manual` in runs-on waits for a pasted command rather than for a
+# runner. Executing one needs Docker and shares the slow section's machinery;
+# what is checked here is everything around execution: the reserved label,
+# the mint, the single-use redemption, the session's acquire and release, and
+# what the pages say meanwhile.
+
+MANUAL_REPO="$TMP/manualrepo"
+git init -q -b main "$MANUAL_REPO"
+mkdir -p "$MANUAL_REPO/.github/workflows"
+cat > "$MANUAL_REPO/.github/workflows/manual.yml" <<'YML'
+name: Manual
+on: [push]
+jobs:
+  bigmem:
+    runs-on: manual
+    steps:
+      - run: echo big
+YML
+git -C "$MANUAL_REPO" add -A
+git -C "$MANUAL_REPO" -c user.email=s@s -c user.name=s commit -qm manual
+git -C "$MANUAL_REPO" push -q "http://owner:$OWNER_TOKEN@127.0.0.1:$PORT/demo/manualjobs" main
+
+# A push answers before its runs are planned (see wait_runs_at_least above),
+# so wait for this run's record rather than guessing at a sleep.
+MANUAL_RUN_JSON="$VAULT/collections/demo/repos/manualjobs.runs/1/run.json"
+for _ in $(seq 1 150); do
+  [ -f "$MANUAL_RUN_JSON" ] && break
+  sleep 0.2
+done
+[ -f "$MANUAL_RUN_JSON" ] || { echo "FAIL: the manual run was not planned within 30s"; exit 1; }
+
+check "registering a runner with the manual label is refused" 400 \
+  -X POST -H "Authorization: Bearer $OWNER_TOKEN" -H "$JSON_CT" \
+  --data '{"name":"manualgrab","labels":["manual"],"allow":["demo/*"]}' "$BASE/api/runners"
+body_has "saying the label is reserved" 'reserved label'
+
+check "the queue marks the job as manual" 200 -H "Authorization: Bearer $OWNER_TOKEN" "$BASE/api/runners"
+body_has "with the flag readers key on" '"manual":true'
+
+check "anonymous sees why the job waits" 200 "$BASE/demo/manualjobs/actions/runs/1"
+body_has "as words about a person, not a runner" 'waiting for someone to run it'
+check "the run page offers the command to the write role" 200 -b "$JAR" "$BASE/demo/manualjobs/actions/runs/1"
+body_has "as a button" 'Run it yourself'
+
+check "mint the exec command" 201 -X POST -H "Authorization: Bearer $OWNER_TOKEN" \
+  "$BASE/api/repos/demo/manualjobs/runs/1/exec-command"
+body_has "carrying the pinned npx command" 'npx @magland/feorge@'
+MINT_TOKEN="$({ grep -o 'feorge_run_[0-9a-f]\{48\}' "$BODY" || true; } | head -1)"
+[ -n "$MINT_TOKEN" ] || { echo "FAIL: no mint token in the exec-command response"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the mint token is in the response, once"
+grep -q "$MINT_TOKEN" "$VAULT/collections/demo/repos/manualjobs.runs/1/manual.json" && {
+  echo "FAIL: the mint token was stored in the clear"; exit 1; }
+PASS=$((PASS+1)); echo "ok: only the mint token's hash is stored"
+
+check "minting takes the write role" 401 -X POST "$BASE/api/repos/demo/manualjobs/runs/1/exec-command"
+
+check "redeem the command" 200 -X POST -H "$JSON_CT" \
+  --data "{\"token\":\"$MINT_TOKEN\",\"host\":\"smokehost\"}" "$BASE/api/manual/redeem"
+body_has "for a session token" '"sessionToken":"feorge_manual_'
+body_has "and the run's manual jobs" '"bigmem"'
+SESSION_TOKEN="$({ grep -o 'feorge_manual_[0-9a-f]\{64\}' "$BODY" || true; } | head -1)"
+[ -n "$SESSION_TOKEN" ] || { echo "FAIL: no session token in the redeem response"; exit 1; }
+
+check "redeeming again finds nothing: the token is spent" 401 -X POST -H "$JSON_CT" \
+  --data "{\"token\":\"$MINT_TOKEN\",\"host\":\"elsewhere\"}" "$BASE/api/manual/redeem"
+
+check "the session acquires the manual job" 200 -X POST -H "Authorization: Bearer $SESSION_TOKEN" \
+  -H "$JSON_CT" --data '{}' "$BASE/api/manual/acquire"
+body_has "as a job spec" '"job":"bigmem"'
+MANUAL_LEASE="$({ grep -o '"lease":"[0-9a-f]*"' "$BODY" || true; } | head -1 | sed 's/.*:"//;s/"$//')"
+[ -n "$MANUAL_LEASE" ] || { echo "FAIL: no lease in the acquired spec"; exit 1; }
+PASS=$((PASS+1)); echo "ok: the spec carries a lease"
+
+check "the job page names who runs it and where" 200 "$BASE/demo/manualjobs/actions/runs/1?job=bigmem"
+body_has "user and reported host" 'run manually by owner on smokehost'
+
+check "declining hands the job back" 200 -X POST -H "Authorization: Bearer $SESSION_TOKEN" \
+  -H "x-feorge-lease: $MANUAL_LEASE" "$BASE/api/manual/jobs/demo/manualjobs/1/bigmem/release"
+body_has "released, not failed" '"released":true'
+check "and it is queued again, attribution gone" 200 -H "Authorization: Bearer $OWNER_TOKEN" \
+  "$BASE/api/repos/demo/manualjobs/runs/1/jobs/bigmem"
+body_has "status queued" '"status":"queued"'
+body_lacks "no manual attribution while nothing holds it" '"manual":{'
 
 # ---- executing a job (opt-in, and needs Docker) ----
 

@@ -18,8 +18,10 @@ import {
   runnerLastSeen,
   setRunnerWake,
 } from './runners';
+import { MANUAL_LABEL, MINT_TTL_MS } from './manual';
 import { newWakeSecret, sendWake, wakeOf } from './wake';
 import { dispatchWorkflow } from './dispatch';
+import { packageVersion } from '../version';
 import * as ciViews from './views';
 
 // The Actions pages and their operations. Reading follows the repository's
@@ -347,6 +349,44 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
     })
   );
 
+  // Mint the pasted command for a run's manual jobs. Write role, like every
+  // other way of causing a workflow to execute; the page the token lands on
+  // is the only place it ever appears, as with runner tokens.
+  app.post(
+    '/:collection/:repo/actions/runs/:run/exec-command',
+    form,
+    ah(async (req, res) => {
+      const actor = repoActor(req, res);
+      if (!actor) return;
+      const loaded = await loadRepo(root, req, res, actor.viewer);
+      if (!loaded) return;
+      const ctx = await makeCtx(root, req, loaded, loaded.defaultBranch ?? '', actor.viewer);
+      if (!ctx.canPush) {
+        fail(res, 403, 'You do not have permission to run workflows in this repository.', actor.viewer);
+        return;
+      }
+      const n = parseInt(req.params.run, 10);
+      const back = `/${encodeURIComponent(loaded.repo.collection)}/${encodeURIComponent(loaded.repo.name)}/actions/runs/${n}`;
+      if (!Number.isInteger(n) || n <= 0) {
+        send404(res, 'No such run', actor.viewer);
+        return;
+      }
+      const minted = engine.mintManual(loaded.repo.collection, loaded.repo.name, n, actor.viewer.auth.username);
+      if ('error' in minted) {
+        const why =
+          minted.error === 'finished'
+            ? `Run #${n} has finished; there is nothing left to run.`
+            : `Run #${n} has no manual jobs.`;
+        fail(res, minted.error === 'finished' ? 409 : 400, why, actor.viewer, back);
+        return;
+      }
+      const command = `npx @magland/feorge@${packageVersion()} job run ${baseUrlOf(req)} ${minted.token}`;
+      res
+        .type('html')
+        .send(ciViews.execCommandPage(ctx, n, command, Math.round(MINT_TTL_MS / 60000), back));
+    })
+  );
+
   app.post(
     '/:collection/:repo/actions/dispatch',
     form,
@@ -465,6 +505,12 @@ export function registerCiWeb(app: Express, root: string, engine: CiEngine): voi
     }
     if (allow.length === 0) {
       showError('Say which repositories this runner may take jobs for, as globs over collection/repo.');
+      return;
+    }
+    if (labels.includes(MANUAL_LABEL)) {
+      showError(
+        `'${MANUAL_LABEL}' is a reserved label: a job that names it runs only through a command pasted from its run page, never on a registered runner.`
+      );
       return;
     }
     const { token } = registerRunner(root, name, {

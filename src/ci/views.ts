@@ -8,6 +8,7 @@ import { adminShell } from '../forms';
 import { RepoCtx, copyRow, csrfField, encPath, layout, repoHeader, repoOpts, repoUrl } from '../views';
 import { ArtifactInfo } from './artifacts';
 import { DispatchableWorkflow } from './engine';
+import { isManualJob } from './manual';
 import { JobRecord, RunRecord, StepState } from './runs';
 
 // The Actions pages: the runs list, one run with its jobs and logs, and the
@@ -274,6 +275,14 @@ export function runPage(
         )}</pre></div></div>`
       : '';
     const errorBox = selected.error ? html`<div class="form-error">${selected.error}</div>` : '';
+    // The audit line for a job that executed through a pasted command: who
+    // authorized it and where it said it ran. The host is what the session
+    // reported about itself, so it is presented as a report, not a finding.
+    const manualBy = selected.manual
+      ? html` <span class="muted small">&middot; run manually by ${selected.manual.user}${
+          selected.manual.host ? html` on ${selected.manual.host}` : ''
+        }</span>`
+      : '';
     if (live) {
       // The tailer appends as textContent, so a live log is stripped of
       // escapes rather than coloured; colour arrives with the step view when
@@ -283,9 +292,14 @@ export function runPage(
       // script, which is what lets /assets/page.js stay one cacheable file
       // and this page carry no executable markup; the tailer there picks
       // them up.
+      const waitingFor = isManualJob(selected.runsOn)
+        ? ctx.canPush
+          ? 'waiting for someone to run it (Run it yourself, above)'
+          : 'waiting for someone to run it'
+        : 'waiting for a runner';
       detail = html`${errorBox}<div class="job-head"><b>${selected.name}</b> ${statusIcon(js)} <span class="muted small">${
-        js === 'queued' ? 'waiting for a runner' : 'running'
-      }</span></div>
+        js === 'queued' ? waitingFor : 'running'
+      }</span>${manualBy}</div>
 <pre class="joblog live" id="livelog" data-log-url="${runBase}/log/${encodeURIComponent(
         selected.id
       )}" data-log-offset="${logOffset}">${initial}</pre>`;
@@ -296,13 +310,24 @@ export function runPage(
       detail = html`${errorBox}<div class="job-head"><b>${selected.name}</b> ${statusIcon(js)} <span class="muted small">${duration(
         selected.startedAt,
         selected.completedAt
-      )}</span>${rawLink}</div>
+      )}</span>${manualBy}${rawLink}</div>
 ${stepBlocks(selected, logLines)}
 ${summaryBox}`;
     }
   }
 
   const canOperate = ctx.canPush && viewer;
+  // Offered while a manual job is waiting: the command that runs this run's
+  // manual jobs on a machine of the viewer's. Minting is a POST because it
+  // issues a credential; the token appears on the page it lands on and
+  // nowhere else.
+  const manualWaiting = jobs.some((j) => isManualJob(j.runsOn) && j.status === 'queued');
+  const execBtn =
+    canOperate && run.status !== 'completed' && manualWaiting
+      ? html`<form method="post" action="${runBase}/exec-command">${csrfField(
+          viewer!
+        )}<button type="submit" class="btn btn-primary" title="Get a command that runs this run's manual jobs on a machine of yours">Run it yourself</button></form>`
+      : '';
   const cancelBtn =
     canOperate && run.status !== 'completed'
       ? html`<form method="post" action="${runBase}/cancel">${csrfField(
@@ -327,7 +352,7 @@ ${summaryBox}`;
   const content = html`${repoHeader(ctx, 'actions')}
 <div class="run-head">
   <div class="run-title">${statusIcon(s)}<h2>${runTitle(run)}</h2></div>
-  <div class="right-group">${rerunBtn}${cancelBtn}</div>
+  <div class="right-group">${execBtn}${rerunBtn}${cancelBtn}</div>
 </div>
 <div class="run-meta muted small">
   <a href="${actionsBase}?workflow=${encodeURIComponent(run.workflowPath)}">${run.workflowName}</a>
@@ -344,6 +369,31 @@ ${summaryBox}`;
 </div>
 ${artifactBox}`;
   return layout(`${runTitle(run)} - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, runBase));
+}
+
+/**
+ * The page a minted exec command lands on, and the only place it appears:
+ * only its hash is stored, as with tokens. Everything the person at the other
+ * terminal needs is here, because by the time they are pasting they are no
+ * longer looking at this page.
+ */
+export function execCommandPage(
+  ctx: RepoCtx,
+  runNumber: number,
+  command: string,
+  expiresInMinutes: number,
+  back: string
+): string {
+  const content = html`${repoHeader(ctx, 'actions')}
+<div class="form-box wide">
+<h1>Run it yourself</h1>
+<p>On a machine with Docker or Podman and Node, paste this. It shows run #${runNumber}'s manual jobs step by step and asks before executing anything; what it runs reports back to this run as any runner would.</p>
+${copyRow(command)}
+<p class="muted small">The command must be pasted within ${expiresInMinutes} minutes and works once: redeeming it trades the token here for a session that lives only in that process, so a copy left in scrollback or shell history buys nothing afterwards. Reloading this page will not show it again; minting another command is the way to get one.</p>
+<p class="muted small">The jobs run as whoever pastes this, on that machine. Read the steps it shows before agreeing to them.</p>
+<p><a class="btn" href="${back}">Back to run #${runNumber}</a></p>
+</div>`;
+  return layout(`Run it yourself - ${ctx.collection}/${ctx.repo}`, content, repoOpts(ctx, back));
 }
 
 // ---- runners, under Admin ----

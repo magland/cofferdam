@@ -8,6 +8,17 @@ import { repoIsPrivate } from '../perms';
 import { findRepo, listCollections, listRepoDirs } from '../scan';
 import { globMatch } from '../vault';
 import { ExprEnv, ExprValue, evalCondition, render } from './expr';
+import {
+  ManualGrant,
+  findMintable,
+  findSession,
+  isManualJob,
+  isManualRunnerName,
+  loadGrants,
+  mintGrant,
+  redeemGrant,
+  sessionRunnerName,
+} from './manual';
 import { JobSpec } from './protocol';
 import {
   Conclusion,
@@ -827,6 +838,10 @@ export class CiEngine {
       for (const id of ar.run.jobs) {
         const j = ar.jobs.get(id);
         if (!j || j.status !== 'queued') continue;
+        // A manual job is never handed to a registered runner, whatever its
+        // other labels say: `runs-on: [manual, ubuntu-latest]` names the image,
+        // not a second way to be taken.
+        if (isManualJob(j.runsOn)) continue;
         if (!this.needsDone(ar, j)) continue;
         if (!j.runsOn.some((l) => labelSet.has(l))) continue;
         // Ready and condition-checked: advance() already skipped false ifs.
@@ -840,7 +855,13 @@ export class CiEngine {
   acquire(runnerName: string, labels: string[], allow: string[], serverUrl: string): JobSpec | null {
     const found = this.runnableJob(labels, allow);
     if (!found) return null;
-    const { ar, job } = found;
+    return this.leaseJob(found.ar, found.job, runnerName, serverUrl);
+  }
+
+  // Lease one chosen job to a runner (registered or manual session) and build
+  // the spec it executes from. The caller has already decided the job may go
+  // to this runner; everything from here on is the same for both kinds.
+  private leaseJob(ar: ActiveRun, job: JobRecord, runnerName: string, serverUrl: string): JobSpec {
     job.status = 'running';
     job.attempts += 1;
     job.startedAt = job.startedAt ?? nowIso();
@@ -955,6 +976,236 @@ export class CiEngine {
       this.emitter.on('wake', onWake);
       gone?.addEventListener('abort', onGone);
     });
+  }
+
+  // ---- manual jobs ----
+  //
+  // A job with `manual` among its runs-on labels is taken by nobody until a
+  // person mints a command from the run page and pastes it somewhere. The
+  // pasted process redeems the command for a session, then acquires the run's
+  // manual jobs through the methods below; everything after the lease (logs,
+  // heartbeats, artifacts, the report) travels the registered runner's paths,
+  // under the runner name `manual:<grant id>`.
+
+  private manualJobsOf(ar: ActiveRun): JobRecord[] {
+    return [...ar.jobs.values()].filter((j) => isManualJob(j.runsOn));
+  }
+
+  private static matchesJobFilter(j: JobRecord, filter: string | null): boolean {
+    if (!filter) return true;
+    return globMatch(filter, j.key) || globMatch(filter, j.id) || filter === j.name;
+  }
+
+  /**
+   * Mint the token the pasted command carries. Refused for a run that is not
+   * active (nothing left to run) or has no manual jobs (nothing to run this
+   * way); the distinction matters to the caller's message.
+   */
+  mintManual(
+    collection: string,
+    repo: string,
+    n: number,
+    mintedBy: string
+  ): { token: string; grant: ManualGrant } | { error: 'finished' | 'no-manual' } {
+    const ar = this.active.get(runKey(collection, repo, n));
+    if (!ar) return { error: 'finished' };
+    if (this.manualJobsOf(ar).length === 0) return { error: 'no-manual' };
+    return mintGrant(this.root, collection, repo, n, mintedBy);
+  }
+
+  /**
+   * Trade a pasted mint token for a session. The mint token is spent by this;
+   * the returned session token is what the process authenticates with from
+   * here on, and it exists nowhere but in that process and on the wire.
+   */
+  redeemManual(
+    token: string,
+    host: string
+  ): { sessionToken: string; collection: string; repo: string; run: RunRecord; jobs: JobRecord[]; grant: ManualGrant } | null {
+    for (const ar of this.active.values()) {
+      const grants = loadGrants(this.root, ar.collection, ar.repo, ar.run.number);
+      const grant = findMintable(grants, token);
+      if (!grant) continue;
+      const sessionToken = redeemGrant(this.root, ar.collection, ar.repo, ar.run.number, grant.id, host);
+      if (!sessionToken) continue;
+      grant.host = host;
+      this.noteSessionRun(grant.id, ar.collection, ar.repo, ar.run.number);
+      return {
+        sessionToken,
+        collection: ar.collection,
+        repo: ar.repo,
+        run: ar.run,
+        jobs: this.manualJobsOf(ar),
+        grant,
+      };
+    }
+    return null;
+  }
+
+  // Where each session's run lives, so a session that outlasts its run (the
+  // usual way a session ends) can still be told the run finished rather than
+  // being answered with a bare 401. In memory only: after a restart such a
+  // session is simply unrecognized, which its client reports as the run being
+  // over, and it nearly always is. Bounded, since entries have no natural
+  // expiry: the cap is far above any plausible number of concurrent sessions,
+  // and evicting the oldest costs that session only a blunter goodbye.
+  private manualSessionRuns = new Map<string, { collection: string; repo: string; n: number }>();
+
+  private noteSessionRun(id: string, collection: string, repo: string, n: number): void {
+    this.manualSessionRuns.delete(id);
+    this.manualSessionRuns.set(id, { collection, repo, n });
+    if (this.manualSessionRuns.size > 200) {
+      const oldest = this.manualSessionRuns.keys().next().value;
+      if (oldest !== undefined) this.manualSessionRuns.delete(oldest);
+    }
+  }
+
+  /**
+   * The session a presented token belongs to. `active` is false when the
+   * run has left the live index, in which case `run` is what the disk says
+   * became of it.
+   */
+  authenticateManualSession(
+    token: string
+  ): { collection: string; repo: string; n: number; grant: ManualGrant; active: boolean; run: RunRecord | null } | null {
+    for (const ar of this.active.values()) {
+      const grants = loadGrants(this.root, ar.collection, ar.repo, ar.run.number);
+      const grant = findSession(grants, token);
+      if (grant) {
+        this.noteSessionRun(grant.id, ar.collection, ar.repo, ar.run.number);
+        return { collection: ar.collection, repo: ar.repo, n: ar.run.number, grant, active: true, run: ar.run };
+      }
+    }
+    for (const at of this.manualSessionRuns.values()) {
+      const grants = loadGrants(this.root, at.collection, at.repo, at.n);
+      const grant = findSession(grants, token);
+      if (grant) {
+        return {
+          collection: at.collection,
+          repo: at.repo,
+          n: at.n,
+          grant,
+          active: this.active.has(runKey(at.collection, at.repo, at.n)),
+          run: readRun(this.root, at.collection, at.repo, at.n),
+        };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Try to hand this session its run's next manual job. 'wait' means one may
+   * yet become eligible (blocked on needs, or held by concurrency); 'done'
+   * means this session will never be handed another, with the reason.
+   */
+  acquireManual(
+    collection: string,
+    repo: string,
+    n: number,
+    grant: ManualGrant,
+    filter: string | null,
+    serverUrl: string
+  ): ManualAcquire {
+    const ar = this.active.get(runKey(collection, repo, n));
+    if (!ar) {
+      const run = readRun(this.root, collection, repo, n);
+      return {
+        kind: 'done',
+        run,
+        reason: run?.status === 'completed' ? `the run finished: ${run.conclusion}` : 'the run no longer exists',
+      };
+    }
+    if (ar.run.cancelRequested) return { kind: 'done', run: ar.run, reason: 'the run was cancelled' };
+    const name = sessionRunnerName(grant);
+    const matching = this.manualJobsOf(ar).filter((j) => CiEngine.matchesJobFilter(j, filter));
+    if (matching.length === 0) {
+      return {
+        kind: 'done',
+        run: ar.run,
+        reason: filter ? `no manual job matches --job ${filter}` : 'this run has no manual jobs',
+      };
+    }
+    if (!this.heldByConcurrency(ar)) {
+      for (const id of ar.run.jobs) {
+        const j = ar.jobs.get(id);
+        if (!j || !matching.includes(j)) continue;
+        if (j.status !== 'queued') continue;
+        if (!this.needsDone(ar, j)) continue;
+        // Attribution rides on the record, not the lease: the lease is gone
+        // the moment the job completes, and who ran a job is a fact about the
+        // job. Set before leaseJob so its save persists it.
+        j.manual = { user: grant.mintedBy, host: grant.host ?? '' };
+        return { kind: 'job', spec: this.leaseJob(ar, j, name, serverUrl) };
+      }
+    }
+    const queued = matching.some((j) => j.status === 'queued');
+    const mine = matching.some((j) => j.status === 'running' && j.lease?.runner === name);
+    if (queued || mine) return { kind: 'wait' };
+    if (matching.some((j) => j.status === 'running')) {
+      return { kind: 'done', run: ar.run, reason: 'the remaining manual jobs are held by another session' };
+    }
+    return { kind: 'done', run: ar.run, reason: 'every manual job of this run has finished' };
+  }
+
+  /** The long-poll form of acquireManual: 'wait' at the deadline, sooner news sooner. */
+  waitForManualJob(
+    collection: string,
+    repo: string,
+    n: number,
+    grant: ManualGrant,
+    filter: string | null,
+    serverUrl: string,
+    timeoutMs: number,
+    gone?: AbortSignal
+  ): Promise<ManualAcquire> {
+    const first = this.acquireManual(collection, repo, n, grant, filter, serverUrl);
+    if (first.kind !== 'wait') return Promise.resolve(first);
+    if (gone?.aborted) return Promise.resolve({ kind: 'wait' });
+    return new Promise((resolve) => {
+      const deadline = setTimeout(() => {
+        cleanup();
+        resolve({ kind: 'wait' });
+      }, timeoutMs);
+      const onWake = () => {
+        const next = this.acquireManual(collection, repo, n, grant, filter, serverUrl);
+        if (next.kind !== 'wait') {
+          cleanup();
+          resolve(next);
+        }
+      };
+      const onGone = () => {
+        cleanup();
+        resolve({ kind: 'wait' });
+      };
+      const cleanup = () => {
+        clearTimeout(deadline);
+        this.emitter.removeListener('wake', onWake);
+        gone?.removeEventListener('abort', onGone);
+      };
+      this.emitter.on('wake', onWake);
+      gone?.addEventListener('abort', onGone);
+    });
+  }
+
+  /**
+   * Hand a leased manual job back untouched: the person at the terminal read
+   * the steps and said no, or hung up before the offer arrived. The job
+   * returns to waiting for a command, unlike a lease that expires mid-run,
+   * which fails the job (see sweepLeases): nothing had executed yet, so there
+   * is nothing to have failed.
+   */
+  releaseManualJob(collection: string, repo: string, n: number, jobId: string, lease: string, runner: string): boolean {
+    if (!isManualRunnerName(runner)) return false;
+    const found = this.findLeased(collection, repo, n, jobId, lease, runner);
+    if (!found) return false;
+    const { ar, job } = found;
+    delete job.lease;
+    delete job.manual;
+    delete job.startedAt;
+    job.status = 'queued';
+    this.saveJob(ar, job);
+    this.wake();
+    return true;
   }
 
   /**
@@ -1123,6 +1374,18 @@ export class CiEngine {
       for (const j of ar.jobs.values()) {
         if (j.status !== 'running' || !j.lease) continue;
         if (new Date(j.lease.expiresAt).getTime() > now) continue;
+        if (isManualRunnerName(j.lease.runner)) {
+          // A manual job's lost session fails the job at once rather than
+          // requeueing it: nothing else can pick a manual job up, and a job
+          // silently waiting for a person who has gone would read as a run
+          // that hangs. Running it again is a fresh command from the run page.
+          const who = j.manual ? `run by ${j.manual.user} on ${j.manual.host || 'an unnamed host'}` : '';
+          j.error = `the manual session ${who ? `(${who}) ` : ''}stopped responding; mint a new command from the run page to run it again`;
+          this.completeJob(ar, j, 'failure');
+          this.advance(ar);
+          this.wake();
+          continue;
+        }
         if (j.attempts >= MAX_ATTEMPTS) {
           j.error = `the runner (${j.lease.runner}) stopped responding after ${j.attempts} attempts`;
           this.completeJob(ar, j, 'failure');
@@ -1170,7 +1433,7 @@ export class CiEngine {
         if (job.status === 'running' && job.lease) {
           running[job.lease.runner] = { ...at, since: job.startedAt ?? null };
         } else if (job.status === 'queued' && this.needsDone(ar, job)) {
-          queued.push({ ...at, runsOn: job.runsOn });
+          queued.push({ ...at, runsOn: job.runsOn, manual: isManualJob(job.runsOn) });
         }
       }
     }
@@ -1196,9 +1459,19 @@ export class CiEngine {
 export interface RunnerLoad {
   /** The job each runner holds, by runner name. */
   running: Record<string, { collection: string; repo: string; run: number; job: string; since: string | null }>;
-  /** Jobs ready to run that nothing has taken, with the labels each asks for. */
-  queued: { collection: string; repo: string; run: number; job: string; runsOn: string[] }[];
+  /**
+   * Jobs ready to run that nothing has taken, with the labels each asks for.
+   * A manual one is waiting for a pasted command, not for a runner, and every
+   * reader of this list has to know the difference to report honestly.
+   */
+  queued: { collection: string; repo: string; run: number; job: string; runsOn: string[]; manual: boolean }[];
 }
+
+/** What acquireManual answers: a job, wait for one, or never another. */
+export type ManualAcquire =
+  | { kind: 'job'; spec: JobSpec }
+  | { kind: 'wait' }
+  | { kind: 'done'; run: RunRecord | null; reason: string };
 
 export interface DispatchableWorkflow {
   path: string;

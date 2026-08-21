@@ -3,7 +3,9 @@ import { JSON_OPTION, jsonMode, pickFields, printJson, printTable } from './cli/
 import { Command } from './cli/parse';
 import { TARGET_OPTIONS, targetFrom } from './cli/target';
 import { loadLogin } from './credentials';
+import { chooseEngine } from './job-cli';
 import { DEFAULT_IMAGES, Runner, RunnerConfig, configPath, loadRunnerConfig, saveRunnerConfig } from './runner/client';
+import { setContainerEngine } from './runner/docker';
 import { newWakeSecret } from './ci/wake';
 import { globMatch } from './vault';
 
@@ -30,6 +32,7 @@ interface RunnerArgs {
   wakeSecret: string | null;
   wakeUrl: string | null;
   clear: boolean;
+  engine: 'docker' | 'podman' | null;
 }
 
 /**
@@ -70,6 +73,7 @@ function parseArgs(args: string[], usage: () => never): RunnerArgs {
     wakeSecret: null,
     wakeUrl: null,
     clear: false,
+    engine: null,
   };
   const list = (v: string): string[] => v.split(/[\s,]+/).filter((s) => s.length > 0);
   for (let i = 0; i < args.length; i++) {
@@ -97,6 +101,14 @@ function parseArgs(args: string[], usage: () => never): RunnerArgs {
     else if (a === '--wake-url') out.wakeUrl = args[++i];
     else if (a === '--clear') out.clear = true;
     else if (a === '--save') out.save = true;
+    else if (a === '--engine') {
+      const e = args[++i] ?? '';
+      if (e !== 'docker' && e !== 'podman') {
+        console.error(`--engine takes docker or podman, got: ${e}`);
+        process.exit(1);
+      }
+      out.engine = e;
+    }
     else if (a === '--image') {
       // --image ubuntu-latest=my/image:tag
       const spec = args[++i] ?? '';
@@ -243,6 +255,8 @@ interface QueuedJob {
   run: number;
   job: string;
   runsOn: string[];
+  // Waiting for a pasted command, not for a runner; absent from older vaults.
+  manual?: boolean;
 }
 
 /** "3s ago", for the one column where a bare ISO timestamp would be unreadable. */
@@ -267,6 +281,9 @@ function jobLabel(j: { collection: string; repo: string; run: number; job: strin
 function unservedJobs(queued: QueuedJob[], runners: RunnerRow[]): QueuedJob[] {
   return queued.filter(
     (j) =>
+      // A manual job is waiting for a pasted command by design, so no runner
+      // failing to match it is not the problem this list exists to surface.
+      !j.manual &&
       !runners.some(
         (r) =>
           r.allow.some((g) => globMatch(g, `${j.collection}/${j.repo}`)) &&
@@ -322,15 +339,25 @@ is the usual reason a run sits at queued forever.`,
       );
     }
     if (queued.length > 0) {
+      const automatic = queued.filter((j) => !j.manual);
+      const manual = queued.filter((j) => j.manual);
       console.log('');
-      console.log(`${queued.length} job${queued.length === 1 ? '' : 's'} waiting for a runner:`);
-      for (const j of queued) console.log(`  ${jobLabel(j)}  (runs-on: ${j.runsOn.join(', ')})`);
+      if (automatic.length > 0) {
+        console.log(`${automatic.length} job${automatic.length === 1 ? '' : 's'} waiting for a runner:`);
+        for (const j of automatic) console.log(`  ${jobLabel(j)}  (runs-on: ${j.runsOn.join(', ')})`);
+      }
+      if (manual.length > 0) {
+        console.log(
+          `${manual.length} manual job${manual.length === 1 ? '' : 's'} waiting for a pasted command (feorge run exec-command <run>):`
+        );
+        for (const j of manual) console.log(`  ${jobLabel(j)}  (runs-on: ${j.runsOn.join(', ')})`);
+      }
       const unserved = unservedJobs(queued, runners);
       if (unserved.length > 0) {
         console.log('');
         console.log(
           `No registered runner can take ${
-            unserved.length === queued.length ? 'them' : `${unserved.length} of them`
+            unserved.length === automatic.length ? 'them' : `${unserved.length} of them`
           }: check the runs-on labels against each runner's labels, and the repository against its serving globs.`
         );
       }
@@ -400,6 +427,12 @@ export async function runnerRunCmd(args: string[], usage: () => never): Promise<
     saveRunnerConfig(config);
     console.log(`Saved to ${configPath()}`);
   }
+  // Which container engine carries the jobs: the flag if given, whichever of
+  // docker and podman works if only one does, a question when both do and
+  // there is a terminal to ask on, docker otherwise. Chosen before the runner
+  // starts, because a runner must use one engine for everything or nothing.
+  const engine = await chooseEngine(a.engine, process.stdin.isTTY === true && process.stdout.isTTY === true);
+  setContainerEngine(engine);
   const runner = new Runner(config);
   const stop = () => {
     console.log('\nStopping after the current job. Press Ctrl-C again to quit now.');
