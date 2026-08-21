@@ -241,6 +241,14 @@ export function createApp(root: string) {
   // ordinary for a static site and no business of the forge's.
   app.use((_req, res, next) => {
     res.setHeader('Content-Security-Policy', FORGE_CSP);
+    // On every response, not only the raw file routes that already carried it:
+    // nothing the forge serves relies on type sniffing, so there is no reason
+    // to leave any response open to it.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    // The browser's own default, stated explicitly so a link out of a private
+    // vault never carries a path in its referrer whatever the browser's
+    // settings say.
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     next();
   });
 
@@ -397,18 +405,34 @@ export function createApp(root: string) {
   });
 
   app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
-    console.error(err);
-    if (!res.headersSent) {
-      let viewer = null;
-      try {
-        viewer = getViewer(req, root);
-      } catch {
-        viewer = null;
-      }
-      res.status(500).type('html').send(views.errorPage(500, 'Internal server error', { viewer }));
-    } else {
+    if (res.headersSent) {
+      console.error(err);
       res.end();
+      return;
     }
+    let viewer = null;
+    try {
+      viewer = getViewer(req, root);
+    } catch {
+      viewer = null;
+    }
+    // The body parsers throw typed errors carrying the status they deserve --
+    // a body over the route's limit, a malformed encoding, an aborted upload.
+    // Those are refusals of the request, not failures of the server, so they
+    // get their status and a sentence a person can act on rather than the bare
+    // 500 below.
+    const status = (err as Error & { statusCode?: unknown; status?: unknown }).statusCode ?? (err as Error & { status?: unknown }).status;
+    const type = (err as Error & { type?: unknown }).type;
+    if (typeof status === 'number' && status >= 400 && status < 500) {
+      const message =
+        type === 'entity.too.large'
+          ? 'What you submitted is larger than this form accepts. Files this size can go through the Upload files form, or a git push.'
+          : 'The request could not be read; go back and try again.';
+      res.status(status).type('html').send(views.errorPage(status, message, { viewer }));
+      return;
+    }
+    console.error(err);
+    res.status(500).type('html').send(views.errorPage(500, 'Internal server error', { viewer }));
   });
 
   return app;

@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import { CiEngine } from './ci/engine';
 import { loadConfig, saveConfig } from './config';
 import { Egress } from './egress';
-import { isValidRefName, isValidRepoPath, isValidSha } from './git';
+import { isValidNewRepoPath, isValidRefName, isValidRepoPath, isValidSha } from './git';
 import { firePush } from './ci/trigger';
 import { AuthLimiter } from './limit';
 import { LfsContext } from './lfsstore';
@@ -1103,12 +1103,27 @@ export function registerWebOps(
         return;
       }
       const content = normalizeContent(field(req, 'content'));
-      // A changed path renames or moves the file in the same commit, which is
-      // what the path field on the form is for.
-      const wantedPath = field(req, 'path').trim().replace(/^\/+/, '');
-      const toPath = wantedPath === '' || wantedPath === filePath ? undefined : wantedPath;
       const retryUrl = `${urlOf(loaded.repo)}/edit/${encPath(branch)}/${encPath(filePath)}`;
-      if (toPath !== undefined && !isValidRepoPath(toPath)) {
+      // The editor only opens files up to MAX_EDIT_SIZE, so content beyond it
+      // means a paste that outgrew what this form is for. Checked here so the
+      // refusal names the way that does work, instead of the body limit 413ing
+      // with no advice.
+      if (Buffer.byteLength(content, 'utf8') > MAX_EDIT_SIZE) {
+        fail(
+          res,
+          413,
+          'Files over 1 MB cannot be committed through the editor. Use the Upload files form, or push with git.',
+          viewer,
+          retryUrl
+        );
+        return;
+      }
+      // A changed path renames or moves the file in the same commit, which is
+      // what the path field on the form is for. Rejected rather than silently
+      // rewritten when it is not a path this repository can take.
+      const wantedPath = field(req, 'path').trim();
+      const toPath = wantedPath === '' || wantedPath === filePath ? undefined : wantedPath;
+      if (toPath !== undefined && !isValidNewRepoPath(toPath)) {
         fail(res, 400, `${toPath} is not a usable path.`, viewer, retryUrl);
         return;
       }
@@ -1227,15 +1242,20 @@ export function registerWebOps(
       }
       // Browsers send the name the file had on disk, and some send a whole
       // path; only the last segment is ours to use, and it still has to be a
-      // path this repository would accept.
+      // path this repository would accept. When the last segment is not the
+      // name that arrived, the reader is told what the file was saved as,
+      // rather than the flattening happening in silence.
       const files: ops.UploadedFile[] = [];
+      const renamed: string[] = [];
       for (const upload of uploads) {
-        const name = (upload.filename ?? '').split(/[\\/]/).pop() ?? '';
+        const sent = upload.filename ?? '';
+        const name = sent.split(/[\\/]/).pop() ?? '';
         const full = dir === '' ? name : `${dir}/${name}`;
-        if (name === '' || name === '.' || name === '..' || !isValidRepoPath(full)) {
+        if (name === '' || name === '.' || name === '..' || !isValidNewRepoPath(full)) {
           fail(res, 400, `${name || 'That file'} does not have a usable name.`, viewer, retryUrl);
           return;
         }
+        if (name !== sent) renamed.push(`${sent} was saved as ${name}`);
         files.push({ path: full, content: upload.data });
       }
       const summary = partField(parts, 'message').trim();
@@ -1275,7 +1295,8 @@ export function registerWebOps(
         res.redirect(`${urlOf(loaded.repo)}/compare/${encPath(branch)}...${encPath(onto)}`);
         return;
       }
-      res.redirect(`${urlOf(loaded.repo)}/tree/${encPath(onto)}${dir === '' ? '' : `/${encPath(dir)}`}`);
+      const note = renamed.length ? `?msg=${encodeURIComponent(renamed.join('; ') + '.')}` : '';
+      res.redirect(`${urlOf(loaded.repo)}/tree/${encPath(onto)}${dir === '' ? '' : `/${encPath(dir)}`}${note}`);
     })
   );
 
@@ -1313,14 +1334,29 @@ export function registerWebOps(
         await handleOpError(new OpError('branch created meanwhile', 'conflict'), req, res, viewer, target, req.originalUrl);
         return;
       }
-      const filename = field(req, 'filename').trim().replace(/^\/+|\/+$/g, '');
+      // Rejected rather than silently de-rooted or flattened: a leading slash,
+      // a backslash, or a .git component is a name the commit cannot take, and
+      // rewriting it would commit a path nobody typed.
+      const filename = field(req, 'filename').trim();
       const fullPath = dir === '' ? filename : `${dir}/${filename}`;
       const retryUrl = req.originalUrl;
-      if (filename === '' || !isValidRepoPath(fullPath)) {
+      if (filename === '' || !isValidNewRepoPath(fullPath)) {
         fail(res, 400, 'Invalid file name.', viewer, retryUrl);
         return;
       }
       const content = normalizeContent(field(req, 'content'));
+      // See the edit form: content past what the editor itself would open is
+      // refused with advice rather than left to the body limit.
+      if (Buffer.byteLength(content, 'utf8') > MAX_EDIT_SIZE) {
+        fail(
+          res,
+          413,
+          'Files over 1 MB cannot be committed through the editor. Use the Upload files form, or push with git.',
+          viewer,
+          retryUrl
+        );
+        return;
+      }
       // The same backstop the edit form has: see the comment there.
       if (isAgeFile(fullPath) && !looksLikeAge(Buffer.from(content, 'utf8'))) {
         fail(
@@ -1559,7 +1595,15 @@ export function registerWebOps(
         fail(res, 403, `You do not have the write role on ${loaded.repo.collection}/${loaded.repo.name}.`, viewer, backUrl);
         return;
       }
-      ops.setDescription(loaded.repo.dir, field(req, 'description'));
+      try {
+        ops.setDescription(loaded.repo.dir, field(req, 'description'));
+      } catch (e) {
+        if (e instanceof OpError) {
+          fail(res, opErrorStatus(e.kind), e.message, viewer, backUrl);
+          return;
+        }
+        throw e;
+      }
       const defaultBranch = field(req, 'defaultBranch');
       if (defaultBranch !== '' && defaultBranch !== loaded.defaultBranch) {
         if (!loaded.branches.some((b) => b.name === defaultBranch)) {

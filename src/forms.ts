@@ -743,6 +743,7 @@ ${csrfField(ctx.viewer!)}
 <label for="toName">Name</label><input type="text" id="toName" name="name" value="${ctx.repo}" required>
 <button type="submit" class="btn">${icon('pencil')}<span>Rename</span></button>
 </form>
+<p class="muted small">The collection may be one that exists or a new one to create along with the move, so check it for typos: a misspelt collection is created, not refused.</p>
 </div>`
     : '';
   const dangerZone = ctx.canAdmin

@@ -548,7 +548,13 @@ function repoCard(r: RepoCard, showCollection: boolean): Html {
     ? html`<a class="site-link" href="${r.siteUrl}" title="Site" aria-label="Site for ${r.name}">${icon('globe')}</a>`
     : '';
   const ci = r.ci ? ciMark(r.ci, r.name) : '';
-  const desc = r.description ? html`<p class="rc-desc">${r.description}</p>` : '';
+  // The card clips to two lines with CSS, but the clipping is visual only:
+  // the bytes still travel, and a listing repeats them per repository, so a
+  // description larger than the model now accepts (one written before the cap
+  // existed) is cut here rather than shipped whole to every reader.
+  const shown =
+    r.description && r.description.length > 400 ? `${r.description.slice(0, 400)}…` : r.description;
+  const desc = shown ? html`<p class="rc-desc">${shown}</p>` : '';
   const when = r.updated ? html`<span class="rc-when">${timeTag(r.updated)}</span>` : '';
   const badge = r.isPrivate ? html`<span class="counter">Private</span>` : '';
   return html`<li class="repo-card">
@@ -769,6 +775,8 @@ export interface TreeView {
   languages: LanguageStat[];
   /** Who has committed on this ref, most commits first; the root only. */
   contributors: { name: string; email: string; commits: number; account?: string | null }[];
+  /** A one-time note about how the reader got here, e.g. what an upload renamed. */
+  msg?: string;
 }
 
 /** "1,284" - counts in the interface are grouped, as they are on GitHub. */
@@ -977,6 +985,7 @@ export function treePage(ctx: RepoCtx, view: TreeView): string {
       )}</div></div>`
     : '';
   const content = html`${repoHeader(ctx, 'code')}
+${view.msg ? html`<div class="flash">${view.msg}</div>` : ''}
 <div class="toolbar">
   <div class="left">${refPicker(ctx, (ref) => `${base}/tree/${encPath(ref)}`)}${breadcrumb(ctx, path)}</div>
   <div class="right-group">${findButton(ctx)}${historyBtn}${forkBtn}${addFileBtn}${cloneMenu(ctx)}</div>

@@ -234,6 +234,7 @@ export function registerBrowse(app: Express, root: string, gates: Gates, lfs: Lf
         readmeHtml,
         readmeName,
         languages,
+        msg: typeof req.query.msg === 'string' ? req.query.msg : undefined,
       })
     );
   }
